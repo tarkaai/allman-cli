@@ -1,0 +1,37 @@
+{
+  "name": "lilac-cli",
+  "version": "0.1.0",
+  "description": "LinkedIn messenger from the CLI",
+  "type": "module",
+  "bin": {
+    "lilac": "./dist/lilac"
+  },
+  "scripts": {
+    "dev": "bun run src/index.ts",
+    "build": "bun build --compile --minify src/index.ts --outfile dist/lilac --external chromium-bidi --external electron",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "test:coverage": "vitest run --coverage",
+    "lint": "biome check src tests",
+    "lint:fix": "biome check --write src tests",
+    "format": "biome format --write src tests",
+    "install-browsers": "bunx playwright install chromium"
+  },
+  "devDependencies": {
+    "@biomejs/biome": "^2.4.10",
+    "@types/node": "^25.5.0",
+    "@types/tough-cookie": "^4.0.5",
+    "@types/tunnel": "^0.0.7",
+    "@vitest/coverage-v8": "^4.1.2",
+    "typescript": "^5.9.3",
+    "vitest": "^4.1.2"
+  },
+  "dependencies": {
+    "axios": "^1.14.0",
+    "commander": "^14.0.3",
+    "playwright": "^1.58.2",
+    "simple-git": "^3.33.0",
+    "tough-cookie": "^6.0.1",
+    "tunnel": "^0.0.6"
+  }
+}

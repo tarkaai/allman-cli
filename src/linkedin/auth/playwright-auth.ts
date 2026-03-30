@@ -1,0 +1,336 @@
+/**
+ * LinkedIn authentication via headed Playwright browser.
+ *
+ * Because LinkedIn's login flow is highly interactive (2FA app notifications,
+ * TOTP codes, email codes, captcha, device verification), we always use a
+ * headed browser and let the human complete login manually.
+ *
+ * The CLI:
+ *   1. Opens a Chromium window (headed)
+ *   2. Injects existing cookies if any (may skip login form entirely)
+ *   3. Navigates to linkedin.com/login
+ *   4. Waits for the user to complete login (URL becomes /feed or /in/)
+ *   5. Intercepts voyagerIdentityDashProfiles API response to extract the profile URN
+ *   6. Extracts all cookies from the browser context
+ *   7. Saves everything to the account RECORD.json
+ *
+ * Re-auth flow (cookies exist but expired):
+ *   Same as above — inject existing cookies first. LinkedIn may skip the login
+ *   form if they're still valid.
+ *
+ * Timeout: 5 minutes (configurable via LOGIN_TIMEOUT_MS env var).
+ */
+
+import { chromium, type BrowserContext, type Page } from "playwright";
+import { cookiesFromPlaywright, isAuthenticated, type PlaywrightCookie } from "../api/cookies.js";
+import * as output from "../../utils/output.js";
+
+const LOGIN_URL = "https://www.linkedin.com/login";
+const FEED_URL_PATTERN = /linkedin\.com\/(feed|in\/|messaging)/;
+const PROFILE_URN_API_PATTERN = /voyagerIdentityDashProfiles/;
+const PROFILE_URN_REGEX = /urn:li:fsd_profile:([^,)"]+)/;
+
+const LOGIN_TIMEOUT_MS = parseInt(process.env["LOGIN_TIMEOUT_MS"] ?? "300000"); // 5 minutes
+
+export interface AuthResult {
+  success: boolean;
+  profileUrn: string | null;
+  name: string | null;
+  headline: string | null;
+  profileUrl: string | null;
+  imageUrl: string | null;
+  cookieJar: object;
+  error?: string;
+}
+
+export interface AuthOptions {
+  /** Existing cookies to inject before navigating (for re-auth). */
+  existingCookieJar?: object | null;
+  /** Override executable path for Chromium. */
+  executablePath?: string;
+}
+
+/**
+ * Run the interactive login flow.
+ * Opens a headed Chromium window and waits for the user to authenticate.
+ */
+export async function runLogin(options: AuthOptions = {}): Promise<AuthResult> {
+  const executablePath =
+    options.executablePath ?? process.env["PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH"];
+
+  output.info("Opening LinkedIn in browser — please complete login in the browser window.");
+  output.info(`Waiting up to ${Math.round(LOGIN_TIMEOUT_MS / 60000)} minutes...`);
+
+  const browser = await chromium.launch({
+    headless: false,
+    ...(executablePath ? { executablePath } : {}),
+    args: [
+      "--no-sandbox",
+      "--disable-blink-features=AutomationControlled",
+      "--disable-infobars",
+    ],
+  });
+
+  const context = await browser.newContext({
+    userAgent:
+      "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+    viewport: { width: 1280, height: 800 },
+  });
+
+  // Inject existing cookies if provided (may let us skip login entirely)
+  if (options.existingCookieJar) {
+    try {
+      const cookieData = options.existingCookieJar as { cookies?: PlaywrightCookie[] };
+      if (cookieData.cookies && Array.isArray(cookieData.cookies)) {
+        const playwrightCookies = cookieData.cookies.map((c) => toughCookieToPlaywright(c as unknown as Record<string, unknown>)).filter(Boolean) as Array<{
+          name: string;
+          value: string;
+          domain: string;
+          path: string;
+          expires?: number;
+          httpOnly?: boolean;
+          secure?: boolean;
+          sameSite?: "Strict" | "Lax" | "None";
+        }>;
+        if (playwrightCookies.length > 0) {
+          await context.addCookies(playwrightCookies);
+          output.debug(`Injected ${playwrightCookies.length} existing cookies`);
+        }
+      }
+    } catch (err) {
+      output.debug(`Failed to inject existing cookies: ${String(err)}`);
+    }
+  }
+
+  let profileUrn: string | null = null;
+  let interceptedProfileData: ProfileApiData | null = null;
+
+  // Set up route interception to capture profile URN from API response
+  await context.route(`**/${PROFILE_URN_API_PATTERN.source}*`, async (route) => {
+    const response = await route.fetch();
+    try {
+      const body = await response.json();
+      const urnMatch = JSON.stringify(body).match(PROFILE_URN_REGEX);
+      if (urnMatch && urnMatch[1]) {
+        profileUrn = `urn:li:fsd_profile:${urnMatch[1]}`;
+        interceptedProfileData = extractProfileFromApiResponse(body);
+        output.debug(`Intercepted profile URN: ${profileUrn}`);
+      }
+    } catch {
+      // Non-JSON response, ignore
+    }
+    await route.continue();
+  });
+
+  const page = await context.newPage();
+
+  try {
+    await page.goto(LOGIN_URL, { waitUntil: "domcontentloaded", timeout: 30_000 });
+  } catch {
+    // Timeout on initial navigation is OK — LinkedIn can be slow
+  }
+
+  // Wait for successful authentication (URL changes to /feed, /in/, or /messaging)
+  output.info("Waiting for you to complete login...");
+  try {
+    await page.waitForURL(FEED_URL_PATTERN, { timeout: LOGIN_TIMEOUT_MS });
+  } catch {
+    await browser.close();
+    return {
+      success: false,
+      profileUrn: null,
+      name: null,
+      headline: null,
+      profileUrl: null,
+      imageUrl: null,
+      cookieJar: {},
+      error: `Login timed out after ${LOGIN_TIMEOUT_MS / 1000}s. Please try again.`,
+    };
+  }
+
+  output.success("Login detected — extracting session...");
+
+  // If we haven't captured the profile URN via interception yet,
+  // navigate to the profile page to trigger the API call
+  if (!profileUrn) {
+    profileUrn = await extractProfileUrnFromPage(page, context);
+  }
+
+  // Extract all cookies from the browser context
+  const rawCookies = await context.cookies();
+  const jar = await cookiesFromPlaywright(
+    rawCookies.map((c) => ({
+      name: c.name,
+      value: c.value,
+      domain: c.domain,
+      path: c.path,
+      expires: c.expires,
+      httpOnly: c.httpOnly,
+      secure: c.secure,
+      sameSite: c.sameSite,
+    }))
+  );
+
+  const isAuth = await isAuthenticated(jar);
+  if (!isAuth) {
+    await browser.close();
+    return {
+      success: false,
+      profileUrn: null,
+      name: null,
+      headline: null,
+      profileUrl: null,
+      imageUrl: null,
+      cookieJar: {},
+      error: "Authentication appeared to succeed but session cookies are missing.",
+    };
+  }
+
+  // Extract profile data from page DOM if not captured via interception
+  const domProfile = (await extractProfileFromDom(page)) as DomProfileData;
+  // TypeScript spuriously infers interceptedProfileData as never here due to control flow
+  // eslint-disable-next-line @typescript-eslint/ban-ts-comment
+  // @ts-ignore
+  const name = (interceptedProfileData as ProfileApiData | null)?.name ?? domProfile.name;
+  // @ts-ignore
+  const headline = (interceptedProfileData as ProfileApiData | null)?.headline ?? domProfile.headline;
+  const profileUrl = domProfile.profileUrl;
+  const imageUrl = domProfile.imageUrl;
+
+  await browser.close();
+
+  const { serializeCookieJar } = await import("../api/cookies.js");
+  const cookieJar = serializeCookieJar(jar);
+
+  output.success(`Authenticated as: ${name ?? "unknown"}`);
+
+  return {
+    success: true,
+    profileUrn,
+    name,
+    headline,
+    profileUrl,
+    imageUrl,
+    cookieJar,
+  };
+}
+
+// ---------------------------------------------------------------------------
+// Helpers
+// ---------------------------------------------------------------------------
+
+interface ProfileApiData {
+  name: string | null;
+  headline: string | null;
+}
+
+interface DomProfileData {
+  name: string | null;
+  headline: string | null;
+  profileUrl: string | null;
+  imageUrl: string | null;
+}
+
+function extractProfileFromApiResponse(body: unknown): ProfileApiData {
+  try {
+    const str = JSON.stringify(body);
+    // Try to find firstName/lastName in the response
+    const firstMatch = str.match(/"firstName":"([^"]+)"/);
+    const lastMatch = str.match(/"lastName":"([^"]+)"/);
+    const headlineMatch = str.match(/"headline":"([^"]+)"/);
+    const name =
+      firstMatch && lastMatch
+        ? `${firstMatch[1]} ${lastMatch[1]}`.trim()
+        : null;
+    return { name, headline: headlineMatch ? (headlineMatch[1] ?? null) : null };
+  } catch {
+    return { name: null, headline: null };
+  }
+}
+
+async function extractProfileUrnFromPage(
+  page: Page,
+  _context: BrowserContext
+): Promise<string | null> {
+  let captured: string | null = null;
+
+  // Navigate to /in/ which triggers a profile API call
+  try {
+    await page.goto("https://www.linkedin.com/in/", {
+      waitUntil: "domcontentloaded",
+      timeout: 10_000,
+    });
+
+    // Check for URN in the final URL after redirect
+    const url = page.url();
+    const urlMatch = url.match(/linkedin\.com\/in\/([^/?]+)/);
+    if (urlMatch && urlMatch[1]) {
+      // We have a slug — will need API lookup to get URN
+      // For now return null and let the sync fill it in later
+      output.debug(`Profile slug from redirect: ${urlMatch[1]}`);
+    }
+  } catch {
+    // Navigation timeout is OK
+  }
+
+  return captured;
+}
+
+async function extractProfileFromDom(page: Page): Promise<DomProfileData> {
+  try {
+    // page.evaluate runs in browser context — cast to bypass Node TS lib restrictions
+    return await (page.evaluate as (fn: () => DomProfileData) => Promise<DomProfileData>)(() => {
+      /* eslint-disable @typescript-eslint/no-explicit-any */
+      const doc = (globalThis as any).document as { querySelector: (s: string) => { textContent?: string; src?: string } | null };
+      const win = (globalThis as any).window as { location: { href: string } };
+      const nameEl = doc.querySelector(".artdeco-entity-lockup__title, .profile-nav-item__title, .t-24.t-bold");
+      const headlineEl = doc.querySelector(".profile-nav-item__text, .t-14.t-normal");
+      const imageEl = doc.querySelector("img.global-nav__me-photo, img.profile-picture");
+      const currentUrl = win.location.href;
+
+      return {
+        name: nameEl?.textContent?.trim() ?? null,
+        headline: headlineEl?.textContent?.trim() ?? null,
+        profileUrl: currentUrl.includes("/in/") ? currentUrl : null,
+        imageUrl: imageEl?.src ?? null,
+      };
+    });
+  } catch {
+    return { name: null, headline: null, profileUrl: null, imageUrl: null };
+  }
+}
+
+/** Convert a tough-cookie JSON object to Playwright's cookie format. */
+function toughCookieToPlaywright(
+  c: Record<string, unknown>
+): object | null {
+  const domain = (c["domain"] as string | undefined) ?? "";
+  if (!domain.includes("linkedin.com")) return null;
+
+  const expiresRaw = c["expires"];
+  let expires: number | undefined;
+  if (expiresRaw && expiresRaw !== "Infinity") {
+    expires = Math.floor(new Date(expiresRaw as string).getTime() / 1000);
+  }
+
+  const sameSiteRaw = (c["sameSite"] as string | undefined)?.toLowerCase();
+  const sameSite =
+    sameSiteRaw === "strict"
+      ? "Strict"
+      : sameSiteRaw === "lax"
+        ? "Lax"
+        : sameSiteRaw === "none" || sameSiteRaw === "no_restriction"
+          ? "None"
+          : undefined;
+
+  return {
+    name: (c["key"] as string) ?? "",
+    value: (c["value"] as string) ?? "",
+    domain: domain.startsWith(".") ? domain : `.${domain}`,
+    path: (c["path"] as string | undefined) ?? "/",
+    ...(expires !== undefined ? { expires } : {}),
+    httpOnly: (c["httpOnly"] as boolean | undefined) ?? false,
+    secure: (c["secure"] as boolean | undefined) ?? false,
+    ...(sameSite ? { sameSite } : {}),
+  };
+}

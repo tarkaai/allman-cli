@@ -1,0 +1,127 @@
+# CLAUDE.md — lilac-cli
+
+LinkedIn messenger CLI. File-backed, git-versioned, designed for AI agents and humans.
+
+## Key references
+
+Before writing any LinkedIn API code, read these files first:
+- `/Users/example/Projects/tarka/lilac/api/src/services/api/linkedin-api-client.ts` — exact headers, cookie handling
+- `/Users/example/Projects/tarka/lilac/api/src/services/session/cookie-set.ts` — cookie merge logic
+- `/Users/example/Projects/tarka/lilac/api/src/services/realtime/stream-handler.ts` — SSE parsing
+- `/Users/example/Projects/tarka/lilac/api/src/services/messaging/message-sender.ts` — send payload format
+- `/Users/example/Projects/tarka/lilac/api/src/services/auth/linkedin-auth.ts` — auth flow
+
+The monorepo at `/Users/example/Projects/tarka/monorepo` also has LinkedIn API response type definitions.
+
+## Stack
+
+- **Bun** (latest via asdf) — runtime and build tool
+- **TypeScript** (strict) — language
+- **commander** — CLI framework
+- **playwright** (Chromium, headed) — browser auth only
+- **axios** + **tough-cookie** — HTTP client
+- **tunnel** — HTTP proxy support
+- **simple-git** — git auto-commit
+- **vitest** — testing
+- **biome** — lint + format
+
+## Architecture summary
+
+See `PLAN.md` for full details. Short version:
+
+```
+src/index.ts                 CLI entry (commander)
+src/commands/                One file per subcommand
+src/linkedin/auth/           Playwright-based interactive login
+src/linkedin/api/            Axios client with LinkedIn headers + cookie management
+src/linkedin/realtime/       SSE stream client with reconnect
+src/store/                   File store: RECORD.json files + JSONL messages + git
+src/utils/                   URN helpers, slug extraction, output formatting
+tests/unit/                  Fast, no network
+tests/integration/           Mock network responses
+```
+
+## File store layout
+
+```
+.lilac/
+├── .git/
+├── accounts/{slug}/RECORD.json      # cookies live here (inline)
+├── contacts/{slug}/RECORD.json
+└── conversations/{slug}/
+    ├── RECORD.json
+    └── messages/YYYY-MM.jsonl
+```
+
+Slug = the LinkedIn URL path segment (e.g. `linkedin.com/in/sarah-chen` → `sarah-chen`).
+
+## Critical patterns
+
+### Cookie management
+Every API call must:
+1. Read cookies from `accounts/{slug}/RECORD.json`
+2. Filter out expired cookies
+3. Build `Cookie:` header string
+4. Extract `csrf-token` from `JSESSIONID` value (strip surrounding quotes)
+5. After response: parse `Set-Cookie` headers with `tough-cookie`, merge by name, save back
+
+### URN construction for send
+```
+conversationUrn in payload: urn:li:msg_conversation:(urn:li:fsd_profile:{senderUrn},{conversationUrn})
+mailboxUrn: urn:li:fsd_profile:{senderUrn}
+originToken: UUID v4
+trackingId: UUID v4 converted to byte array (see existing message-sender.ts)
+```
+
+### SSE parsing
+Stream from `https://www.linkedin.com/realtime/connect?rc=1` with `Accept: text/event-stream`.
+Lines arrive as `data: {JSON}`. Extract event type from `topic` field via:
+`topic.match(/:(\w+):urn:li-realtime/)` → group 1 is the event type key.
+
+### stdout vs stderr
+`lilac listen` streams NDJSON to **stdout**. All logs, errors, debug output go to **stderr**.
+This separation is mandatory — agents parse stdout.
+
+## Commands
+
+```
+lilac login [--account <slug>] [--proxy host:port[:user:pass]]
+lilac logout [--account <slug>]
+lilac status [--account <slug>] [--json]
+lilac sync [--account <slug>] [--since 3mo|6mo|1y|YYYY-MM-DD]
+lilac listen [--account <slug>]
+lilac conversations [--account <slug>] [--json] [--limit N]
+lilac messages <contact-slug|url|urn> [--account <slug>] [--json] [--limit N]
+lilac send <contact-slug|url|urn> <text> [--account <slug>] [--json]
+lilac store path|commit|status
+```
+
+## Environment variables
+
+```
+LILAC_STORE        Override default store path (default: ./.lilac)
+LILAC_ACCOUNT      Default account slug
+PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH  Use existing Chromium
+```
+
+## Development
+
+```bash
+bun install
+bun run dev          # runs src/index.ts directly
+bun test             # vitest
+bun run build        # bun build --compile → dist/lilac
+```
+
+Never install packages without using `bun add <package>` (or `bun add -d <package>`
+for dev deps). Always install to get the latest version — don't assume a version exists.
+
+## Testing
+
+Unit tests: `tests/unit/` — no network, no filesystem side effects (use temp dirs).
+Integration tests: `tests/integration/` — mock axios, assert file store state.
+
+Use `vitest`'s `vi.mock` for axios. Use real temp directories (via `os.tmpdir()`) for
+store tests — don't mock the filesystem.
+
+Recorded LinkedIn API fixtures go in `tests/fixtures/`.
