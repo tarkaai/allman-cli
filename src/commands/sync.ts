@@ -7,9 +7,10 @@ import { buildApiClient } from "../linkedin/api/client.js";
 import { loadCookieJar, serializeCookieJar } from "../linkedin/api/cookies.js";
 import { listConversations } from "../linkedin/api/endpoints/conversations.js";
 import { fetchMessages } from "../linkedin/api/endpoints/messages.js";
-import { slugFromLinkedInUrl } from "../utils/slug.js";
+import { getProfileSlugById } from "../linkedin/api/endpoints/profiles.js";
 import * as output from "../utils/output.js";
 import type { ConversationRecord, StoredMessage } from "../store/types.js";
+import type { ConversationStore } from "../store/conversations.js";
 import { extractBareConvId } from "../utils/urn.js";
 
 const MESSAGES_PER_CONVERSATION = 100;
@@ -21,6 +22,14 @@ export interface SyncOptions {
   since?: string;
   json?: boolean;
 }
+
+/** Backoff state for rate-limited profile slug lookups. */
+interface BackoffState {
+  delayMs: number;
+}
+
+const BACKOFF_INITIAL_MS = 1000;
+const BACKOFF_MAX_MS = 60_000;
 
 export async function syncCommand(options: SyncOptions): Promise<void> {
   const storePath = resolveStorePath(options.store);
@@ -42,7 +51,7 @@ export async function syncCommand(options: SyncOptions): Promise<void> {
 
   const sinceMs = parseSince(options.since);
   const sinceDate = new Date(sinceMs);
-  const { conversations, contacts } = store.forAccount(profileId);
+  const conversations = store.forAccount(profileId);
 
   output.info(`Syncing ${accountRecord.name ?? profileId} (since ${sinceDate.toISOString().slice(0, 10)})...`);
 
@@ -66,6 +75,7 @@ export async function syncCommand(options: SyncOptions): Promise<void> {
   let totalMessages = 0;
   let nextCursor: string | null | undefined = undefined;
   let lastUpdatedBefore = Date.now();
+  const backoff: BackoffState = { delayMs: BACKOFF_INITIAL_MS };
 
   output.info("Fetching conversation list...");
 
@@ -80,77 +90,81 @@ export async function syncCommand(options: SyncOptions): Promise<void> {
     if (convPage.length === 0) break;
 
     for (const conv of convPage) {
+      // Stop when we've gone past the --since boundary
       if (conv.lastActivityAt && conv.lastActivityAt < sinceMs) {
         nextCursor = null;
         break;
       }
 
-      const bareId = extractBareConvId(conv.backendUrn || conv.urn);
-      const otherParticipant = conv.participants.find((p) => p.entityUrn !== myProfileUrn);
-      const title = conv.title ?? otherParticipant?.name ?? "Unknown";
+      // Skip group conversations — we only support 1:1
+      if (conv.isGroup) continue;
 
-      const participantsList = conv.participants.map((p) => ({
-        profileId: p.entityUrn.replace("urn:li:fsd_profile:", ""),
-        urn: p.entityUrn,
-        name: p.name ?? "",
-        slug: p.profileUrl ? slugFromLinkedInUrl(p.profileUrl) : null,
-      }));
+      const convId = extractBareConvId(conv.backendUrn || conv.urn);
+      const otherParticipant = conv.participants.find((p) => p.entityUrn !== myProfileUrn);
+      if (!otherParticipant) continue;
+
+      const contactProfileUrn = otherParticipant.entityUrn;
+      const contactProfileId = contactProfileUrn.replace("urn:li:fsd_profile:", "");
+
+      // Resolve the contact's slug — check existing record first to avoid redundant API calls
+      let slug: string | null = null;
+      const existingRecord = await conversations.read(convId);
+      if (existingRecord?.slug) {
+        slug = existingRecord.slug;
+      } else {
+        slug = await resolveSlugWithBackoff(apiClient, contactProfileId, backoff);
+      }
+
+      // Split name into first/last as best effort
+      const fullName = otherParticipant.name ?? "Unknown";
+      const { firstName, lastName } = splitName(fullName);
 
       const record: ConversationRecord = {
-        urn: conv.urn,
-        backendUrn: conv.backendUrn,
-        bareId,
-        title,
-        isGroup: conv.isGroup,
-        participants: participantsList,
+        convId,
+        profileId: contactProfileId,
+        slug,
+        convUrn: conv.urn,
+        backendUrn: conv.backendUrn || null,
+        profileUrn: contactProfileUrn,
+        memberUrn: null,
+        firstName,
+        lastName,
+        name: fullName,
+        headline: otherParticipant.headline ?? null,
+        profileUrl: otherParticipant.profileUrl ?? null,
+        profilePictures: null,
+        distance: null,
+        pronoun: null,
+        memberBadgeType: null,
+        isPremium: false,
+        isVerified: false,
         unreadCount: conv.unreadCount,
         lastActivityAt: conv.lastActivityAt ? new Date(conv.lastActivityAt).toISOString() : null,
+        lastReadAt: null,
         createdAt: null,
-        syncState: {
+        read: conv.unreadCount === 0,
+        notificationStatus: null,
+        categories: [],
+        conversationUrl: null,
+        disabledFeatures: [],
+        syncState: existingRecord?.syncState ?? {
           oldestMessageAt: null,
           newestMessageAt: null,
           lastSyncAt: null,
           totalSynced: 0,
           fullyBackfilled: false,
         },
+        fetchedAt: new Date().toISOString(),
       };
 
-      await conversations.upsert(bareId, record);
-
-      // Create symlink from contact slug → bare conv ID
-      if (!conv.isGroup && otherParticipant) {
-        const contactSlug = otherParticipant.profileUrl
-          ? slugFromLinkedInUrl(otherParticipant.profileUrl)
-          : null;
-        if (contactSlug) {
-          await conversations.createAlias(contactSlug, bareId).catch(() => {});
-        }
-
-        // Upsert contact record
-        const contactProfileId = otherParticipant.entityUrn.replace("urn:li:fsd_profile:", "");
-        await contacts.upsert(contactProfileId, {
-          urn: otherParticipant.entityUrn,
-          slug: contactSlug,
-          name: otherParticipant.name ?? "",
-          headline: otherParticipant.headline ?? null,
-          profileUrl: otherParticipant.profileUrl ?? null,
-          imageUrl: otherParticipant.imageUrl ?? null,
-          connectedAt: null,
-          fetchedAt: new Date().toISOString(),
-        });
-
-        if (contactSlug) {
-          await contacts.createAlias(contactSlug, contactProfileId).catch(() => {});
-        }
-      }
-
+      await conversations.upsert(convId, record);
       totalConversations++;
 
       // Fetch messages
       const messagesWritten = await syncConversationMessages(
         apiClient,
         conversations,
-        bareId,
+        convId,
         conv.backendUrn || conv.urn,
         myProfileUrn,
         sinceMs
@@ -179,15 +193,66 @@ export async function syncCommand(options: SyncOptions): Promise<void> {
   }
 }
 
+/**
+ * Resolve a profile slug by profileId with exponential backoff on rate limits.
+ * Returns null if the slug cannot be resolved (404, network error, etc).
+ * Throws on 401 (auth expired — abort the whole sync).
+ */
+async function resolveSlugWithBackoff(
+  apiClient: ReturnType<typeof buildApiClient>,
+  profileId: string,
+  backoff: BackoffState
+): Promise<string | null> {
+  await sleep(backoff.delayMs);
+
+  try {
+    const slug = await getProfileSlugById(apiClient, profileId);
+    // Success — reset backoff toward initial
+    backoff.delayMs = BACKOFF_INITIAL_MS;
+    return slug;
+  } catch (err: unknown) {
+    const status = extractHttpStatus(err);
+    if (status === 401) {
+      throw new Error("Authentication expired during slug lookup. Re-run `lilac login`.");
+    }
+    if (status === 429 || (status !== null && status >= 500)) {
+      backoff.delayMs = Math.min(backoff.delayMs * 2, BACKOFF_MAX_MS);
+      output.debug(`Slug lookup rate-limited (${status}), backing off to ${backoff.delayMs}ms`);
+    }
+    return null;
+  }
+}
+
+function extractHttpStatus(err: unknown): number | null {
+  if (err && typeof err === "object" && "response" in err) {
+    const resp = (err as Record<string, unknown>).response;
+    if (resp && typeof resp === "object" && "status" in resp) {
+      const status = (resp as Record<string, unknown>).status;
+      if (typeof status === "number") return status;
+    }
+  }
+  return null;
+}
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function splitName(name: string): { firstName: string; lastName: string } {
+  const spaceIdx = name.indexOf(" ");
+  if (spaceIdx === -1) return { firstName: name, lastName: "" };
+  return { firstName: name.slice(0, spaceIdx), lastName: name.slice(spaceIdx + 1) };
+}
+
 async function syncConversationMessages(
   apiClient: ReturnType<typeof buildApiClient>,
-  conversations: import("../store/conversations.js").ConversationStore,
-  bareConvId: string,
+  conversations: ConversationStore,
+  convId: string,
   conversationUrn: string,
   myProfileUrn: string,
   sinceMs: number
 ): Promise<number> {
-  const existing = await conversations.read(bareConvId);
+  const existing = await conversations.read(convId);
   const knownNewestAt = existing?.syncState.newestMessageAt;
 
   let anchorTimestamp = Date.now();
@@ -205,7 +270,7 @@ async function syncConversationMessages(
         hasMore: raw.hasMore,
       };
     } catch (err) {
-      output.debug(`Failed to fetch messages for ${bareConvId}: ${String(err)}`);
+      output.debug(`Failed to fetch messages for ${convId}: ${String(err)}`);
       break;
     }
 
@@ -225,8 +290,8 @@ async function syncConversationMessages(
   }
 
   if (allMessages.length > 0) {
-    await conversations.appendMessages(bareConvId, allMessages);
-    await conversations.updateSyncState(bareConvId, {
+    await conversations.appendMessages(convId, allMessages);
+    await conversations.updateSyncState(convId, {
       oldestMessageAt: Math.min(oldestFetchedAt ?? Infinity, existing?.syncState.oldestMessageAt ?? Infinity),
       newestMessageAt: Math.max(newestFetchedAt ?? 0, existing?.syncState.newestMessageAt ?? 0),
       lastSyncAt: new Date().toISOString(),

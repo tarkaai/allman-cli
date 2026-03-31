@@ -14,6 +14,7 @@ import type { AccountRecord } from "@/store/types.js";
 
 const RECORD_BASE: AccountRecord = {
   urn: null,
+  profileSlug: null,
   name: null,
   headline: null,
   profileUrl: null,

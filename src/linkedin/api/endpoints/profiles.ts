@@ -94,6 +94,52 @@ export async function getProfileUrnBySlug(
   }
 }
 
+/**
+ * Look up a LinkedIn profile's public slug (publicIdentifier) from a profile ID.
+ * Calls the same GraphQL query with the profileId as memberIdentity.
+ * Returns the slug (e.g. "alice-smith") or null if not resolvable.
+ */
+export async function getProfileSlugById(
+  client: LinkedInApiClient,
+  profileId: string
+): Promise<string | null> {
+  const variables = `(memberIdentity:${profileId})`;
+
+  try {
+    const response = await client.request<ProfileQueryResponse>({
+      method: "GET",
+      url: `${GRAPHQL_URL}?variables=${variables}&queryId=${PROFILE_QUERY_ID}`,
+    });
+
+    // The slug may appear as publicIdentifier in included items,
+    // or the profileUrl in the response may redirect-resolve to the real slug.
+    // Check the included array for any mini profile with publicIdentifier.
+    const included = (response as Record<string, unknown>)?.["included"] as Array<Record<string, unknown>> | undefined;
+    if (included) {
+      for (const item of included) {
+        const pubId = item["publicIdentifier"];
+        if (typeof pubId === "string" && pubId.length > 0) {
+          return pubId.toLowerCase();
+        }
+      }
+    }
+
+    // Fallback: check if response has a profileUrl with a real slug (not a profileId)
+    const elements = response?.data?.data?.identityDashProfilesByMemberIdentity?.elements;
+    if (elements && elements.length > 0) {
+      const el = elements[0] as Record<string, unknown>;
+      const pubId = el?.["publicIdentifier"];
+      if (typeof pubId === "string" && pubId.length > 0) {
+        return pubId.toLowerCase();
+      }
+    }
+
+    return null;
+  } catch {
+    return null;
+  }
+}
+
 /** Extract urn:li:fsd_profile:{id} from a string that may be the full URN or contain it. */
 function extractProfileUrn(value: string): string | null {
   const match = value.match(/urn:li:fsd_profile:([^,)]+)/);

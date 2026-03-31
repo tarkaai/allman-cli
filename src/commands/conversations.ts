@@ -14,7 +14,7 @@ export async function conversationsCommand(options: ConversationsOptions): Promi
   await store.init();
 
   const profileId = await store.accounts.getDefault(options.account);
-  const { conversations } = store.forAccount(profileId);
+  const conversations = store.forAccount(profileId);
   const bareIds = await conversations.list();
 
   if (bareIds.length === 0) {
@@ -52,7 +52,7 @@ export async function conversationsCommand(options: ConversationsOptions): Promi
       ? relativeTime(new Date(rec.lastActivityAt).getTime())
       : "never";
     const unread = rec.unreadCount > 0 ? ` [${rec.unreadCount} unread]` : "";
-    return `  ${rec.title.padEnd(30)} ${time.padEnd(12)}${unread}`;
+    return `  ${rec.name.padEnd(30)} ${time.padEnd(12)}${unread}`;
   });
 
   process.stdout.write(lines.join("\n") + "\n");

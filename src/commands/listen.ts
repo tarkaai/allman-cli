@@ -6,17 +6,18 @@
  */
 
 import { join } from "path";
+import { appendFile } from "fs/promises";
 import { Store, resolveStorePath } from "../store/index.js";
 import { buildApiClient, type LinkedInApiClient } from "../linkedin/api/client.js";
 import { loadCookieJar, serializeCookieJar } from "../linkedin/api/cookies.js";
 import { SseClient, type SseEvent } from "../linkedin/realtime/sse-client.js";
-import { listConversations, type ConversationData } from "../linkedin/api/endpoints/conversations.js";
+import { listConversations } from "../linkedin/api/endpoints/conversations.js";
 import { fetchMessages } from "../linkedin/api/endpoints/messages.js";
+import { getProfileSlugById } from "../linkedin/api/endpoints/profiles.js";
 import { emitEvent, info, error, debug } from "../utils/output.js";
 import { extractBareConvId } from "../utils/urn.js";
-import { slugFromLinkedInUrl } from "../utils/slug.js";
 import type { ConversationRecord, StoredMessage } from "../store/types.js";
-import type { ConversationStore, ContactStore } from "../store/index.js";
+import type { ConversationStore } from "../store/index.js";
 
 export interface ListenOptions {
   account?: string;
@@ -44,7 +45,8 @@ export async function listenCommand(options: ListenOptions): Promise<void> {
   const myProfileUrn = accountRecord.urn;
   const accountConfig = await store.accounts.readConfig(profileId);
   const jar = loadCookieJar(accountRecord);
-  const { conversations, contacts } = store.forAccount(profileId);
+  const conversations = store.forAccount(profileId);
+  const accountDir = join(storePath, profileId);
 
   const apiClient = buildApiClient(
     accountRecord,
@@ -67,7 +69,7 @@ export async function listenCommand(options: ListenOptions): Promise<void> {
   process.on("SIGTERM", () => { sseClient.abort(); process.exit(0); });
 
   for await (const event of sseClient.connect()) {
-    await handleEvent(event, profileId, myProfileUrn, store, conversations, contacts, apiClient);
+    await handleEvent(event, profileId, myProfileUrn, store, conversations, accountDir, apiClient);
   }
 }
 
@@ -77,7 +79,7 @@ async function handleEvent(
   myProfileUrn: string,
   store: Store,
   conversations: ConversationStore,
-  contacts: ContactStore,
+  accountDir: string,
   apiClient: LinkedInApiClient
 ): Promise<void> {
   const timestamp = Date.now();
@@ -105,24 +107,21 @@ async function handleEvent(
         : null;
 
       if (!convInfo && event.conversationUrn) {
-        await fetchAndUpsertConversation(event.conversationUrn, myProfileUrn, apiClient, conversations, contacts);
+        await fetchAndUpsertConversation(event.conversationUrn, myProfileUrn, apiClient, conversations);
         convInfo = event.conversationUrn
           ? await conversations.findByUrn(event.conversationUrn)
           : null;
       }
 
-      const bareConvId = convInfo?.bareId ?? null;
+      const convId = convInfo?.convId ?? null;
       const convRecord = convInfo?.record ?? null;
 
-      // Resolve sender name from participants
-      const senderParticipant = convRecord?.participants.find(
-        (p) => p.urn === event.fromUrn || event.fromUrn?.includes(p.profileId)
-      );
-      const fromName = senderParticipant?.name ?? (isFromMe ? convRecord?.participants.find(p => p.urn === myProfileUrn)?.name ?? null : null);
+      // Sender name: for 1:1 convs, convRecord.name is the other person
+      const fromName = isFromMe ? null : (convRecord?.name ?? null);
 
       // Fetch body if empty
       let body = event.body ?? "";
-      if (!body && event.conversationUrn && bareConvId) {
+      if (!body && event.conversationUrn && convId) {
         try {
           const convUrn = convRecord?.backendUrn ?? event.conversationUrn;
           const { messages } = await fetchMessages(apiClient, convUrn, myProfileUrn, (event.timestamp ?? timestamp) + 1, 5);
@@ -136,14 +135,14 @@ async function handleEvent(
         account: profileId,
         timestamp: event.timestamp ?? timestamp,
         conversation: convRecord
-          ? { urn: convRecord.urn, bareId: bareConvId, title: convRecord.title, isGroup: convRecord.isGroup }
-          : { urn: event.conversationUrn, bareId: null, title: null, isGroup: false },
+          ? { urn: convRecord.convUrn, convId, name: convRecord.name, slug: convRecord.slug }
+          : { urn: event.conversationUrn, convId: null, name: null, slug: null },
         from: { urn: event.fromUrn, name: fromName },
         message: { urn: event.messageUrn, body, isFromMe },
       });
 
       // Persist to store
-      if (bareConvId && event.messageUrn) {
+      if (convId && event.messageUrn) {
         const storedMsg: StoredMessage = {
           urn: event.messageUrn,
           timestamp: event.timestamp ?? timestamp,
@@ -155,18 +154,32 @@ async function handleEvent(
           attachments: [],
           originToken: event.originToken ?? null,
         };
-        await conversations.appendMessages(bareConvId, [storedMsg]).catch((err) => {
+        await conversations.appendMessages(convId, [storedMsg]).catch((err) => {
           debug(`Failed to persist message: ${String(err)}`);
         });
-        await conversations.updateSyncState(bareConvId, { newestMessageAt: event.timestamp ?? timestamp }).catch(() => {});
-        store.git.scheduleCommit(`listen: new message in ${bareConvId.slice(0, 20)}`);
+        await conversations.updateSyncState(convId, { newestMessageAt: event.timestamp ?? timestamp }).catch(() => {});
+        store.git.scheduleCommit(`listen: new message in ${convId.slice(0, 20)}`);
+
+        // Append to INBOX.jsonl for inbound messages
+        if (!isFromMe) {
+          const inboxLine = JSON.stringify({
+            from: fromName ?? event.fromUrn ?? "unknown",
+            slug: convRecord?.slug ?? null,
+            body,
+            timestamp: event.timestamp ?? timestamp,
+          });
+          const inboxPath = join(accountDir, "INBOX.jsonl");
+          await appendFile(inboxPath, inboxLine + "\n").catch((err) => {
+            debug(`Failed to append to INBOX.jsonl: ${String(err)}`);
+          });
+        }
       }
       return;
     }
 
     case "typing": {
       const convInfo = event.conversationUrn ? await conversations.findByUrn(event.conversationUrn) : null;
-      emitEvent({ event: "typing", account: profileId, timestamp, conversation: { urn: event.conversationUrn, bareId: convInfo?.bareId ?? null }, from: { urn: event.fromUrn } });
+      emitEvent({ event: "typing", account: profileId, timestamp, conversation: { urn: event.conversationUrn, convId: convInfo?.convId ?? null }, from: { urn: event.fromUrn } });
       return;
     }
 
@@ -191,8 +204,7 @@ async function fetchAndUpsertConversation(
   conversationUrn: string,
   myProfileUrn: string,
   apiClient: LinkedInApiClient,
-  conversations: ConversationStore,
-  contacts: ContactStore
+  conversations: ConversationStore
 ): Promise<void> {
   try {
     debug(`listen: fetching unknown conversation from API: ${conversationUrn}`);
@@ -201,59 +213,75 @@ async function fetchAndUpsertConversation(
     const match = page.find((c) => c.urn === conversationUrn || c.backendUrn === conversationUrn);
     if (!match) return;
 
-    await upsertConversationRecord(match, myProfileUrn, conversations, contacts);
+    // Skip group conversations
+    if (match.isGroup) {
+      debug(`listen: skipping group conversation ${conversationUrn}`);
+      return;
+    }
+
+    const convId = extractBareConvId(match.backendUrn || match.urn);
+    const otherParticipant = match.participants.find((p) => p.entityUrn !== myProfileUrn);
+    if (!otherParticipant) return;
+
+    const contactProfileUrn = otherParticipant.entityUrn;
+    const contactProfileId = contactProfileUrn.replace("urn:li:fsd_profile:", "");
+
+    // Try to resolve slug
+    const existingRecord = await conversations.read(convId);
+    let slug: string | null = existingRecord?.slug ?? null;
+    if (!slug) {
+      slug = await getProfileSlugById(apiClient, contactProfileId).catch(() => null);
+    }
+
+    const fullName = otherParticipant.name ?? "Unknown";
+    const { firstName, lastName } = splitName(fullName);
+
+    const record: ConversationRecord = {
+      convId,
+      profileId: contactProfileId,
+      slug,
+      convUrn: match.urn,
+      backendUrn: match.backendUrn || null,
+      profileUrn: contactProfileUrn,
+      memberUrn: null,
+      firstName,
+      lastName,
+      name: fullName,
+      headline: otherParticipant.headline ?? null,
+      profileUrl: otherParticipant.profileUrl ?? null,
+      profilePictures: null,
+      distance: null,
+      pronoun: null,
+      memberBadgeType: null,
+      isPremium: false,
+      isVerified: false,
+      unreadCount: match.unreadCount,
+      lastActivityAt: match.lastActivityAt ? new Date(match.lastActivityAt).toISOString() : null,
+      lastReadAt: null,
+      createdAt: null,
+      read: match.unreadCount === 0,
+      notificationStatus: null,
+      categories: [],
+      conversationUrl: null,
+      disabledFeatures: [],
+      syncState: existingRecord?.syncState ?? {
+        oldestMessageAt: null,
+        newestMessageAt: null,
+        lastSyncAt: null,
+        totalSynced: 0,
+        fullyBackfilled: false,
+      },
+      fetchedAt: new Date().toISOString(),
+    };
+
+    await conversations.upsert(convId, record);
   } catch (err) {
     debug(`listen: failed to fetch conversation: ${String(err)}`);
   }
 }
 
-async function upsertConversationRecord(
-  conv: ConversationData,
-  myProfileUrn: string,
-  conversations: ConversationStore,
-  contacts: ContactStore
-): Promise<void> {
-  const bareId = extractBareConvId(conv.backendUrn || conv.urn);
-  const otherParticipant = conv.participants.find((p) => p.entityUrn !== myProfileUrn);
-  const title = conv.title ?? otherParticipant?.name ?? "Unknown";
-
-  const participantsList = conv.participants.map((p) => ({
-    profileId: p.entityUrn.replace("urn:li:fsd_profile:", ""),
-    urn: p.entityUrn,
-    name: p.name ?? "",
-    slug: p.profileUrl ? slugFromLinkedInUrl(p.profileUrl) : null,
-  }));
-
-  const record: ConversationRecord = {
-    urn: conv.urn,
-    backendUrn: conv.backendUrn,
-    bareId,
-    title,
-    isGroup: conv.isGroup,
-    participants: participantsList,
-    unreadCount: conv.unreadCount,
-    lastActivityAt: conv.lastActivityAt ? new Date(conv.lastActivityAt).toISOString() : null,
-    createdAt: null,
-    syncState: { oldestMessageAt: null, newestMessageAt: null, lastSyncAt: new Date().toISOString(), totalSynced: 0, fullyBackfilled: false },
-  };
-
-  await conversations.upsert(bareId, record);
-
-  if (!conv.isGroup && otherParticipant) {
-    const slug = otherParticipant.profileUrl ? slugFromLinkedInUrl(otherParticipant.profileUrl) : null;
-    if (slug) await conversations.createAlias(slug, bareId).catch(() => {});
-
-    const contactId = otherParticipant.entityUrn.replace("urn:li:fsd_profile:", "");
-    await contacts.upsert(contactId, {
-      urn: otherParticipant.entityUrn,
-      slug,
-      name: otherParticipant.name ?? "",
-      headline: otherParticipant.headline ?? null,
-      profileUrl: otherParticipant.profileUrl ?? null,
-      imageUrl: otherParticipant.imageUrl ?? null,
-      connectedAt: null,
-      fetchedAt: new Date().toISOString(),
-    });
-    if (slug) await contacts.createAlias(slug, contactId).catch(() => {});
-  }
+function splitName(name: string): { firstName: string; lastName: string } {
+  const spaceIdx = name.indexOf(" ");
+  if (spaceIdx === -1) return { firstName: name, lastName: "" };
+  return { firstName: name.slice(0, spaceIdx), lastName: name.slice(spaceIdx + 1) };
 }

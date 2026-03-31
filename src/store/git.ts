@@ -93,7 +93,14 @@ export async function ensureGitignore(storePath: string): Promise<void> {
   } catch {
     await writeFile(
       gitignorePath,
-      ["# lilac-cli store gitignore", "*.lock", ""].join("\n"),
+      [
+        "# lilac-cli store gitignore",
+        "*.lock",
+        "COOKIES.json",
+        "INBOX.jsonl",
+        "listen.log",
+        "",
+      ].join("\n"),
       "utf8"
     );
   }

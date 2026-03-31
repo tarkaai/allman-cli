@@ -36,14 +36,14 @@ export async function loginCommand(options: LoginOptions): Promise<void> {
   // Check for existing account to inject cookies (re-auth flow)
   // If --account is provided, try resolving it to an existing profile ID
   let existingCookieJar: object | null = null;
-  let existingProfileId: string | null = null;
+  let _existingProfileId: string | null = null;
 
   if (options.account) {
     const resolved = await store.accounts.resolveId(options.account);
     if (resolved) {
       const existing = await store.accounts.read(resolved);
       existingCookieJar = existing?.cookieJar ?? null;
-      existingProfileId = resolved;
+      _existingProfileId = resolved;
       if (existingCookieJar) {
         output.info(`Re-authenticating existing account (${options.account})...`);
       }

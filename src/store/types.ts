@@ -1,33 +1,19 @@
 /**
  * File store type definitions.
- * These match the shapes written to RECORD.json files and JSONL message lines.
+ * These match the shapes written to JSON/JSONL files in the .lilac store.
  */
 
 // ---------------------------------------------------------------------------
-// Cookie (matches tough-cookie serialization format stored in accounts)
-// ---------------------------------------------------------------------------
-
-export interface StoredCookie {
-  key: string;
-  value: string;
-  domain?: string;
-  path?: string;
-  expires?: string | "Infinity"; // ISO string or "Infinity" for session cookies
-  httpOnly?: boolean;
-  secure?: boolean;
-  sameSite?: string;
-}
-
-// ---------------------------------------------------------------------------
-// Account
+// Account (AUTH.json + COOKIES.json)
 // ---------------------------------------------------------------------------
 
 export type AccountStatus = "unauthenticated" | "authenticated" | "expired";
 
-export interface AccountRecord {
+/** AUTH.json — profile info and auth status. Committed to git. */
+export interface AccountAuth {
   /** urn:li:fsd_profile:{id} */
   urn: string | null;
-  /** LinkedIn profile slug (e.g. "dan-moore") — used for symlink creation */
+  /** LinkedIn profile slug (publicIdentifier) */
   profileSlug: string | null;
   name: string | null;
   headline: string | null;
@@ -36,17 +22,29 @@ export interface AccountRecord {
   userType: "basic" | "sales_nav" | null;
   networkSize: number | null;
   status: AccountStatus;
+  lastSyncAt: string | null;
+}
+
+/** COOKIES.json — cookie jar. Gitignored (sensitive). */
+export interface AccountCookies {
   /** CookieJar serialized via cookieJar.toJSON() */
   cookieJar: object | null;
   cookiesUpdatedAt: string | null;
-  lastSyncAt: string | null;
 }
+
+/** Merged view of AUTH.json + COOKIES.json (what commands see). */
+export interface AccountRecord extends AccountAuth, AccountCookies {}
 
 export interface AccountConfig {
   proxy?: ProxyConfig;
   /** Minimum ms between outbound messages. Default: 3000 */
   rateLimit?: {
     minMessageIntervalMs: number;
+  };
+  /** Optional git remote for message history backup */
+  git?: {
+    remote?: string;
+    autoPush?: boolean;
   };
 }
 
@@ -58,34 +56,13 @@ export interface ProxyConfig {
 }
 
 // ---------------------------------------------------------------------------
-// Contact
+// Conversation (RECORD.json — one per convId directory)
 // ---------------------------------------------------------------------------
 
-export interface ContactRecord {
-  /** urn:li:fsd_profile:{id} */
-  urn: string;
-  /** LinkedIn profile slug (e.g. "alice-smith") */
-  slug: string | null;
-  name: string;
-  headline: string | null;
-  profileUrl: string | null;
-  imageUrl: string | null;
-  connectedAt: string | null;
-  fetchedAt: string;
-}
-
-// ---------------------------------------------------------------------------
-// Conversation
-// ---------------------------------------------------------------------------
-
-export interface ConversationParticipant {
-  /** LinkedIn profile ID (not full URN) */
-  profileId: string;
-  /** urn:li:fsd_profile:{id} */
-  urn: string;
-  name: string;
-  /** LinkedIn profile slug if known */
-  slug: string | null;
+export interface ProfilePicture {
+  width: number;
+  height: number;
+  url: string;
 }
 
 export interface SyncState {
@@ -101,19 +78,59 @@ export interface SyncState {
 }
 
 export interface ConversationRecord {
-  /** Frontend conversation URN: urn:li:msg_conversation:... */
-  urn: string;
-  /** Backend URN: urn:li:messagingThread:... (used in message payloads) */
+  // === Three canonical IDs (must match filesystem) ===
+  /** Directory name — LinkedIn conversation ID */
+  convId: string;
+  /** Contact's LinkedIn profile ID (e.g. "ACoAAA-2BsYB...") */
+  profileId: string;
+  /** Real LinkedIn publicIdentifier slug, or null if unresolved */
+  slug: string | null;
+
+  // === LinkedIn URNs (for API calls) ===
+  /** urn:li:msg_conversation:... */
+  convUrn: string;
+  /** urn:li:messagingThread:... */
   backendUrn: string | null;
-  /** Bare conversation ID (folder name): e.g. 2-OTg0N2Nk... */
-  bareId: string;
-  title: string;
-  isGroup: boolean;
-  participants: ConversationParticipant[];
+  /** urn:li:fsd_profile:{profileId} */
+  profileUrn: string;
+  /** urn:li:member:{numericId} (backend member ID) */
+  memberUrn: string | null;
+
+  // === Contact info (cached from API) ===
+  firstName: string;
+  lastName: string;
+  /** Computed: "{firstName} {lastName}" */
+  name: string;
+  headline: string | null;
+  profileUrl: string | null;
+  profilePictures: ProfilePicture[] | null;
+  /** DISTANCE_1, DISTANCE_2, DISTANCE_3, OUT_OF_NETWORK */
+  distance: string | null;
+  pronoun: string | null;
+  /** VERIFIED_PROFILE, etc. */
+  memberBadgeType: string | null;
+  isPremium: boolean;
+  isVerified: boolean;
+
+  // === Conversation state (cached from API) ===
   unreadCount: number;
   lastActivityAt: string | null;
+  lastReadAt: string | null;
   createdAt: string | null;
+  read: boolean;
+  /** ACTIVE, MUTED */
+  notificationStatus: string | null;
+  /** PRIMARY_INBOX, INBOX, etc. */
+  categories: string[];
+  /** Direct link to LinkedIn thread */
+  conversationUrl: string | null;
+  /** ADD_PARTICIPANT, REMOVE_PARTICIPANT, etc. */
+  disabledFeatures: string[];
+
+  // === Sync metadata ===
   syncState: SyncState;
+  /** ISO timestamp of last API fetch */
+  fetchedAt: string;
 }
 
 // ---------------------------------------------------------------------------

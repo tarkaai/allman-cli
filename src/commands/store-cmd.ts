@@ -29,11 +29,14 @@ export async function storeStatusCommand(options: StoreCmdOptions): Promise<void
   await store.init();
 
   const accounts = await store.accounts.list();
-  const contacts = await store.contacts.list();
-  const conversations = await store.conversations.list();
+  let conversationCount = 0;
+  for (const id of accounts) {
+    const convs = store.forAccount(id);
+    const convIds = await convs.list();
+    conversationCount += convIds.length;
+  }
 
   info(`Store: ${storePath}`);
   info(`  Accounts:      ${accounts.length}`);
-  info(`  Contacts:      ${contacts.length}`);
-  info(`  Conversations: ${conversations.length}`);
+  info(`  Conversations: ${conversationCount}`);
 }
