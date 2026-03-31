@@ -186,6 +186,19 @@ interface SendMessagePayload {
 }
 
 interface SendMessageResponse {
+  // Normalized JSON format: data["*value"] is a URN ref into included[]
+  data?: {
+    "*value"?: string;
+    value?: {
+      backendUrn?: string;
+      entityUrn?: string;
+      conversationUrn?: string;
+      backendConversationUrn?: string;
+      deliveredAt?: number;
+    };
+  };
+  included?: Array<Record<string, unknown>>;
+  // Legacy flat format (kept for fallback)
   value?: {
     backendUrn?: string;
     entityUrn?: string;
@@ -236,17 +249,11 @@ export async function sendMessage(
     data: payload,
   });
 
-  const value = response?.value;
-  if (!value) {
+  const parsed = parseSendResponse(response);
+  if (!parsed) {
     throw new Error("LinkedIn returned an empty response for sendMessage");
   }
-
-  return {
-    messageUrn: value.backendUrn ?? value.entityUrn ?? "",
-    conversationUrn: value.conversationUrn ?? "",
-    backendConversationUrn: value.backendConversationUrn ?? "",
-    deliveredAt: value.deliveredAt ?? Date.now(),
-  };
+  return parsed;
 }
 
 /**
@@ -287,11 +294,54 @@ export async function sendFirstMessage(
     data: payload,
   });
 
-  const value = response?.value;
-  if (!value) {
+  const parsed = parseSendResponse(response);
+  if (!parsed) {
     throw new Error("LinkedIn returned an empty response for sendFirstMessage");
   }
+  return parsed;
+}
 
+// ---------------------------------------------------------------------------
+// Parsing helpers
+// ---------------------------------------------------------------------------
+
+/**
+ * Parse LinkedIn's normalized send response.
+ * The API returns: { data: { "*value": "<msgUrn>" }, included: [...] }
+ * where included contains the message object.
+ */
+function parseSendResponse(response: SendMessageResponse): SendMessageResult | null {
+  // Normalized format: data["*value"] is a URN ref into included[]
+  const valueUrn = response?.data?.["*value"];
+  if (valueUrn && response.included) {
+    const included = buildIncludedMap(response.included);
+    const msg = included.get(valueUrn) as {
+      entityUrn?: string;
+      backendUrn?: string;
+      conversationUrn?: string;
+      backendConversationUrn?: string;
+      deliveredAt?: number;
+    } | undefined;
+    if (msg) {
+      return {
+        messageUrn: msg.backendUrn ?? msg.entityUrn ?? valueUrn,
+        conversationUrn: msg.conversationUrn ?? "",
+        backendConversationUrn: msg.backendConversationUrn ?? "",
+        deliveredAt: msg.deliveredAt ?? Date.now(),
+      };
+    }
+    // URN ref found but not in included — still return what we have
+    return {
+      messageUrn: valueUrn,
+      conversationUrn: "",
+      backendConversationUrn: "",
+      deliveredAt: Date.now(),
+    };
+  }
+
+  // Legacy flat format fallback
+  const value = response?.value ?? response?.data?.value;
+  if (!value) return null;
   return {
     messageUrn: value.backendUrn ?? value.entityUrn ?? "",
     conversationUrn: value.conversationUrn ?? "",
@@ -299,10 +349,6 @@ export async function sendFirstMessage(
     deliveredAt: value.deliveredAt ?? Date.now(),
   };
 }
-
-// ---------------------------------------------------------------------------
-// Parsing helpers
-// ---------------------------------------------------------------------------
 
 function buildIncludedMap(included: Array<Record<string, unknown>> | undefined): Map<string, Record<string, unknown>> {
   const map = new Map<string, Record<string, unknown>>();

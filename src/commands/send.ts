@@ -230,6 +230,17 @@ async function resolveTarget(
     return { error: `Cannot resolve target: "${target}". Use a LinkedIn URL, profile slug, or URN.` };
   }
 
+  // Check if there's already a local conversation stored under this slug
+  const directConv = await store.conversations.read(contactSlug);
+  if (directConv) {
+    return {
+      conversationUrn: directConv.backendUrn ?? directConv.urn,
+      contactProfileUrn: directConv.participants.find((p) => p.slug !== accountSlug)?.urn,
+      conversationSlugLocal: contactSlug,
+      isNewConversation: false,
+    };
+  }
+
   // Look up contact in local store first
   const localContact = await store.contacts.read(contactSlug);
   let contactUrn = localContact?.urn;
