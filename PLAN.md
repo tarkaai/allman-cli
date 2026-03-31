@@ -22,6 +22,7 @@ A flat, file-based messaging store designed for AI agents. One directory per con
 │   ├── AUTH.json                          # profile info, auth status (committed)
 │   ├── COOKIES.json                       # cookie jar (gitignored, sensitive)
 │   ├── config.json                        # proxy, rate limits (committed)
+│   ├── rate-state.json                    # last send timestamp (gitignored, ephemeral)
 │   ├── INBOX.jsonl                        # new message notifications (gitignored, ephemeral)
 │   ├── listen.log                         # SSE debug log (gitignored)
 │   │
@@ -36,7 +37,7 @@ A flat, file-based messaging store designed for AI agents. One directory per con
 └── dan-moore -> {myProfileId}             # symlink: account name slug
 ```
 
-**Gitignored inside .lilac:** `COOKIES.json`, `INBOX.jsonl`, `listen.log`
+**Gitignored inside .lilac:** `COOKIES.json`, `rate-state.json`, `INBOX.jsonl`, `listen.log`
 
 **Three lookups, all O(1):**
 - `convId` → direct directory
@@ -131,6 +132,11 @@ urn, profileSlug, name, headline, profileUrl, imageUrl, userType, networkSize, s
 **COOKIES.json** (gitignored, updates on every API call):
 ```
 cookieJar, cookiesUpdatedAt
+```
+
+**rate-state.json** (gitignored, updates on every outbound message send):
+```
+lastMessageSentAt   # Unix ms — enforces per-account send rate limit across process restarts
 ```
 
 ---

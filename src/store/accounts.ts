@@ -12,11 +12,12 @@ import { readFile, writeFile, readdir } from "fs/promises";
 import { join } from "path";
 import { ensureDir, forceAlias, resolveAlias } from "./alias.js";
 import type { StoreGit } from "./git.js";
-import type { AccountAuth, AccountCookies, AccountRecord, AccountConfig } from "./types.js";
+import type { AccountAuth, AccountCookies, AccountRecord, AccountConfig, AccountRateState } from "./types.js";
 
 const AUTH_FILE = "AUTH.json";
 const COOKIES_FILE = "COOKIES.json";
 const CONFIG_FILE = "config.json";
+const RATE_STATE_FILE = "rate-state.json";
 
 // Profile IDs are base64-encoded strings starting with "ACo"
 const PROFILE_ID_PATTERN = /^ACo/;
@@ -159,6 +160,20 @@ export class AccountStore {
     await ensureDir(this.root, profileId);
     await writeFile(join(this.dir(profileId), CONFIG_FILE), JSON.stringify(config, null, 2) + "\n", "utf8");
     this.git.scheduleCommit(`account: update config for ${profileId.slice(0, 12)}`);
+  }
+
+  async readRateState(profileId: string): Promise<AccountRateState | null> {
+    try {
+      const raw = await readFile(join(this.dir(profileId), RATE_STATE_FILE), "utf8");
+      return JSON.parse(raw) as AccountRateState;
+    } catch {
+      return null;
+    }
+  }
+
+  async writeRateState(profileId: string, state: AccountRateState): Promise<void> {
+    await ensureDir(this.root, profileId);
+    await writeFile(join(this.dir(profileId), RATE_STATE_FILE), JSON.stringify(state) + "\n", "utf8");
   }
 
   /**

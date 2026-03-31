@@ -26,6 +26,7 @@ import {
   newCookieJar,
 } from "./cookies.js";
 import type { AccountRecord, ProxyConfig } from "../../store/types.js";
+import { RateLimiter } from "../../utils/rate-limiter.js";
 import * as output from "../../utils/output.js";
 
 // ---------------------------------------------------------------------------
@@ -155,6 +156,7 @@ export type LinkedInErrorCode =
 // ---------------------------------------------------------------------------
 
 export type CookiePersistFn = (updatedJar: CookieJar) => Promise<void>;
+export type RateStatePersistFn = (lastMessageSentAt: number) => Promise<void>;
 
 // ---------------------------------------------------------------------------
 // API Client
@@ -165,6 +167,10 @@ export interface ApiClientOptions {
   account: AccountRecord;
   /** Called after every response to persist updated cookies. */
   onCookieUpdate?: CookiePersistFn;
+  /** Rate limiter enforced before every outbound message send. */
+  rateLimiter?: RateLimiter;
+  /** Called after acquiring a send slot to persist the timestamp. */
+  onRateStateUpdate?: RateStatePersistFn;
   /** Proxy configuration (from account config). */
   proxy?: ProxyConfig;
 }
@@ -182,14 +188,20 @@ export interface ApiRequestOptions {
   timeout?: number;
 }
 
+const MESSAGES_ENDPOINT = "/voyagerMessagingDashMessengerMessages";
+
 export class LinkedInApiClient {
   private jar: CookieJar;
   private readonly onCookieUpdate?: CookiePersistFn;
+  private readonly rateLimiter?: RateLimiter;
+  private readonly onRateStateUpdate?: RateStatePersistFn;
   private readonly proxy?: ProxyConfig;
 
   constructor(options: ApiClientOptions) {
     this.jar = loadCookieJar(options.account);
     this.onCookieUpdate = options.onCookieUpdate;
+    this.rateLimiter = options.rateLimiter;
+    this.onRateStateUpdate = options.onRateStateUpdate;
     this.proxy = options.proxy;
   }
 
@@ -204,6 +216,14 @@ export class LinkedInApiClient {
   }
 
   async request<T = unknown>(options: ApiRequestOptions): Promise<T> {
+    // Enforce rate limit on outbound message sends
+    if (options.method === "POST" && options.url.includes(MESSAGES_ENDPOINT) && this.rateLimiter) {
+      await this.rateLimiter.acquire();
+      if (this.onRateStateUpdate) {
+        await this.onRateStateUpdate(Date.now());
+      }
+    }
+
     const cookieHeader = await buildCookieHeader(this.jar);
     const csrfToken = (await getCsrfToken(this.jar)) ?? "";
 
@@ -353,12 +373,16 @@ export class LinkedInApiClient {
 export function buildApiClient(
   account: AccountRecord,
   persistCookies: CookiePersistFn,
-  proxy?: ProxyConfig
+  proxy?: ProxyConfig,
+  rateLimiter?: RateLimiter,
+  persistRateState?: RateStatePersistFn
 ): LinkedInApiClient {
   return new LinkedInApiClient({
     account,
     onCookieUpdate: persistCookies,
     proxy,
+    rateLimiter,
+    onRateStateUpdate: persistRateState,
   });
 }
 

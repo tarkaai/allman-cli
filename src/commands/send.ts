@@ -7,8 +7,7 @@ import { LinkedInError } from "../linkedin/api/client.js";
 import { loadSession } from "../linkedin/api/session.js";
 import { findConversationByRecipient } from "../linkedin/api/endpoints/conversations.js";
 import { fetchMessages, sendMessage, sendFirstMessage } from "../linkedin/api/endpoints/messages.js";
-import { getProfileUrnBySlug } from "../linkedin/api/endpoints/profiles.js";
-import { getRateLimiter } from "../utils/rate-limiter.js";
+import { getProfileDataBySlug } from "../linkedin/api/endpoints/profiles.js";
 import { isUrn, extractBareConvId, profileUrnId } from "../utils/urn.js";
 import { slugFromUrl } from "../utils/slug.js";
 import * as output from "../utils/output.js";
@@ -35,7 +34,6 @@ export async function sendCommand(target: string, text: string, options: SendOpt
   }
   const { apiClient, profileId, myProfileUrn, accountRecord } = session;
   const conversations = store.forAccount(profileId);
-  const accountConfig = await store.accounts.readConfig(profileId);
 
   const resolved = await resolveTarget(target, myProfileUrn, apiClient, conversations);
 
@@ -44,7 +42,7 @@ export async function sendCommand(target: string, text: string, options: SendOpt
     return;
   }
 
-  const { bareConvId, contactProfileUrn, contactSlug, isNewConversation } = resolved;
+  const { bareConvId, contactProfileUrn, contactSlug, contactFirstName, contactLastName, isNewConversation } = resolved;
 
   // Pre-send sync — abort if new inbound messages arrived since last sync
   if (bareConvId && !isNewConversation) {
@@ -61,12 +59,7 @@ export async function sendCommand(target: string, text: string, options: SendOpt
     }
   }
 
-  // Rate limit
-  const minIntervalMs = accountConfig.rateLimit?.minMessageIntervalMs;
-  const rateLimiter = getRateLimiter(profileId, minIntervalMs);
-  await rateLimiter.acquire();
-
-  // Send
+  // Send (rate limiting enforced by the API client)
   let result: { messageUrn: string; conversationUrn: string; backendConversationUrn: string; deliveredAt: number };
 
   try {
@@ -123,9 +116,9 @@ export async function sendCommand(target: string, text: string, options: SendOpt
       backendUrn: result.backendConversationUrn,
       profileUrn: contactProfileUrn ?? "",
       memberUrn: null,
-      firstName: "",
-      lastName: "",
-      name: "New conversation",
+      firstName: contactFirstName ?? "",
+      lastName: contactLastName ?? "",
+      name: [contactFirstName, contactLastName].filter(Boolean).join(" ") || "New conversation",
       headline: null,
       profileUrl: null,
       profilePictures: null,
@@ -168,6 +161,8 @@ interface ResolvedTarget {
   bareConvId?: string;
   contactProfileUrn?: string;
   contactSlug?: string;
+  contactFirstName?: string | null;
+  contactLastName?: string | null;
   isNewConversation?: boolean;
   error?: string;
 }
@@ -202,13 +197,17 @@ async function resolveTarget(
   let contactUrn: string | null = null;
 
   // If not in local store, query LinkedIn API
+  let contactFirstName: string | null = null;
+  let contactLastName: string | null = null;
   if (!contactUrn) {
     output.info(`Looking up profile "${contactSlug}" on LinkedIn...`);
-    const fetched = await getProfileUrnBySlug(apiClient, contactSlug);
+    const fetched = await getProfileDataBySlug(apiClient, contactSlug);
     if (!fetched) {
       return { error: `Profile "${contactSlug}" not found on LinkedIn.` };
     }
-    contactUrn = fetched;
+    contactUrn = fetched.urn;
+    contactFirstName = fetched.firstName;
+    contactLastName = fetched.lastName;
   }
 
   // Look for existing conversation with this contact
@@ -223,7 +222,7 @@ async function resolveTarget(
     return { bareConvId: bare, contactProfileUrn: contactUrn, contactSlug, isNewConversation: false };
   }
 
-  return { contactProfileUrn: contactUrn, contactSlug, isNewConversation: true };
+  return { contactProfileUrn: contactUrn, contactSlug, contactFirstName, contactLastName, isNewConversation: true };
 }
 
 // ---------------------------------------------------------------------------

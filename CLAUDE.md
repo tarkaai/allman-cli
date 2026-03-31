@@ -46,14 +46,20 @@ tests/integration/           Mock network responses
 ```
 .lilac/
 ├── .git/
-├── accounts/{slug}/RECORD.json      # cookies live here (inline)
-├── contacts/{slug}/RECORD.json
-└── conversations/{slug}/
-    ├── RECORD.json
-    └── messages/YYYY-MM.jsonl
+├── {myProfileId}/
+│   ├── AUTH.json                    # profile info, auth status (committed)
+│   ├── COOKIES.json                 # cookie jar (gitignored)
+│   ├── config.json                  # proxy, rate limits (committed)
+│   ├── rate-state.json              # last send timestamp (gitignored)
+│   ├── {convId}/
+│   │   ├── RECORD.json              # contact + conversation + sync state
+│   │   └── messages/YYYY-MM.jsonl
+│   ├── {profileId} -> {convId}      # symlink: contact profile ID → conversation
+│   └── {slug} -> {convId}           # symlink: LinkedIn slug → conversation
+└── {accountSlug} -> {myProfileId}   # symlink: account slug → profile dir
 ```
 
-Slug = the LinkedIn URL path segment (e.g. `linkedin.com/in/sarah-chen` → `sarah-chen`).
+Slug = the LinkedIn `publicIdentifier` (e.g. `linkedin.com/in/sarah-chen` → `sarah-chen`).
 
 ## Critical patterns
 
@@ -72,6 +78,17 @@ mailboxUrn: urn:li:fsd_profile:{senderUrn}
 originToken: UUID v4
 trackingId: UUID v4 converted to byte array (see existing message-sender.ts)
 ```
+
+For **new conversations** (no existing thread), omit `conversationUrn` from the `message` object
+entirely — do not set it to empty string. LinkedIn returns 400 if it is present but malformed.
+
+### Rate limiting
+Outbound message sends are rate-limited per account. Default: 3000ms between sends.
+
+- Enforced inside `LinkedInApiClient.request()` on every `POST` to the messages endpoint
+- State persisted to `rate-state.json` (`lastMessageSentAt`) — survives process restarts
+- Configurable via `config.json`: `rateLimit.minMessageIntervalMs`
+- **All send paths are automatically rate-limited** — no per-command opt-in needed
 
 ### SSE parsing
 Stream from `https://www.linkedin.com/realtime/connect?rc=1` with `Accept: text/event-stream`.

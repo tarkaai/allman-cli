@@ -9,6 +9,7 @@ import type { Store } from "../../store/index.js";
 import type { AccountRecord } from "../../store/types.js";
 import { buildApiClient, type LinkedInApiClient } from "./client.js";
 import { loadCookieJar, serializeCookieJar } from "./cookies.js";
+import { buildRateLimiter } from "../../utils/rate-limiter.js";
 
 export interface SessionResult {
   apiClient: LinkedInApiClient;
@@ -39,7 +40,13 @@ export async function loadSession(
   }
 
   const accountConfig = await store.accounts.readConfig(profileId);
+  const rateState = await store.accounts.readRateState(profileId);
   const jar = loadCookieJar(accountRecord);
+
+  const rateLimiter = buildRateLimiter({
+    minIntervalMs: accountConfig.rateLimit?.minMessageIntervalMs,
+    initialLastSendAt: rateState?.lastMessageSentAt,
+  });
 
   const apiClient = buildApiClient(
     accountRecord,
@@ -49,7 +56,11 @@ export async function loadSession(
         cookiesUpdatedAt: new Date().toISOString(),
       });
     },
-    accountConfig.proxy
+    accountConfig.proxy,
+    rateLimiter,
+    async (lastMessageSentAt) => {
+      await store.accounts.writeRateState(profileId, { lastMessageSentAt });
+    }
   );
   apiClient.updateJar(jar);
 

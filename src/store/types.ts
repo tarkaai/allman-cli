@@ -35,6 +35,12 @@ export interface AccountCookies {
 /** Merged view of AUTH.json + COOKIES.json (what commands see). */
 export interface AccountRecord extends AccountAuth, AccountCookies {}
 
+/** rate-state.json — ephemeral send timing state. Not git-committed. */
+export interface AccountRateState {
+  /** Unix ms timestamp of the last outbound message send. */
+  lastMessageSentAt: number;
+}
+
 export interface AccountConfig {
   proxy?: ProxyConfig;
   /** Minimum ms between outbound messages. Default: 3000 */
