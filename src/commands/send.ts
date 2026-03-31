@@ -65,11 +65,18 @@ export async function sendCommand(target: string, text: string, options: SendOpt
 
   const { bareConvId, contactProfileUrn, isNewConversation } = resolved;
 
-  // Pre-send sync
+  // Pre-send sync — abort if new inbound messages arrived since last sync
   if (bareConvId && !isNewConversation) {
     const newInbounds = await preSendSync(apiClient, conversations, bareConvId, myProfileUrn);
-    if (newInbounds > 0) {
-      output.warn(`${newInbounds} new inbound message(s) received before send.`);
+    if (newInbounds.length > 0) {
+      output.warn(`${newInbounds.length} new message(s) received before send — aborting.`);
+      output.warn("Read them before deciding whether to send:\n");
+      for (const m of newInbounds) {
+        const time = new Date(m.timestamp).toLocaleTimeString();
+        process.stderr.write(`  [${time}] ${m.fromName || m.fromUrn}: ${m.body}\n`);
+      }
+      process.stderr.write("\nRe-run the send command when you're ready.\n");
+      process.exit(1);
     }
   }
 
@@ -221,7 +228,7 @@ async function preSendSync(
   conversations: ConversationStore,
   bareConvId: string,
   myProfileUrn: string
-): Promise<number> {
+): Promise<StoredMessage[]> {
   const existing = await conversations.read(bareConvId);
   const knownNewestAt = existing?.syncState.newestMessageAt ?? 0;
   const convUrn = existing?.backendUrn ?? existing?.urn ?? bareConvId;
@@ -246,9 +253,10 @@ async function preSendSync(
       }));
       await conversations.appendMessages(bareConvId, stored);
       await conversations.updateSyncState(bareConvId, { newestMessageAt: Math.max(...newInbounds.map((m) => m.deliveredAt)) });
+      return stored;
     }
-    return newInbounds.length;
+    return [];
   } catch {
-    return 0;
+    return [];
   }
 }
