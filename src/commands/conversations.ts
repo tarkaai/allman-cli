@@ -24,7 +24,7 @@ export async function conversationsCommand(options: ConversationsOptions): Promi
   const limit = options.limit ?? 50;
   const records = (
     await Promise.all(
-      slugs.slice(0, limit).map(async (s) => {
+      slugs.map(async (s) => {
         const r = await store.conversations.read(s);
         return r ? { slug: s, record: r } : null;
       })
@@ -35,7 +35,8 @@ export async function conversationsCommand(options: ConversationsOptions): Promi
       const at = a!.record.lastActivityAt ?? "";
       const bt = b!.record.lastActivityAt ?? "";
       return bt.localeCompare(at);
-    });
+    })
+    .slice(0, limit);
 
   if (options.json) {
     printData(records.map((r) => r!.record));
