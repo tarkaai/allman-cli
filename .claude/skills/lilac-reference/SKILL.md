@@ -14,6 +14,7 @@ user-invocable: false
 │   ├── AUTH.json                     # profile info, auth status (committed)
 │   ├── COOKIES.json                  # cookie jar (gitignored)
 │   ├── config.json                   # proxy, rate limits (committed)
+│   ├── rate-state.json               # last send timestamp (gitignored)
 │   ├── INBOX.jsonl                   # inbound message notifications (gitignored)
 │   │
 │   ├── {convId}/                     # one dir per conversation

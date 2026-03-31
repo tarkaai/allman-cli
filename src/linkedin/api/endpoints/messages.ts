@@ -164,7 +164,7 @@ interface SendMessagePayload {
   message: {
     body: { attributes: unknown[]; text: string };
     renderContentUnions: unknown[];
-    conversationUrn: string;
+    conversationUrn?: string;
     originToken: string;
   };
   mailboxUrn: string;
@@ -266,8 +266,6 @@ export async function sendFirstMessage(
     message: {
       body: { attributes: [], text },
       renderContentUnions: [],
-      // No conversationUrn for new threads
-      conversationUrn: `urn:li:msg_conversation:(urn:li:fsd_profile:${senderProfileId},)`,
       originToken,
     },
     mailboxUrn: `urn:li:fsd_profile:${senderProfileId}`,

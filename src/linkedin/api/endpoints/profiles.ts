@@ -51,16 +51,21 @@ interface ProfileQueryResponse {
   };
 }
 
+export interface BasicProfileData {
+  urn: string;
+  firstName: string | null;
+  lastName: string | null;
+  headline: string | null;
+}
+
 /**
- * Look up a LinkedIn profile URN from a public profile identifier (slug).
+ * Look up a LinkedIn profile URN and basic name data from a public profile identifier (slug).
  * Returns null if the profile is not found or accessible.
  */
-export async function getProfileUrnBySlug(
+export async function getProfileDataBySlug(
   client: LinkedInApiClient,
   slug: string
-): Promise<string | null> {
-  // Variables passed raw — only URN values inside are encoded.
-  // Format matches monorepo: variables=(memberIdentity:slug)&queryId=...
+): Promise<BasicProfileData | null> {
   const variables = `(memberIdentity:${slug})`;
 
   try {
@@ -69,29 +74,59 @@ export async function getProfileUrnBySlug(
       url: `${GRAPHQL_URL}?variables=${variables}&queryId=${PROFILE_QUERY_ID}`,
     });
 
-    // The URN is often in the '*elements' array as a reference string
     const profileData =
       response?.data?.data?.identityDashProfilesByMemberIdentity;
 
     if (!profileData) return null;
 
-    // Try direct element URN first
+    // Try direct elements first (non-normalized response)
     const elements = profileData.elements;
     if (elements && elements.length > 0 && elements[0]?.entityUrn) {
-      return extractProfileUrn(elements[0].entityUrn);
+      const el = elements[0];
+      const urn = extractProfileUrn(el.entityUrn!);
+      if (!urn) return null;
+      return {
+        urn,
+        firstName: el.firstName?.text ?? null,
+        lastName: el.lastName?.text ?? null,
+        headline: el.headline?.text ?? null,
+      };
     }
 
-    // Fall back to '*elements' reference array
+    // Normalized format: *elements refs + included array
     const refs = (profileData as Record<string, unknown>)["*elements"];
     if (Array.isArray(refs) && refs.length > 0) {
       const ref = String(refs[0]);
-      return extractProfileUrn(ref);
+      const urn = extractProfileUrn(ref);
+      if (!urn) return null;
+
+      // Look up name/headline from included
+      const included = response?.data?.included ?? [];
+      const item = included.find((i) => i.entityUrn && extractProfileUrn(i.entityUrn) === urn);
+      return {
+        urn,
+        firstName: (item?.["firstName"] as { text?: string } | undefined)?.text ?? null,
+        lastName: (item?.["lastName"] as { text?: string } | undefined)?.text ?? null,
+        headline: (item?.["headline"] as { text?: string } | undefined)?.text ?? null,
+      };
     }
 
     return null;
   } catch {
     return null;
   }
+}
+
+/**
+ * Look up a LinkedIn profile URN from a public profile identifier (slug).
+ * Returns null if the profile is not found or accessible.
+ */
+export async function getProfileUrnBySlug(
+  client: LinkedInApiClient,
+  slug: string
+): Promise<string | null> {
+  const data = await getProfileDataBySlug(client, slug);
+  return data?.urn ?? null;
 }
 
 const PROFILE_REST_URL =

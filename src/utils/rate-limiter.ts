@@ -12,15 +12,18 @@
 export interface RateLimiterOptions {
   /** Minimum milliseconds between message sends. Default: 3000 */
   minIntervalMs?: number;
+  /** Persisted timestamp of the last send (Unix ms). Enforces limits across process restarts. */
+  initialLastSendAt?: number;
 }
 
 export class RateLimiter {
   private readonly minIntervalMs: number;
-  private lastSendAt: number = 0;
+  private lastSendAt: number;
   private pending: Promise<void> = Promise.resolve();
 
   constructor(options: RateLimiterOptions = {}) {
     this.minIntervalMs = options.minIntervalMs ?? 3000;
+    this.lastSendAt = options.initialLastSendAt ?? 0;
   }
 
   /**
@@ -64,14 +67,6 @@ function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-/** Global registry of per-account rate limiters (keyed by account slug). */
-const limiters = new Map<string, RateLimiter>();
-
-export function getRateLimiter(accountSlug: string, minIntervalMs?: number): RateLimiter {
-  let limiter = limiters.get(accountSlug);
-  if (!limiter) {
-    limiter = new RateLimiter({ minIntervalMs });
-    limiters.set(accountSlug, limiter);
-  }
-  return limiter;
+export function buildRateLimiter(options: RateLimiterOptions = {}): RateLimiter {
+  return new RateLimiter(options);
 }
