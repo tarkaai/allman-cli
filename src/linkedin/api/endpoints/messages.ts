@@ -127,7 +127,7 @@ export async function fetchMessages(
 
   // Normalize conversationUrn — callers may pass the full urn:li:msg_conversation:(...) or
   // the bare inner ID (2-...) or urn:li:messagingThread:...
-  const bareConvId = extractConvBareId(conversationUrn);
+  const bareConvId = extractBareConvId(conversationUrn);
   // LinkedIn requires parens encoded as %28/%29 — encodeURIComponent leaves them unencoded
   const encodedConvUrn = `urn%3Ali%3Amsg_conversation%3A%28urn%3Ali%3Afsd_profile%3A${senderProfileId}%2C${encodeURIComponent(bareConvId)}%29`;
 
@@ -211,7 +211,7 @@ export async function sendMessage(
   const trackingId = byteArrayToString(uuidToByteArray(originToken));
 
   // Normalize conversationUrn to full nested format required by the payload
-  const bareConvId = extractConvBareId(conversationUrn);
+  const bareConvId = extractBareConvId(conversationUrn);
   // Payload uses unencoded full conv URN (JSON body, not URL param)
   const fullConvUrn = `urn:li:msg_conversation:(urn:li:fsd_profile:${senderProfileId},${bareConvId})`;
 
