@@ -157,6 +157,18 @@ export class SseClient {
         "accept-language": "en-US,en;q=0.9",
         "x-li-lang": "en_US",
         "x-restli-protocol-version": "2.0.0",
+        "x-li-track": JSON.stringify({
+          clientVersion: "1.13.8751",
+          mpVersion: "1.13.8751",
+          osName: "web",
+          timezoneOffset: -5,
+          timezone: "America/New York",
+          deviceFormFactor: "DESKTOP",
+          mpName: "voyager-web",
+          displayDensity: 1,
+          displayWidth: 2560,
+          displayHeight: 1440,
+        }),
         "csrf-token": csrfToken,
         cookie: cookieHeader,
         referer: "https://www.linkedin.com/messaging/",
@@ -204,26 +216,36 @@ export class SseClient {
     if (!data || typeof data !== "object") return null;
     const d = data as Record<string, unknown>;
 
-    // Connection established
-    if (typeof d["id"] === "string" && !d["topic"]) {
-      this.connectionId = d["id"];
-      this.startHeartbeat(this.connectionId);
-      return { type: "connected", connectionId: this.connectionId };
+    // Connection established: {"com.linkedin.realtimefrontend.ClientConnection": {id, personalTopics, ...}}
+    const clientConn = d["com.linkedin.realtimefrontend.ClientConnection"] as Record<string, unknown> | undefined;
+    if (clientConn) {
+      const id = typeof clientConn["id"] === "string" ? clientConn["id"] : null;
+      if (id) {
+        this.connectionId = id;
+        this.startHeartbeat(id);
+      }
+      return { type: "connected", connectionId: this.connectionId ?? "" };
     }
 
-    // Heartbeat
-    if (d["type"] === "Heartbeat" || Object.keys(d).length === 0) {
+    // Heartbeat: {"com.linkedin.realtimefrontend.Heartbeat": {...}} or empty object
+    if (d["com.linkedin.realtimefrontend.Heartbeat"] !== undefined || Object.keys(d).length === 0) {
       return { type: "heartbeat" };
     }
 
-    // Decorated events come with a "topic" field
-    const topic = typeof d["topic"] === "string" ? d["topic"] : null;
+    // Decorated event: {"com.linkedin.realtimefrontend.DecoratedEvent": {topic, payload}}
+    const decorated = d["com.linkedin.realtimefrontend.DecoratedEvent"] as Record<string, unknown> | undefined;
+    if (!decorated) {
+      output.debug(`SSE: unknown event shape, top keys: ${Object.keys(d).join(", ")}`);
+      return { type: "raw", raw: data };
+    }
+
+    const topic = typeof decorated["topic"] === "string" ? decorated["topic"] : null;
     if (!topic) return null;
 
     const topicMatch = topic.match(TOPIC_REGEX);
     const topicName = topicMatch ? topicMatch[1] : null;
 
-    const payload = (d["payload"] ?? d) as Record<string, unknown>;
+    const payload = (decorated["payload"] ?? decorated) as Record<string, unknown>;
 
     if (topicName === "messagesTopic") {
       return this.parseMessageEvent(payload);

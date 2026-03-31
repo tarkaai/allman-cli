@@ -19,7 +19,7 @@
 
 import { randomUUID } from "crypto";
 import type { LinkedInApiClient } from "../client.js";
-import { encodeUrn, uuidToByteArray, byteArrayToString } from "../../../utils/urn.js";
+import { uuidToByteArray, byteArrayToString } from "../../../utils/urn.js";
 
 const GRAPHQL_URL =
   "https://www.linkedin.com/voyager/api/voyagerMessagingGraphQL/graphql";
@@ -70,38 +70,57 @@ export interface SendMessageResult {
 // Fetch messages
 // ---------------------------------------------------------------------------
 
+// Normalized JSON response format
 interface MessagesQueryResponse {
   data?: {
-    messengerMessagesByAnchorTimestamp?: {
-      elements?: MessageElement[];
-      metadata?: { previousCursor?: string };
+    data?: {
+      messengerMessagesByAnchorTimestamp?: {
+        "*elements"?: string[];
+        metadata?: { previousCursor?: string };
+      };
+    };
+  };
+  included?: Array<Record<string, unknown>>;
+}
+
+interface MessageRaw {
+  $type?: string;
+  entityUrn?: string;
+  backendUrn?: string;
+  deliveredAt?: number;
+  body?: { text?: string };
+  originToken?: string | null;
+  reactionSummaries?: Array<{ emoji?: string; count?: number; hasUserReacted?: boolean }>;
+  renderContent?: unknown[];
+  "*sender"?: string;
+  "*actor"?: string;
+}
+
+interface ParticipantRaw {
+  $type?: string;
+  entityUrn?: string;
+  hostIdentityUrn?: string;
+  participantType?: {
+    member?: {
+      firstName?: { text?: string };
+      lastName?: { text?: string };
     };
   };
 }
 
-interface MessageElement {
-  backendUrn?: string;
-  entityUrn?: string;
-  deliveredAt?: number;
-  body?: { text?: string; attributes?: unknown[] };
-  originToken?: string | null;
-  sender?: {
-    entityUrn?: string;
-    "com.linkedin.voyager.messaging.MessagingMember"?: {
-      miniProfile?: { firstName?: string; lastName?: string; entityUrn?: string };
-    };
-    participant?: {
-      "com.linkedin.voyager.messaging.member.MemberMessagingParticipant"?: {
-        miniProfile?: { firstName?: string; lastName?: string };
-      };
-    };
-  };
-  reactionSummaries?: Array<{
-    emoji?: string;
-    count?: number;
-    hasUserReacted?: boolean;
-  }>;
-  renderContent?: unknown[];
+/**
+ * Extract the bare inner conversation ID from any form of conversation URN.
+ * Handles: full urn:li:msg_conversation:(...), urn:li:messagingThread:..., or bare 2-...
+ */
+function extractConvBareId(convUrn: string): string {
+  // Full format: urn:li:msg_conversation:(urn:li:fsd_profile:...,2-...)
+  const fullMatch = convUrn.match(/\(urn:li:fsd_profile:[^,]+,([^)]+)\)/);
+  if (fullMatch?.[1]) return fullMatch[1];
+  // Backend format: urn:li:messagingThread:2-...
+  const threadMatch = convUrn.match(/urn:li:messagingThread:(.+)/);
+  if (threadMatch?.[1]) return threadMatch[1];
+  // Already bare
+  return convUrn;
 }
 
 /**
@@ -121,23 +140,29 @@ export async function fetchMessages(
 ): Promise<{ messages: MessageData[]; hasMore: boolean }> {
   const senderProfileId = senderProfileUrn.replace("urn:li:fsd_profile:", "");
 
-  // Build the full conversation URN used in the query
-  const fullConvUrn = `urn:li:msg_conversation:(urn:li:fsd_profile:${senderProfileId},${conversationUrn})`;
+  // Normalize conversationUrn — callers may pass the full urn:li:msg_conversation:(...) or
+  // the bare inner ID (2-...) or urn:li:messagingThread:...
+  const bareConvId = extractConvBareId(conversationUrn);
+  // LinkedIn requires parens encoded as %28/%29 — encodeURIComponent leaves them unencoded
+  const encodedConvUrn = `urn%3Ali%3Amsg_conversation%3A%28urn%3Ali%3Afsd_profile%3A${senderProfileId}%2C${encodeURIComponent(bareConvId)}%29`;
 
-  const variables = encodeURIComponent(
-    `(deliveredAt:${anchorTimestamp},conversationUrn:${encodeUrn(fullConvUrn)},countBefore:${countBefore},countAfter:0)`
-  );
+  const variables =
+    `(deliveredAt:${anchorTimestamp},conversationUrn:${encodedConvUrn},countBefore:${countBefore},countAfter:0)`;
 
   const response = await client.request<MessagesQueryResponse>({
     method: "GET",
     url: `${GRAPHQL_URL}?queryId=${QUERY_ID_MESSAGES}&variables=${variables}`,
   });
 
-  const result = response?.data?.messengerMessagesByAnchorTimestamp;
-  const elements = result?.elements ?? [];
+  const included = buildIncludedMap(response.included);
+  const result = response?.data?.data?.messengerMessagesByAnchorTimestamp;
+  const msgUrns = result?.["*elements"] ?? [];
 
   return {
-    messages: elements.map(parseMessageElement),
+    messages: msgUrns.flatMap((urn) => {
+      const m = parseMessageRaw(urn, included);
+      return m ? [m] : [];
+    }),
     hasMore: result?.metadata?.previousCursor !== undefined,
   };
 }
@@ -187,8 +212,10 @@ export async function sendMessage(
   const originToken = randomUUID();
   const trackingId = byteArrayToString(uuidToByteArray(originToken));
 
-  // The conversationUrn in the message payload uses the full nested format
-  const fullConvUrn = `urn:li:msg_conversation:(urn:li:fsd_profile:${senderProfileId},${conversationUrn})`;
+  // Normalize conversationUrn to full nested format required by the payload
+  const bareConvId = extractConvBareId(conversationUrn);
+  // Payload uses unencoded full conv URN (JSON body, not URL param)
+  const fullConvUrn = `urn:li:msg_conversation:(urn:li:fsd_profile:${senderProfileId},${bareConvId})`;
 
   const payload: SendMessagePayload = {
     message: {
@@ -277,34 +304,51 @@ export async function sendFirstMessage(
 // Parsing helpers
 // ---------------------------------------------------------------------------
 
-function parseMessageElement(el: MessageElement): MessageData {
-  const member =
-    el.sender?.["com.linkedin.voyager.messaging.MessagingMember"]?.miniProfile ??
-    el.sender?.participant?.[
-      "com.linkedin.voyager.messaging.member.MemberMessagingParticipant"
-    ]?.miniProfile;
+function buildIncludedMap(included: Array<Record<string, unknown>> | undefined): Map<string, Record<string, unknown>> {
+  const map = new Map<string, Record<string, unknown>>();
+  for (const item of included ?? []) {
+    const urn = item["entityUrn"];
+    if (typeof urn === "string") map.set(urn, item);
+  }
+  return map;
+}
 
-  const fromName = member
-    ? `${member.firstName ?? ""} ${member.lastName ?? ""}`.trim() || null
-    : null;
+function parseMessageRaw(
+  urn: string,
+  included: Map<string, Record<string, unknown>>
+): MessageData | null {
+  const raw = included.get(urn) as MessageRaw | undefined;
+  if (!raw) return null;
 
-  const fromUrn =
-    el.sender?.["com.linkedin.voyager.messaging.MessagingMember"]?.miniProfile
-      ?.entityUrn ?? el.sender?.entityUrn ?? "";
+  // Sender info via *sender or *actor URN reference
+  const senderUrn = raw["*sender"] ?? raw["*actor"] ?? null;
+  let fromUrn = "";
+  let fromName: string | null = null;
+
+  if (typeof senderUrn === "string") {
+    const participant = included.get(senderUrn) as ParticipantRaw | undefined;
+    if (participant) {
+      fromUrn = participant.hostIdentityUrn ?? senderUrn;
+      const m = participant.participantType?.member;
+      const first = m?.firstName?.text ?? "";
+      const last = m?.lastName?.text ?? "";
+      fromName = `${first} ${last}`.trim() || null;
+    }
+  }
 
   return {
-    urn: el.backendUrn ?? el.entityUrn ?? "",
-    deliveredAt: el.deliveredAt ?? 0,
+    urn: raw.backendUrn ?? raw.entityUrn ?? urn,
+    deliveredAt: raw.deliveredAt ?? 0,
     fromUrn,
     fromName,
-    body: el.body?.text ?? "",
-    originToken: el.originToken ?? null,
-    reactions: (el.reactionSummaries ?? []).map((r) => ({
-      emoji: r.emoji ?? "",
-      count: r.count ?? 0,
-      hasUserReacted: r.hasUserReacted ?? false,
+    body: raw.body?.text ?? "",
+    originToken: raw.originToken ?? null,
+    reactions: (raw.reactionSummaries ?? []).map((r) => ({
+      emoji: (r as { emoji?: string }).emoji ?? "",
+      count: (r as { count?: number }).count ?? 0,
+      hasUserReacted: (r as { hasUserReacted?: boolean }).hasUserReacted ?? false,
     })),
-    attachments: parseAttachments(el.renderContent),
+    attachments: parseAttachments(raw.renderContent),
   };
 }
 

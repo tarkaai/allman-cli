@@ -1,5 +1,8 @@
 import { Store, resolveStorePath } from "../store/index.js";
 import { runLogin } from "../linkedin/auth/playwright-auth.js";
+import { buildApiClient } from "../linkedin/api/client.js";
+import { loadCookieJar } from "../linkedin/api/cookies.js";
+import { getProfileUrnBySlug } from "../linkedin/api/endpoints/profiles.js";
 import * as output from "../utils/output.js";
 
 export interface LoginOptions {
@@ -83,6 +86,32 @@ export async function loginCommand(options: LoginOptions): Promise<void> {
     `login: ${accountSlug}`
   );
 
+  // If the browser didn't capture the profile URN, try fetching it via API.
+  // Extract the slug from the profile URL (e.g. linkedin.com/in/dan-vega → dan-vega).
+  let resolvedUrn = result.profileUrn;
+  if (!resolvedUrn) {
+    const slugMatch = result.profileUrl?.match(/linkedin\.com\/in\/([^/?]+)/);
+    const slug = slugMatch?.[1];
+    if (slug) {
+      output.info(`Fetching profile URN for "${slug}" via API...`);
+      try {
+        const savedRecord = await store.accounts.read(accountSlug);
+        if (savedRecord) {
+          const jar = loadCookieJar(savedRecord);
+          const apiClient = buildApiClient(savedRecord, async () => {}, undefined);
+          apiClient.updateJar(jar);
+          resolvedUrn = await getProfileUrnBySlug(apiClient, slug);
+          if (resolvedUrn) {
+            await store.accounts.update(accountSlug, { urn: resolvedUrn });
+            output.debug(`Resolved URN via API: ${resolvedUrn}`);
+          }
+        }
+      } catch (err) {
+        output.debug(`API URN lookup failed: ${String(err)}`);
+      }
+    }
+  }
+
   await store.git.flush();
 
   if (options.json) {
@@ -97,6 +126,6 @@ export async function loginCommand(options: LoginOptions): Promise<void> {
     output.success(`Logged in as: ${result.name ?? "unknown"}`);
     output.info(`  Account: ${accountSlug}`);
     output.info(`  Store:   ${storePath}`);
-    if (result.profileUrn) output.info(`  URN:     ${result.profileUrn}`);
+    if (resolvedUrn) output.info(`  URN:     ${resolvedUrn}`);
   }
 }

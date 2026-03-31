@@ -27,7 +27,6 @@ import * as output from "../../utils/output.js";
 
 const LOGIN_URL = "https://www.linkedin.com/login";
 const FEED_URL_PATTERN = /linkedin\.com\/(feed|in\/|messaging)/;
-const PROFILE_URN_API_PATTERN = /voyagerIdentityDashProfiles/;
 const PROFILE_URN_REGEX = /urn:li:fsd_profile:([^,)"]+)/;
 
 const LOGIN_TIMEOUT_MS = parseInt(process.env["LOGIN_TIMEOUT_MS"] ?? "300000"); // 5 minutes
@@ -105,24 +104,26 @@ export async function runLogin(options: AuthOptions = {}): Promise<AuthResult> {
   let profileUrn: string | null = null;
   let interceptedProfileData: ProfileApiData | null = null;
 
-  // Set up route interception to capture profile URN from API response
-  await context.route(`**/${PROFILE_URN_API_PATTERN.source}*`, async (route) => {
-    const response = await route.fetch();
-    try {
-      const body = await response.json();
-      const urnMatch = JSON.stringify(body).match(PROFILE_URN_REGEX);
-      if (urnMatch && urnMatch[1]) {
-        profileUrn = `urn:li:fsd_profile:${urnMatch[1]}`;
-        interceptedProfileData = extractProfileFromApiResponse(body);
-        output.debug(`Intercepted profile URN: ${profileUrn}`);
-      }
-    } catch {
-      // Non-JSON response, ignore
-    }
-    await route.continue();
-  });
-
   const page = await context.newPage();
+
+  // Listen for profile URN in API responses (works better than route interception
+  // because it doesn't block/modify the request, just observes it)
+  page.on("response", async (response) => {
+    if (!profileUrn && response.url().includes("voyagerIdentityDashProfiles")) {
+      try {
+        if (response.request().method() === "OPTIONS" || response.status() !== 200) return;
+        const body = await response.json() as unknown;
+        const urnMatch = JSON.stringify(body).match(PROFILE_URN_REGEX);
+        if (urnMatch && urnMatch[1]) {
+          profileUrn = `urn:li:fsd_profile:${urnMatch[1]}`;
+          interceptedProfileData = extractProfileFromApiResponse(body);
+          output.debug(`Captured profile URN from response: ${profileUrn}`);
+        }
+      } catch {
+        // Non-JSON or inaccessible response
+      }
+    }
+  });
 
   try {
     await page.goto(LOGIN_URL, { waitUntil: "domcontentloaded", timeout: 30_000 });
@@ -150,10 +151,12 @@ export async function runLogin(options: AuthOptions = {}): Promise<AuthResult> {
 
   output.success("Login detected — extracting session...");
 
-  // If we haven't captured the profile URN via interception yet,
-  // navigate to the profile page to trigger the API call
+  // If we haven't captured the profile URN via response listener yet,
+  // navigate to the profile page to trigger the voyagerIdentityDashProfiles API call.
+  // The response listener on `page` will set profileUrn if the call succeeds.
   if (!profileUrn) {
-    profileUrn = await extractProfileUrnFromPage(page, context);
+    await extractProfileUrnFromPage(page, context);
+    // profileUrn may now be set by the response listener — don't overwrite it
   }
 
   // Extract all cookies from the browser context
@@ -252,28 +255,30 @@ async function extractProfileUrnFromPage(
   page: Page,
   _context: BrowserContext
 ): Promise<string | null> {
-  let captured: string | null = null;
-
-  // Navigate to /in/ which triggers a profile API call
+  // Navigate to /in/ — LinkedIn redirects to the user's own profile page,
+  // and the page load triggers a voyagerIdentityDashProfiles API call
+  // that the page-level response listener will capture.
   try {
     await page.goto("https://www.linkedin.com/in/", {
       waitUntil: "domcontentloaded",
-      timeout: 10_000,
+      timeout: 15_000,
     });
 
-    // Check for URN in the final URL after redirect
+    // Wait a moment for XHR responses to land (the API call is async)
+    await page.waitForTimeout(3000);
+
+    // Return the profile slug from the redirected URL as a fallback identifier
     const url = page.url();
     const urlMatch = url.match(/linkedin\.com\/in\/([^/?]+)/);
     if (urlMatch && urlMatch[1]) {
-      // We have a slug — will need API lookup to get URN
-      // For now return null and let the sync fill it in later
       output.debug(`Profile slug from redirect: ${urlMatch[1]}`);
+      return urlMatch[1]; // Return slug, not a full URN — caller handles lookup
     }
   } catch {
     // Navigation timeout is OK
   }
 
-  return captured;
+  return null;
 }
 
 async function extractProfileFromDom(page: Page): Promise<DomProfileData> {

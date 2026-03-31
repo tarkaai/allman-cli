@@ -16,6 +16,8 @@
 import axios, { type AxiosRequestConfig, type AxiosResponse } from "axios";
 import type tunnel from "tunnel";
 import { CookieJar } from "tough-cookie";
+import { mkdir, writeFile } from "fs/promises";
+import { join } from "path";
 import {
   buildCookieHeader,
   getCsrfToken,
@@ -25,6 +27,51 @@ import {
 } from "./cookies.js";
 import type { AccountRecord, ProxyConfig } from "../../store/types.js";
 import * as output from "../../utils/output.js";
+
+// ---------------------------------------------------------------------------
+// VCR recording (enabled when LILAC_VCR=record)
+// ---------------------------------------------------------------------------
+
+const IS_RECORD_MODE = process.env["LILAC_VCR"] === "record";
+const VCR_DIR = process.env["LILAC_VCR_DIR"] ?? join(process.cwd(), "tests", "fixtures");
+
+function vcrKey(method: string, url: string, params?: Record<string, string>): string {
+  const urlObj = new URL(url.startsWith("http") ? url : `https://www.linkedin.com${url}`);
+  const pathSlug = urlObj.pathname
+    .replace(/^\//, "")
+    .replace(/\//g, "_")
+    .replace(/[^a-zA-Z0-9_-]/g, "");
+  const queryId = params?.["queryId"] ?? urlObj.searchParams.get("queryId");
+  const querySlug = queryId
+    ? `_${queryId.replace(/\./g, "_").replace(/[^a-zA-Z0-9_]/g, "")}`
+    : "";
+  return `${method.toUpperCase()}_${pathSlug}${querySlug}`;
+}
+
+async function recordFixture(
+  method: string,
+  url: string,
+  params: Record<string, string> | undefined,
+  response: AxiosResponse
+): Promise<void> {
+  const key = vcrKey(method, url, params);
+  const fixture = {
+    request: { method: method.toUpperCase(), url, params },
+    response: {
+      status: response.status,
+      headers: Object.fromEntries(
+        Object.entries(response.headers as Record<string, unknown>).filter(
+          ([k]) => !["set-cookie", "cookie"].includes(k.toLowerCase())
+        )
+      ),
+      data: response.data,
+    },
+  };
+  await mkdir(VCR_DIR, { recursive: true });
+  const path = join(VCR_DIR, `${key}.json`);
+  await writeFile(path, JSON.stringify(fixture, null, 2) + "\n", "utf8");
+  output.debug(`[VCR] Saved fixture: ${key}.json`);
+}
 
 // ---------------------------------------------------------------------------
 // LinkedIn standard headers
@@ -229,6 +276,11 @@ export class LinkedInApiClient {
     }
 
     output.debug(`${options.method} ${options.url} → ${response.status}`);
+
+    // Save fixture for VCR replay in tests
+    if (IS_RECORD_MODE) {
+      recordFixture(options.method, options.url, options.params, response).catch(() => {});
+    }
 
     return response.data as T;
   }

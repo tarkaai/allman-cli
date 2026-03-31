@@ -11,21 +11,30 @@ import { join } from "path";
 import * as output from "../utils/output.js";
 
 export class StoreGit {
-  private readonly git: SimpleGit;
+  private git: SimpleGit | null = null;
+  private readonly storePath: string;
   private debounceMs: number;
   private timer: ReturnType<typeof setTimeout> | null = null;
   private pendingMessage: string = "chore: update store";
 
   constructor(storePath: string, debounceMs = 5000) {
-    this.git = simpleGit(storePath);
+    this.storePath = storePath;
     this.debounceMs = debounceMs;
+  }
+
+  private getGit(): SimpleGit {
+    if (!this.git) {
+      this.git = simpleGit(this.storePath);
+    }
+    return this.git;
   }
 
   /** Initialize git repo if not already initialized. */
   async init(): Promise<void> {
-    const isRepo = await this.git.checkIsRepo().catch(() => false);
+    const git = this.getGit();
+    const isRepo = await git.checkIsRepo().catch(() => false);
     if (!isRepo) {
-      await this.git.init();
+      await git.init();
       output.debug("Initialized git repo in store");
     }
   }
@@ -56,21 +65,22 @@ export class StoreGit {
       this.timer = null;
     }
 
-    const status = await this.git.status();
+    const git = this.getGit();
+    const status = await git.status();
     if (status.files.length === 0) {
       output.debug("Git: nothing to commit");
       return;
     }
 
-    await this.git.add("-A");
-    await this.git.commit(this.pendingMessage);
+    await git.add("-A");
+    await git.commit(this.pendingMessage);
     output.debug(`Git: committed "${this.pendingMessage}" (${status.files.length} files)`);
     this.pendingMessage = "chore: update store";
   }
 
   /** Return the path to the git-managed store directory. */
   getPath(): string {
-    return (this.git as unknown as { _baseDir: string })._baseDir ?? "";
+    return this.storePath;
   }
 }
 

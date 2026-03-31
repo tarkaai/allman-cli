@@ -2,14 +2,12 @@
  * LinkedIn conversation API endpoints.
  *
  * All conversation fetching uses GraphQL (not REST).
+ * LinkedIn returns normalized JSON: top-level `data` (with URN refs in `*elements`)
+ * and `included` (flat array of all referenced objects).
  *
  * Query IDs (from monorepo):
  *   messengerConversations.45338e053010d1c19147f92de6de3ae6  — list by inbox
  *   messengerConversations.44030325d8f59d8cebbb804f16d6b0a3  — by recipients (find/create)
- *
- * Fallback query IDs (from mautrix, if the above stop working):
- *   messengerConversations.8656fb361a8ad0c178e8d3ff1a84ce26
- *   messengerConversations.74c17e85611b60b7ba2700481151a316
  *
  * Source: monorepo/lib/services/.../linkedin-api-services.ts
  */
@@ -23,6 +21,10 @@ const GRAPHQL_URL =
 const QUERY_ID_LIST = "messengerConversations.45338e053010d1c19147f92de6de3ae6";
 const QUERY_ID_BY_RECIPIENTS =
   "messengerConversations.44030325d8f59d8cebbb804f16d6b0a3";
+
+// ---------------------------------------------------------------------------
+// Public types
+// ---------------------------------------------------------------------------
 
 export interface ConversationParticipantData {
   entityUrn: string;
@@ -44,61 +46,60 @@ export interface ConversationData {
   participants: ConversationParticipantData[];
 }
 
-interface ConversationElement {
+// ---------------------------------------------------------------------------
+// Raw response shapes (normalized JSON)
+// ---------------------------------------------------------------------------
+
+interface NormalizedResponse {
+  data?: {
+    data?: {
+      messengerConversationsByCategoryQuery?: {
+        metadata?: { nextCursor?: string };
+        "*elements"?: string[];
+      };
+      messengerConversationsByRecipients?: {
+        "*elements"?: string[];
+      };
+    };
+  };
+  included?: Array<Record<string, unknown>>;
+}
+
+interface ConversationRaw {
+  $type?: string;
   entityUrn?: string;
   backendUrn?: string;
   title?: string | null;
-  descriptionText?: string | null;
   groupChat?: boolean;
   lastActivityAt?: number;
   unreadCount?: number;
-  conversationParticipants?: Array<{
-    entityUrn?: string;
-    "com.linkedin.voyager.messaging.MessagingMember"?: {
-      miniProfile?: {
-        entityUrn?: string;
-        firstName?: string;
-        lastName?: string;
-        occupation?: string;
-        publicIdentifier?: string;
-        picture?: {
-          rootUrl?: string;
-          artifacts?: Array<{ fileIdentifyingUrlPathSegment?: string }>;
-        };
-      };
-    };
-    participant?: {
-      "com.linkedin.voyager.messaging.member.MemberMessagingParticipant"?: {
-        miniProfile?: {
-          entityUrn?: string;
-          firstName?: string;
-          lastName?: string;
-          occupation?: string;
-          publicIdentifier?: string;
-        };
-      };
-    };
-  }>;
+  "*conversationParticipants"?: string[];
 }
 
-interface ConversationsQueryResponse {
-  data?: {
-    messengerConversationsByCategoryQuery?: {
-      elements?: ConversationElement[];
-      metadata?: { nextCursor?: string };
-    };
-    messengerConversationsByRecipients?: {
-      elements?: ConversationElement[];
+interface ParticipantRaw {
+  $type?: string;
+  entityUrn?: string;
+  hostIdentityUrn?: string;
+  participantType?: {
+    member?: {
+      firstName?: { text?: string };
+      lastName?: { text?: string };
+      headline?: { text?: string };
+      profileUrl?: string;
+      profilePicture?: {
+        rootUrl?: string;
+        artifacts?: Array<{ fileIdentifyingUrlPathSegment?: string; width?: number }>;
+      };
     };
   };
 }
 
+// ---------------------------------------------------------------------------
+// API functions
+// ---------------------------------------------------------------------------
+
 /**
  * Fetch a page of conversations from the LinkedIn inbox.
- *
- * @param myProfileUrn - The authenticated user's profile URN (urn:li:fsd_profile:...)
- * @param lastUpdatedBefore - Fetch conversations with activity before this timestamp (ms)
- * @param nextCursor - For pagination; use the cursor from a previous response
  */
 export async function listConversations(
   client: LinkedInApiClient,
@@ -111,29 +112,30 @@ export async function listConversations(
     ? `nextCursor:${nextCursor}`
     : `lastUpdatedBefore:${lastUpdatedBefore}`;
 
-  const variables = encodeURIComponent(
-    `(query:(predicateUnions:List((conversationCategoryPredicate:(category:PRIMARY_INBOX)))),count:20,mailboxUrn:${encodeUrn(`urn:li:fsd_profile:${profileId}`)},${paginationPart})`
-  );
+  // Variables passed raw — only inner URN values are percent-encoded.
+  const variables =
+    `(query:(predicateUnions:List((conversationCategoryPredicate:(category:PRIMARY_INBOX)))),count:20,mailboxUrn:${encodeUrn(`urn:li:fsd_profile:${profileId}`)},${paginationPart})`;
 
-  const response = await client.request<ConversationsQueryResponse>({
+  const response = await client.request<NormalizedResponse>({
     method: "GET",
     url: `${GRAPHQL_URL}?queryId=${QUERY_ID_LIST}&variables=${variables}`,
   });
 
-  const query = response?.data?.messengerConversationsByCategoryQuery;
-  const elements = query?.elements ?? [];
+  const included = buildIncludedMap(response.included);
+  const query = response?.data?.data?.messengerConversationsByCategoryQuery;
+  const convUrns = query?.["*elements"] ?? [];
 
   return {
-    conversations: elements.map(parseConversationElement),
+    conversations: convUrns.flatMap((urn) => {
+      const c = parseConversation(urn, included);
+      return c ? [c] : [];
+    }),
     nextCursor: query?.metadata?.nextCursor ?? null,
   };
 }
 
 /**
  * Find an existing conversation with a specific contact, or return null.
- *
- * @param contactProfileUrn - The contact's profile URN
- * @param myProfileUrn - The authenticated user's profile URN
  */
 export async function findConversationByRecipient(
   client: LinkedInApiClient,
@@ -143,24 +145,24 @@ export async function findConversationByRecipient(
   const contactId = contactProfileUrn.replace("urn:li:fsd_profile:", "");
   const myId = myProfileUrn.replace("urn:li:fsd_profile:", "");
 
-  const variables = encodeURIComponent(
-    `(recipients:List(${encodeUrn(`urn:li:fsd_profile:${contactId}`)}),mailboxUrn:${encodeUrn(`urn:li:fsd_profile:${myId}`)},count:20)`
-  );
+  const variables =
+    `(recipients:List(${encodeUrn(`urn:li:fsd_profile:${contactId}`)}),mailboxUrn:${encodeUrn(`urn:li:fsd_profile:${myId}`)},count:20)`;
 
-  const response = await client.request<ConversationsQueryResponse>({
+  const response = await client.request<NormalizedResponse>({
     method: "GET",
     url: `${GRAPHQL_URL}?queryId=${QUERY_ID_BY_RECIPIENTS}&variables=${variables}`,
   });
 
-  const elements = response?.data?.messengerConversationsByRecipients?.elements ?? [];
+  const included = buildIncludedMap(response.included);
+  const convUrns = response?.data?.data?.messengerConversationsByRecipients?.["*elements"] ?? [];
 
-  // Find the 1:1 conversation between exactly these two participants
-  for (const element of elements) {
-    const participants = element.conversationParticipants ?? [];
-    if (participants.length === 2) {
-      const urns = participants.map((p) => extractParticipantUrn(p)).filter(Boolean);
+  for (const urn of convUrns) {
+    const c = parseConversation(urn, included);
+    if (!c) continue;
+    if (c.participants.length === 2) {
+      const urns = c.participants.map((p) => p.entityUrn);
       if (urns.includes(contactProfileUrn) && urns.includes(myProfileUrn)) {
-        return parseConversationElement(element);
+        return c;
       }
     }
   }
@@ -172,48 +174,64 @@ export async function findConversationByRecipient(
 // Parsing helpers
 // ---------------------------------------------------------------------------
 
-function parseConversationElement(el: ConversationElement): ConversationData {
+function buildIncludedMap(included: Array<Record<string, unknown>> | undefined): Map<string, Record<string, unknown>> {
+  const map = new Map<string, Record<string, unknown>>();
+  for (const item of included ?? []) {
+    const urn = item["entityUrn"];
+    if (typeof urn === "string") map.set(urn, item);
+  }
+  return map;
+}
+
+function parseConversation(
+  urn: string,
+  included: Map<string, Record<string, unknown>>
+): ConversationData | null {
+  const raw = included.get(urn) as ConversationRaw | undefined;
+  if (!raw) return null;
+
+  const participantUrns = (raw["*conversationParticipants"] as string[] | undefined) ?? [];
+  const participants = participantUrns.flatMap((pUrn) => {
+    const p = parseParticipant(pUrn, included);
+    return p ? [p] : [];
+  });
+
   return {
-    urn: el.entityUrn ?? "",
-    backendUrn: el.backendUrn ?? "",
-    title: el.title ?? el.descriptionText ?? null,
-    isGroup: el.groupChat ?? false,
-    lastActivityAt: el.lastActivityAt ?? null,
-    unreadCount: el.unreadCount ?? 0,
-    participants: (el.conversationParticipants ?? []).map(parseParticipant),
+    urn: raw.entityUrn ?? urn,
+    backendUrn: raw.backendUrn ?? "",
+    title: raw.title ?? null,
+    isGroup: raw.groupChat ?? false,
+    lastActivityAt: raw.lastActivityAt ?? null,
+    unreadCount: raw.unreadCount ?? 0,
+    participants,
   };
 }
 
-function parseParticipant(p: NonNullable<ConversationElement["conversationParticipants"]>[number]): ConversationParticipantData {
-  // LinkedIn uses different nesting depending on API version
-  const member =
-    p?.["com.linkedin.voyager.messaging.MessagingMember"]?.miniProfile ??
-    p?.participant?.[
-      "com.linkedin.voyager.messaging.member.MemberMessagingParticipant"
-    ]?.miniProfile;
+function parseParticipant(
+  urn: string,
+  included: Map<string, Record<string, unknown>>
+): ConversationParticipantData | null {
+  const raw = included.get(urn) as ParticipantRaw | undefined;
+  if (!raw) return null;
 
-  const entityUrn =
-    extractParticipantUrn(p) ??
-    member?.entityUrn ??
-    "";
+  const member = raw.participantType?.member;
+  const firstName = member?.firstName?.text ?? "";
+  const lastName = member?.lastName?.text ?? "";
+  const name = `${firstName} ${lastName}`.trim() || null;
+  const headline = member?.headline?.text ?? null;
+  const profileUrl = member?.profileUrl ?? null;
 
-  const name = member
-    ? `${member.firstName ?? ""} ${member.lastName ?? ""}`.trim() || null
-    : null;
+  // Pick the smallest artifact for image URL
+  const picture = member?.profilePicture;
+  let imageUrl: string | null = null;
+  if (picture?.rootUrl && picture.artifacts?.length) {
+    const sorted = [...picture.artifacts].sort((a, b) => (a.width ?? 0) - (b.width ?? 0));
+    const seg = sorted[0]?.fileIdentifyingUrlPathSegment;
+    if (seg) imageUrl = `${picture.rootUrl}${seg}`;
+  }
 
-  const slug = member?.publicIdentifier ?? null;
-  const profileUrl = slug ? `https://www.linkedin.com/in/${slug}/` : null;
+  // hostIdentityUrn is the actual profile URN
+  const entityUrn = raw.hostIdentityUrn ?? urn;
 
-  return { entityUrn, name, profileUrl, imageUrl: null, headline: member?.occupation ?? null };
-}
-
-function extractParticipantUrn(
-  p: Record<string, unknown> | undefined | null
-): string | null {
-  if (!p) return null;
-  if (typeof p["entityUrn"] === "string") return p["entityUrn"];
-  const member = p[
-    "com.linkedin.voyager.messaging.MessagingMember"
-  ] as { miniProfile?: { entityUrn?: string } } | undefined;
-  return member?.miniProfile?.entityUrn ?? null;
+  return { entityUrn, name, profileUrl, imageUrl, headline };
 }

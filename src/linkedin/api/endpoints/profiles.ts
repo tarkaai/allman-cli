@@ -12,11 +12,9 @@
  */
 
 import type { LinkedInApiClient } from "../client.js";
-import { encodeUrn } from "../../../utils/urn.js";
 
 const GRAPHQL_URL = "https://www.linkedin.com/voyager/api/graphql";
-const PROFILE_QUERY_ID =
-  "voyagerIdentityDashProfiles.b5c27c04968c409fc0ed3546575b9b7a";
+const PROFILE_QUERY_ID = "voyagerIdentityDashProfiles.b5c27c04968c409fc0ed3546575b9b7a";
 
 export interface ProfileData {
   urn: string;
@@ -61,18 +59,14 @@ export async function getProfileUrnBySlug(
   client: LinkedInApiClient,
   slug: string
 ): Promise<string | null> {
-  const variables = encodeUrn(
-    `(memberIdentity:${slug},memberIdentityType:VANITY_NAME)`
-  );
+  // Variables passed raw — only URN values inside are encoded.
+  // Format matches monorepo: variables=(memberIdentity:slug)&queryId=...
+  const variables = `(memberIdentity:${slug})`;
 
   try {
     const response = await client.request<ProfileQueryResponse>({
       method: "GET",
-      url: GRAPHQL_URL,
-      params: {
-        queryId: PROFILE_QUERY_ID,
-        variables,
-      },
+      url: `${GRAPHQL_URL}?variables=${variables}&queryId=${PROFILE_QUERY_ID}`,
     });
 
     // The URN is often in the '*elements' array as a reference string
