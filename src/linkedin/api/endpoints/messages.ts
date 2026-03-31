@@ -143,13 +143,17 @@ export async function fetchMessages(
   const result = response?.data?.data?.messengerMessagesByAnchorTimestamp;
   const msgUrns = result?.["*elements"] ?? [];
 
-  return {
-    messages: msgUrns.flatMap((urn) => {
-      const m = parseMessageRaw(urn, included);
-      return m ? [m] : [];
-    }),
-    hasMore: result?.metadata?.previousCursor !== undefined,
-  };
+  const messages = msgUrns.flatMap((urn) => {
+    const m = parseMessageRaw(urn, included);
+    return m ? [m] : [];
+  });
+
+  // LinkedIn doesn't always include previousCursor even when more messages exist.
+  // If we got back the full page size, assume there are more.
+  const hasCursor = result?.metadata?.previousCursor !== undefined;
+  const hasMore = hasCursor || messages.length >= countBefore;
+
+  return { messages, hasMore };
 }
 
 // ---------------------------------------------------------------------------

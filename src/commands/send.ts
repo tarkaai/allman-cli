@@ -3,8 +3,8 @@
  */
 
 import { Store, resolveStorePath } from "../store/index.js";
-import { buildApiClient, LinkedInError } from "../linkedin/api/client.js";
-import { loadCookieJar, serializeCookieJar } from "../linkedin/api/cookies.js";
+import { LinkedInError } from "../linkedin/api/client.js";
+import { loadSession } from "../linkedin/api/session.js";
 import { findConversationByRecipient } from "../linkedin/api/endpoints/conversations.js";
 import { fetchMessages, sendMessage, sendFirstMessage } from "../linkedin/api/endpoints/messages.js";
 import { getProfileUrnBySlug } from "../linkedin/api/endpoints/profiles.js";
@@ -26,35 +26,16 @@ export async function sendCommand(target: string, text: string, options: SendOpt
   const store = new Store({ path: storePath });
   await store.init();
 
-  const profileId = await store.accounts.getDefault(options.account);
-  const accountRecord = await store.accounts.read(profileId);
-
-  if (!accountRecord || accountRecord.status !== "authenticated") {
-    output.error(`Account not authenticated. Run \`lilac login\``, 1);
+  let session;
+  try {
+    session = await loadSession(store, options.account);
+  } catch (err) {
+    output.error(String((err as Error).message), 1);
     return;
   }
-
-  if (!accountRecord.urn) {
-    output.error(`Account has no profile URN. Re-run \`lilac login\`.`, 1);
-    return;
-  }
-
-  const myProfileUrn = accountRecord.urn;
-  const accountConfig = await store.accounts.readConfig(profileId);
-  const jar = loadCookieJar(accountRecord);
+  const { apiClient, profileId, myProfileUrn, accountRecord } = session;
   const conversations = store.forAccount(profileId);
-
-  const apiClient = buildApiClient(
-    accountRecord,
-    async (updatedJar) => {
-      await store.accounts.update(profileId, {
-        cookieJar: serializeCookieJar(updatedJar),
-        cookiesUpdatedAt: new Date().toISOString(),
-      });
-    },
-    accountConfig.proxy
-  );
-  apiClient.updateJar(jar);
+  const accountConfig = await store.accounts.readConfig(profileId);
 
   const resolved = await resolveTarget(target, myProfileUrn, apiClient, conversations);
 
@@ -252,26 +233,36 @@ async function preSendSync(
   const convUrn = existing?.backendUrn ?? existing?.convUrn ?? bareConvId;
 
   try {
-    const { messages } = await fetchMessages(apiClient, convUrn, myProfileUrn, Date.now(), 5);
-    const newInbounds = messages.filter(
-      (m) => m.deliveredAt > knownNewestAt && !m.fromUrn.includes(profileUrnId(myProfileUrn))
-    );
+    const { messages } = await fetchMessages(apiClient, convUrn, myProfileUrn, Date.now(), 10);
 
-    if (newInbounds.length > 0) {
-      const stored: StoredMessage[] = newInbounds.map((m) => ({
+    // Store all new messages (inbound + outbound) since last sync
+    const newMessages = messages.filter((m) => m.deliveredAt > knownNewestAt);
+
+    if (newMessages.length > 0) {
+      const myId = profileUrnId(myProfileUrn);
+      const stored: StoredMessage[] = newMessages.map((m) => ({
         urn: m.urn,
         timestamp: m.deliveredAt,
         fromUrn: m.fromUrn,
         fromName: m.fromName ?? "",
-        isFromMe: false,
+        isFromMe: m.fromUrn.includes(myId),
         body: m.body,
         reactions: m.reactions,
         attachments: m.attachments.map((a) => ({ type: a.type as StoredMessage["attachments"][number]["type"], url: a.url, name: a.name, mimeType: a.mimeType, raw: a.raw })),
         originToken: null,
       }));
       await conversations.appendMessages(bareConvId, stored);
-      await conversations.updateSyncState(bareConvId, { newestMessageAt: Math.max(...newInbounds.map((m) => m.deliveredAt)) });
-      return stored;
+      await conversations.updateSyncState(bareConvId, { newestMessageAt: Math.max(...newMessages.map((m) => m.deliveredAt)) });
+
+      // Only flag inbound messages that are newer than the most recent outbound.
+      // If the user already replied after the inbounds, they've seen the context.
+      const newestOutboundAt = Math.max(
+        knownNewestAt,
+        ...newMessages.filter((m) => m.fromUrn.includes(myId)).map((m) => m.deliveredAt),
+        0
+      );
+      const unseenInbounds = stored.filter((m) => !m.isFromMe && m.timestamp > newestOutboundAt);
+      return unseenInbounds;
     }
     return [];
   } catch {

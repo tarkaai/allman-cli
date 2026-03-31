@@ -3,8 +3,7 @@
  */
 
 import { Store, resolveStorePath } from "../store/index.js";
-import { buildApiClient } from "../linkedin/api/client.js";
-import { loadCookieJar, serializeCookieJar } from "../linkedin/api/cookies.js";
+import { loadSession } from "../linkedin/api/session.js";
 import { listConversations } from "../linkedin/api/endpoints/conversations.js";
 import { fetchMessages } from "../linkedin/api/endpoints/messages.js";
 import { getProfileSlugById } from "../linkedin/api/endpoints/profiles.js";
@@ -13,10 +12,11 @@ import type { ConversationRecord, StoredMessage } from "../store/types.js";
 import type { ConversationStore } from "../store/conversations.js";
 import { extractBareConvId } from "../utils/urn.js";
 
-const MESSAGES_PER_CONVERSATION = 100;
+const MESSAGES_PER_CONVERSATION = 1000;
 const MESSAGES_PER_PAGE = 20;
 
 export interface SyncOptions {
+  conversation?: string;
   account?: string;
   store?: string;
   since?: string;
@@ -36,41 +36,49 @@ export async function syncCommand(options: SyncOptions): Promise<void> {
   const store = new Store({ path: storePath });
   await store.init();
 
-  const profileId = await store.accounts.getDefault(options.account);
-  const accountRecord = await store.accounts.read(profileId);
-
-  if (!accountRecord || accountRecord.status !== "authenticated") {
-    output.error(`Account not authenticated. Run \`lilac login\``, 1);
+  let session;
+  try {
+    session = await loadSession(store, options.account);
+  } catch (err) {
+    output.error(String((err as Error).message), 1);
     return;
   }
-
-  if (!accountRecord.urn) {
-    output.error(`Account has no profile URN. Re-run \`lilac login\`.`, 1);
-    return;
-  }
+  const { apiClient, profileId, myProfileUrn, accountRecord } = session;
 
   const sinceMs = parseSince(options.since);
   const sinceDate = new Date(sinceMs);
   const conversations = store.forAccount(profileId);
 
+  // Single-conversation sync
+  if (options.conversation) {
+    const convId = await conversations.resolve(options.conversation);
+    if (!convId) {
+      output.error(`Conversation "${options.conversation}" not found in store. Run \`lilac sync\` first.`, 1);
+      return;
+    }
+    const record = await conversations.read(convId);
+    if (!record) {
+      output.error(`Conversation record not found for ${convId}`, 1);
+      return;
+    }
+    const convUrn = record.backendUrn || record.convUrn;
+    output.info(`Syncing conversation: ${record.name ?? convId}...`);
+
+    const messagesWritten = await syncConversationMessages(
+      apiClient, conversations, convId, convUrn, myProfileUrn, sinceMs, true
+    );
+
+    await store.git.flush();
+
+    if (options.json) {
+      output.printData({ profileId, convId, messagesSynced: messagesWritten });
+    } else {
+      output.success(`Sync complete: ${messagesWritten} messages for ${record.name ?? convId}`);
+    }
+    return;
+  }
+
   output.info(`Syncing ${accountRecord.name ?? profileId} (since ${sinceDate.toISOString().slice(0, 10)})...`);
-
-  const accountConfig = await store.accounts.readConfig(profileId);
-  const jar = loadCookieJar(accountRecord);
-
-  const apiClient = buildApiClient(
-    accountRecord,
-    async (updatedJar) => {
-      await store.accounts.update(profileId, {
-        cookieJar: serializeCookieJar(updatedJar),
-        cookiesUpdatedAt: new Date().toISOString(),
-      });
-    },
-    accountConfig.proxy
-  );
-  apiClient.updateJar(jar);
-
-  const myProfileUrn = accountRecord.urn;
   let totalConversations = 0;
   let totalMessages = 0;
   let nextCursor: string | null | undefined = undefined;
@@ -250,10 +258,12 @@ async function syncConversationMessages(
   convId: string,
   conversationUrn: string,
   myProfileUrn: string,
-  sinceMs: number
+  sinceMs: number,
+  forceResync = false
 ): Promise<number> {
   const existing = await conversations.read(convId);
-  const knownNewestAt = existing?.syncState.newestMessageAt;
+  const knownNewestAt = forceResync ? null : existing?.syncState.newestMessageAt;
+  output.debug(`syncConvMessages: knownNewestAt=${knownNewestAt}, sinceMs=${sinceMs}`);
 
   let anchorTimestamp = Date.now();
   let fetched = 0;
@@ -265,6 +275,7 @@ async function syncConversationMessages(
     let result: { messages: StoredMessage[]; hasMore: boolean };
     try {
       const raw = await fetchMessages(apiClient, conversationUrn, myProfileUrn, anchorTimestamp, MESSAGES_PER_PAGE);
+      output.debug(`fetchMessages returned ${raw.messages.length} messages, hasMore=${raw.hasMore}`);
       result = {
         messages: raw.messages.map((m) => toStoredMessage(m, myProfileUrn)),
         hasMore: raw.hasMore,
@@ -276,17 +287,23 @@ async function syncConversationMessages(
 
     if (result.messages.length === 0) break;
 
+    const prevFetched = fetched;
+    let skipped = 0;
     for (const msg of result.messages) {
-      if (msg.timestamp < sinceMs) break;
-      if (knownNewestAt && msg.timestamp <= knownNewestAt) break;
+      if (msg.timestamp < sinceMs) { skipped++; continue; }
+      if (knownNewestAt && msg.timestamp <= knownNewestAt) { skipped++; continue; }
       allMessages.push(msg);
       fetched++;
       if (oldestFetchedAt === null || msg.timestamp < oldestFetchedAt) oldestFetchedAt = msg.timestamp;
       if (newestFetchedAt === null || msg.timestamp > newestFetchedAt) newestFetchedAt = msg.timestamp;
     }
+    output.debug(`page: ${fetched - prevFetched} new, ${skipped} skipped, oldest=${oldestFetchedAt}`);
 
+    // No new messages on this page — stop to avoid infinite loop
+    if (fetched === prevFetched) break;
     if (!result.hasMore || fetched >= MESSAGES_PER_CONVERSATION) break;
-    anchorTimestamp = oldestFetchedAt ?? anchorTimestamp - 1;
+    // Subtract 1ms to avoid re-fetching the same oldest message
+    anchorTimestamp = (oldestFetchedAt ?? anchorTimestamp) - 1;
   }
 
   if (allMessages.length > 0) {

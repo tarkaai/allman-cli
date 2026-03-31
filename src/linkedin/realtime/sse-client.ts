@@ -283,10 +283,15 @@ export class SseClient {
       return null;
     }
 
+    // Body can be nested under the MessageEvent type key, or directly on eventContent
+    const messageEvent =
+      (eventContent["com.linkedin.voyager.messaging.event.MessageEvent"] as Record<string, unknown> | undefined) ??
+      eventContent;
+
     const body =
       (
-        (eventContent["attributedBody"] as Record<string, unknown> | undefined) ??
-        (eventContent["body"] as Record<string, unknown> | undefined)
+        (messageEvent["attributedBody"] as Record<string, unknown> | undefined) ??
+        (messageEvent["body"] as Record<string, unknown> | undefined)
       )?.["text"] as string | undefined;
 
     const fromMember =
@@ -301,18 +306,20 @@ export class SseClient {
       ] as string | undefined;
     const fromUrn = rawFromUrn?.replace("urn:li:fs_miniProfile:", "urn:li:fsd_profile:");
 
-    const messageUrn =
-      (event["entityUrn"] as string | undefined) ??
-      (event["backendUrn"] as string | undefined);
+    // Prefer backendUrn (urn:li:messagingMessage:...) over entityUrn (urn:li:fs_event:...)
+    // so that the stored URN matches what the messages API returns for dedup.
+    const entityUrn = event["entityUrn"] as string | undefined;
+    const backendUrn = event["backendUrn"] as string | undefined;
+    const messageUrn = backendUrn ?? entityUrn;
 
-    // conversationUrn: check payload/event fields, then extract from message URN
-    // Message URN format: urn:li:fs_event:(CONV_BARE_ID,MSG_ID)
+    // conversationUrn: check event/payload fields first, then extract from entityUrn
+    // entityUrn format: urn:li:fs_event:(CONV_BARE_ID,MSG_ID)
     let conversationUrn =
       (event["conversationUrn"] as string | undefined) ??
       (payload["conversationUrn"] as string | undefined);
 
-    if (!conversationUrn && messageUrn) {
-      const convMatch = messageUrn.match(/urn:li:fs_event:\(([^,]+),/);
+    if (!conversationUrn && entityUrn) {
+      const convMatch = entityUrn.match(/urn:li:fs_event:\(([^,]+),/);
       if (convMatch?.[1]) {
         conversationUrn = `urn:li:messagingThread:${convMatch[1]}`;
       }
