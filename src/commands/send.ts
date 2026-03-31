@@ -44,7 +44,7 @@ export async function sendCommand(target: string, text: string, options: SendOpt
     return;
   }
 
-  const { bareConvId, contactProfileUrn, isNewConversation } = resolved;
+  const { bareConvId, contactProfileUrn, contactSlug, isNewConversation } = resolved;
 
   // Pre-send sync — abort if new inbound messages arrived since last sync
   if (bareConvId && !isNewConversation) {
@@ -106,12 +106,19 @@ export async function sendCommand(target: string, text: string, options: SendOpt
 
   if (await conversations.exists(targetBareId)) {
     await conversations.appendMessages(targetBareId, [storedMsg]);
+    // Backfill slug if missing
+    if (contactSlug) {
+      const existing = await conversations.read(targetBareId);
+      if (existing && !existing.slug) {
+        await conversations.upsert(targetBareId, { ...existing, slug: contactSlug });
+      }
+    }
   } else if (result.backendConversationUrn) {
     const contactPid = contactProfileUrn ? contactProfileUrn.replace("urn:li:fsd_profile:", "") : "";
     const newRecord: ConversationRecord = {
       convId: targetBareId,
       profileId: contactPid,
-      slug: null,
+      slug: contactSlug ?? null,
       convUrn: result.conversationUrn,
       backendUrn: result.backendConversationUrn,
       profileUrn: contactProfileUrn ?? "",
@@ -160,6 +167,7 @@ export async function sendCommand(target: string, text: string, options: SendOpt
 interface ResolvedTarget {
   bareConvId?: string;
   contactProfileUrn?: string;
+  contactSlug?: string;
   isNewConversation?: boolean;
   error?: string;
 }
@@ -188,7 +196,7 @@ async function resolveTarget(
 
   // Try resolving as a conversation symlink directly
   const directBareId = await conversations.resolve(contactSlug);
-  if (directBareId) return { bareConvId: directBareId, isNewConversation: false };
+  if (directBareId) return { bareConvId: directBareId, contactSlug, isNewConversation: false };
 
   // Try to find a conversation by profile URN via local store
   let contactUrn: string | null = null;
@@ -205,17 +213,17 @@ async function resolveTarget(
 
   // Look for existing conversation with this contact
   const localConv = await conversations.findByProfileUrn(contactUrn);
-  if (localConv) return { bareConvId: localConv.convId, contactProfileUrn: contactUrn, isNewConversation: false };
+  if (localConv) return { bareConvId: localConv.convId, contactProfileUrn: contactUrn, contactSlug, isNewConversation: false };
 
   // Query LinkedIn API for existing conversation
   output.info("Checking for existing conversation on LinkedIn...");
   const liConv = await findConversationByRecipient(apiClient, contactUrn, myProfileUrn);
   if (liConv) {
     const bare = extractBareConvId(liConv.backendUrn || liConv.urn);
-    return { bareConvId: bare, contactProfileUrn: contactUrn, isNewConversation: false };
+    return { bareConvId: bare, contactProfileUrn: contactUrn, contactSlug, isNewConversation: false };
   }
 
-  return { contactProfileUrn: contactUrn, isNewConversation: true };
+  return { contactProfileUrn: contactUrn, contactSlug, isNewConversation: true };
 }
 
 // ---------------------------------------------------------------------------
