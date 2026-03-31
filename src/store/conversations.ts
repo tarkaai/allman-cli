@@ -1,18 +1,25 @@
 /**
  * Conversation store operations.
  *
- * Manages {root}/conversations/{slug}/RECORD.json and messages/YYYY-MM.jsonl.
- * Messages are partitioned by month for efficient access and small file sizes.
+ * Layout:
+ *   {accountDir}/{bareConvId}/RECORD.json
+ *   {accountDir}/{bareConvId}/messages/YYYY-MM.jsonl
+ *   {accountDir}/{slug} -> {bareConvId}   (symlink, e.g. "example-user-1" -> "2-OTg0N2Nk...")
+ *
+ * Bare conv ID = the ID portion of urn:li:messagingThread:{bareId}
+ * e.g. "2-OTg0N2NkZmMtNTViZC00N2I4LWI3YTYtODdhYmU0YzAzNzhjXzEwMA=="
  */
 
-import { readFile, writeFile, mkdir, readdir, access, appendFile } from "fs/promises";
-import { createReadStream } from "fs";
+import { readFile, writeFile, mkdir, readdir, access, appendFile, symlink, readlink, unlink, createReadStream } from "fs/promises";
+import { createReadStream as fsCreateReadStream } from "fs";
 import { createInterface } from "readline";
 import { join } from "path";
 import type { StoreGit } from "./git.js";
 import type { ConversationRecord, StoredMessage, SyncState } from "./types.js";
 
 const RECORD_FILE = "RECORD.json";
+// Bare conv IDs always start with "2-"
+const CONV_ID_PATTERN = /^2-/;
 
 const DEFAULT_SYNC_STATE: SyncState = {
   oldestMessageAt: null,
@@ -24,239 +31,204 @@ const DEFAULT_SYNC_STATE: SyncState = {
 
 export class ConversationStore {
   constructor(
-    private readonly root: string,
+    private readonly accountDir: string,
     private readonly git: StoreGit
   ) {}
 
-  private dir(slug: string): string {
-    return join(this.root, "conversations", slug);
+  private dir(bareConvId: string): string {
+    return join(this.accountDir, bareConvId);
   }
 
-  private messagesDir(slug: string): string {
-    return join(this.dir(slug), "messages");
+  private messagesDir(bareConvId: string): string {
+    return join(this.dir(bareConvId), "messages");
   }
 
-  private messageFile(slug: string, timestampMs: number): string {
+  private messageFile(bareConvId: string, timestampMs: number): string {
     const d = new Date(timestampMs);
     const month = `${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, "0")}`;
-    return join(this.messagesDir(slug), `${month}.jsonl`);
+    return join(this.messagesDir(bareConvId), `${month}.jsonl`);
   }
 
-  async list(accountSlug?: string): Promise<string[]> {
-    const dir = join(this.root, "conversations");
+  /** List all bare conversation IDs (real dirs only, not symlinks). */
+  async list(): Promise<string[]> {
     try {
-      const entries = await readdir(dir, { withFileTypes: true });
-      const slugs = entries.filter((e) => e.isDirectory()).map((e) => e.name);
-      if (!accountSlug) return slugs;
-
-      // Filter by account
-      const result: string[] = [];
-      for (const slug of slugs) {
-        const record = await this.read(slug);
-        if (record?.account === accountSlug) result.push(slug);
-      }
-      return result;
+      const entries = await readdir(this.accountDir, { withFileTypes: true });
+      return entries
+        .filter((e) => e.isDirectory() && CONV_ID_PATTERN.test(e.name))
+        .map((e) => e.name);
     } catch {
       return [];
     }
   }
 
-  async exists(slug: string): Promise<boolean> {
+  async exists(bareConvId: string): Promise<boolean> {
     try {
-      await access(join(this.dir(slug), RECORD_FILE));
+      await access(join(this.dir(bareConvId), RECORD_FILE));
       return true;
     } catch {
       return false;
     }
   }
 
-  async read(slug: string): Promise<ConversationRecord | null> {
+  async read(bareConvId: string): Promise<ConversationRecord | null> {
     try {
-      const raw = await readFile(join(this.dir(slug), RECORD_FILE), "utf8");
+      const raw = await readFile(join(this.dir(bareConvId), RECORD_FILE), "utf8");
       return JSON.parse(raw) as ConversationRecord;
     } catch {
       return null;
     }
   }
 
-  async write(slug: string, record: ConversationRecord, commitMessage?: string): Promise<void> {
-    const dir = this.dir(slug);
+  async upsert(bareConvId: string, record: ConversationRecord): Promise<void> {
+    const dir = this.dir(bareConvId);
     await mkdir(dir, { recursive: true });
-    await mkdir(this.messagesDir(slug), { recursive: true });
-    await writeFile(join(dir, RECORD_FILE), JSON.stringify(record, null, 2) + "\n", "utf8");
-    this.git.scheduleCommit(commitMessage ?? `conversation: update ${slug}`);
+    const existing = await this.read(bareConvId);
+    // Preserve existing syncState when incoming record has no tracked data (e.g. fresh API fetch).
+    // If the incoming syncState has actual data, it wins (e.g. updateSyncState calls).
+    const incomingSyncHasData =
+      record.syncState.oldestMessageAt !== null ||
+      record.syncState.newestMessageAt !== null ||
+      record.syncState.totalSynced > 0;
+    const merged: ConversationRecord = existing
+      ? { ...existing, ...record, syncState: incomingSyncHasData ? record.syncState : existing.syncState }
+      : record;
+    await writeFile(join(dir, RECORD_FILE), JSON.stringify(merged, null, 2) + "\n", "utf8");
+    this.git.scheduleCommit(`conversation: update ${bareConvId.slice(0, 20)}`);
   }
 
-  async upsert(slug: string, record: ConversationRecord): Promise<void> {
-    const existing = await this.read(slug);
-    if (existing) {
-      const updated: ConversationRecord = {
-        ...existing,
-        ...record,
-        syncState: {
-          ...DEFAULT_SYNC_STATE,
-          ...existing.syncState,
-          ...record.syncState,
-        },
-      };
-      await this.write(slug, updated, `conversation: update ${slug}`);
-    } else {
-      const withDefaults: ConversationRecord = {
-        ...record,
-        syncState: { ...DEFAULT_SYNC_STATE, ...record.syncState },
-      };
-      await this.write(slug, withDefaults, `conversation: add ${slug}`);
-    }
-  }
-
-  /** Update sync state fields only, preserving everything else. */
-  async updateSyncState(
-    slug: string,
-    updates: Partial<SyncState>,
-    commitMessage?: string
-  ): Promise<void> {
-    const existing = await this.read(slug);
-    if (!existing) throw new Error(`Conversation not found: ${slug}`);
-    const updated: ConversationRecord = {
-      ...existing,
-      syncState: { ...DEFAULT_SYNC_STATE, ...existing.syncState, ...updates },
-    };
-    await this.write(slug, updated, commitMessage ?? `sync: update ${slug}`);
+  /** Create a symlink: {accountDir}/{slug} → {bareConvId} */
+  async createAlias(slug: string, bareConvId: string): Promise<void> {
+    const linkPath = join(this.accountDir, slug);
+    try { await unlink(linkPath); } catch { /* ok */ }
+    await symlink(bareConvId, linkPath);
   }
 
   /**
-   * Append messages to the monthly JSONL file.
-   * Deduplicates by URN: skips any message whose URN is already stored in that month's file.
-   * Returns the count of actually written messages.
+   * Resolve a slug/alias to a bare conversation ID.
+   * Follows symlink if present, otherwise returns input if it's an existing dir.
    */
-  async appendMessages(slug: string, messages: StoredMessage[]): Promise<number> {
+  async resolveId(slugOrId: string): Promise<string | null> {
+    const path = join(this.accountDir, slugOrId);
+    try {
+      return await readlink(path);
+    } catch {
+      if (CONV_ID_PATTERN.test(slugOrId)) {
+        try {
+          await access(join(this.accountDir, slugOrId, RECORD_FILE));
+          return slugOrId;
+        } catch {
+          return null;
+        }
+      }
+      return null;
+    }
+  }
+
+  /** Find a conversation by its frontend or backend URN. */
+  async findByUrn(urn: string): Promise<{ bareId: string; record: ConversationRecord } | null> {
+    const ids = await this.list();
+    for (const bareId of ids) {
+      const record = await this.read(bareId);
+      if (record && (record.urn === urn || record.backendUrn === urn || record.bareId === bareId)) {
+        return { bareId, record };
+      }
+    }
+    return null;
+  }
+
+  /** Find a 1:1 conversation with a specific contact by their profile URN. */
+  async findByParticipantUrn(
+    contactUrn: string
+  ): Promise<{ bareId: string; record: ConversationRecord } | null> {
+    const ids = await this.list();
+    for (const bareId of ids) {
+      const record = await this.read(bareId);
+      if (!record || record.isGroup) continue;
+      if (record.participants.some((p) => p.urn === contactUrn)) {
+        return { bareId, record };
+      }
+    }
+    return null;
+  }
+
+  async appendMessages(bareConvId: string, messages: StoredMessage[]): Promise<number> {
     if (messages.length === 0) return 0;
 
-    // Group messages by month file
+    // Group by month file
     const byFile = new Map<string, StoredMessage[]>();
     for (const msg of messages) {
-      const file = this.messageFile(slug, msg.timestamp);
-      const group = byFile.get(file) ?? [];
-      group.push(msg);
-      byFile.set(file, group);
+      const file = this.messageFile(bareConvId, msg.timestamp);
+      if (!byFile.has(file)) byFile.set(file, []);
+      byFile.get(file)!.push(msg);
     }
 
-    let written = 0;
+    let totalAdded = 0;
     for (const [file, msgs] of byFile) {
       await mkdir(join(file, ".."), { recursive: true });
 
-      // Load existing URNs from this file for dedup
-      const existingUrns = await this.readMessageUrns(file);
-
-      const newLines: string[] = [];
-      for (const msg of msgs) {
-        if (!existingUrns.has(msg.urn)) {
-          newLines.push(JSON.stringify(msg));
-          written++;
+      // Deduplicate: skip messages whose URN already exists in this file
+      const existingUrns = new Set<string>();
+      try {
+        const content = await readFile(file, "utf8");
+        for (const line of content.split("\n")) {
+          if (!line.trim()) continue;
+          try {
+            const m = JSON.parse(line) as StoredMessage;
+            if (m.urn) existingUrns.add(m.urn);
+          } catch { /* skip malformed */ }
         }
-      }
+      } catch { /* file doesn't exist yet */ }
 
-      if (newLines.length > 0) {
-        await appendFile(file, newLines.join("\n") + "\n", "utf8");
+      const newMsgs = msgs.filter((m) => !existingUrns.has(m.urn));
+      if (newMsgs.length > 0) {
+        const lines = newMsgs.map((m) => JSON.stringify(m)).join("\n") + "\n";
+        await appendFile(file, lines, "utf8");
+        totalAdded += newMsgs.length;
       }
     }
-
-    if (written > 0) {
-      this.git.scheduleCommit(`messages: add ${written} to ${slug}`);
-    }
-
-    return written;
+    return totalAdded;
   }
 
-  /** Read messages from a conversation, optionally filtered by time range. */
   async readMessages(
-    slug: string,
-    opts: {
-      since?: number; // Unix ms
-      until?: number; // Unix ms
-      limit?: number;
-    } = {}
+    bareConvId: string,
+    opts: { since?: number; limit?: number } = {}
   ): Promise<StoredMessage[]> {
-    const messagesDir = this.messagesDir(slug);
+    const dir = this.messagesDir(bareConvId);
     let files: string[];
     try {
-      const entries = await readdir(messagesDir);
-      files = entries.filter((f) => f.endsWith(".jsonl")).sort();
+      files = (await readdir(dir)).filter((f) => f.endsWith(".jsonl")).sort();
     } catch {
       return [];
     }
 
-    const results: StoredMessage[] = [];
-
-    for (const file of files) {
-      const messages = await this.readJsonlFile(join(messagesDir, file));
-      for (const msg of messages) {
-        if (opts.since !== undefined && msg.timestamp < opts.since) continue;
-        if (opts.until !== undefined && msg.timestamp > opts.until) continue;
-        results.push(msg);
-        if (opts.limit !== undefined && results.length >= opts.limit) return results;
-      }
-    }
-
-    return results;
-  }
-
-  /** Find a conversation by its LinkedIn conversation URN. */
-  async findByUrn(urn: string): Promise<{ slug: string; record: ConversationRecord } | null> {
-    const slugs = await this.list();
-    for (const slug of slugs) {
-      const record = await this.read(slug);
-      if (record && (record.urn === urn || record.backendUrn === urn)) {
-        return { slug, record };
-      }
-    }
-    return null;
-  }
-
-  /** Find a 1:1 conversation with a specific contact URN. */
-  async findByParticipantUrn(
-    contactUrn: string,
-    accountSlug: string
-  ): Promise<{ slug: string; record: ConversationRecord } | null> {
-    const slugs = await this.list(accountSlug);
-    for (const slug of slugs) {
-      const record = await this.read(slug);
-      if (
-        record &&
-        !record.isGroup &&
-        record.participants.some((p) => p.urn === contactUrn)
-      ) {
-        return { slug, record };
-      }
-    }
-    return null;
-  }
-
-  private async readJsonlFile(filePath: string): Promise<StoredMessage[]> {
     const messages: StoredMessage[] = [];
-    try {
-      const stream = createReadStream(filePath, "utf8");
-      const rl = createInterface({ input: stream, crlfDelay: Infinity });
+    for (const file of files) {
+      const rl = createInterface({
+        input: fsCreateReadStream(join(dir, file)),
+        crlfDelay: Infinity,
+      });
       for await (const line of rl) {
-        const trimmed = line.trim();
-        if (trimmed) {
-          try {
-            messages.push(JSON.parse(trimmed) as StoredMessage);
-          } catch {
-            // Skip malformed lines
-          }
-        }
+        if (!line.trim()) continue;
+        try {
+          const msg = JSON.parse(line) as StoredMessage;
+          if (opts.since && msg.timestamp < opts.since) continue;
+          messages.push(msg);
+        } catch { /* skip malformed lines */ }
       }
-    } catch {
-      // File doesn't exist yet
+    }
+
+    // Sort ascending, return last N
+    messages.sort((a, b) => a.timestamp - b.timestamp);
+    if (opts.limit && messages.length > opts.limit) {
+      return messages.slice(messages.length - opts.limit);
     }
     return messages;
   }
 
-  private async readMessageUrns(filePath: string): Promise<Set<string>> {
-    const urns = new Set<string>();
-    const messages = await this.readJsonlFile(filePath);
-    for (const msg of messages) urns.add(msg.urn);
-    return urns;
+  async updateSyncState(bareConvId: string, updates: Partial<SyncState>): Promise<void> {
+    const record = await this.read(bareConvId);
+    if (!record) return;
+    const syncState: SyncState = { ...DEFAULT_SYNC_STATE, ...record.syncState, ...updates };
+    await this.upsert(bareConvId, { ...record, syncState });
   }
 }

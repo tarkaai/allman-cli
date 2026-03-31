@@ -5,18 +5,21 @@
  *   {root}/
  *   ├── .git/
  *   ├── .gitignore
- *   ├── accounts/{slug}/
- *   │   ├── RECORD.json
- *   │   └── config.json
- *   ├── contacts/{slug}/
- *   │   └── RECORD.json
- *   └── conversations/{slug}/
- *       ├── RECORD.json
- *       └── messages/
- *           └── YYYY-MM.jsonl
+ *   ├── {profileId}/                      ← account dir
+ *   │   ├── RECORD.json                   ← cookies + profile
+ *   │   ├── config.json                   ← proxy, rate limits
+ *   │   ├── listen.log                    ← SSE event log
+ *   │   ├── contacts/
+ *   │   │   ├── {contactProfileId}/RECORD.json
+ *   │   │   └── {slug} -> {profileId}     ← symlink
+ *   │   └── {bareConvId}/                 ← conversation dir
+ *   │       ├── RECORD.json
+ *   │       └── messages/YYYY-MM.jsonl
+ *   │   (+ {slug} -> {bareConvId} symlinks for conversations)
+ *   └── {slug} -> {profileId}             ← account symlink
  */
 
-import { mkdir, access } from "fs/promises";
+import { mkdir, access, writeFile } from "fs/promises";
 import { join, resolve } from "path";
 import { StoreGit, ensureGitignore } from "./git.js";
 import { AccountStore } from "./accounts.js";
@@ -34,25 +37,30 @@ export class Store {
   readonly root: string;
   readonly git: StoreGit;
   readonly accounts: AccountStore;
-  readonly contacts: ContactStore;
-  readonly conversations: ConversationStore;
 
   constructor(options: StoreOptions = {}) {
     this.root = resolve(options.path ?? ".lilac");
     this.git = new StoreGit(this.root, options.gitDebounceMs);
     this.accounts = new AccountStore(this.root, this.git);
-    this.contacts = new ContactStore(this.root, this.git);
-    this.conversations = new ConversationStore(this.root, this.git);
   }
 
-  /** Initialize the store: create directories, init git, write .gitignore. */
+  /** Initialize the store: create root dir, init git, write .gitignore. */
   async init(): Promise<void> {
     await ensureDir(this.root);
-    await ensureDir(join(this.root, "accounts"));
-    await ensureDir(join(this.root, "contacts"));
-    await ensureDir(join(this.root, "conversations"));
     await ensureGitignore(this.root);
     await this.git.init();
+  }
+
+  /**
+   * Return conversation and contact stores scoped to a specific account.
+   * The profileId must be a real profile ID (not an alias).
+   */
+  forAccount(profileId: string): { conversations: ConversationStore; contacts: ContactStore } {
+    const accountDir = join(this.root, profileId);
+    return {
+      conversations: new ConversationStore(accountDir, this.git),
+      contacts: new ContactStore(accountDir, this.git),
+    };
   }
 
   /** Return the resolved store root path. */

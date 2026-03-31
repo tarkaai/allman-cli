@@ -11,25 +11,21 @@ export async function logoutCommand(options: LogoutOptions): Promise<void> {
   const store = new Store({ path: storePath });
   await store.init();
 
-  const accountSlug = await store.accounts.getDefault(options.account);
-  const existing = await store.accounts.read(accountSlug);
+  const profileId = await store.accounts.getDefault(options.account);
+  const existing = await store.accounts.read(profileId);
 
   if (!existing) {
-    error(`Account "${accountSlug}" not found.`, 1);
+    error(`Account "${profileId}" not found.`, 1);
     return;
   }
 
-  await store.accounts.update(
-    accountSlug,
-    {
-      status: "unauthenticated",
-      cookieJar: null,
-      cookiesUpdatedAt: null,
-    },
-    `logout: ${accountSlug}`
-  );
+  await store.accounts.update(profileId, {
+    status: "unauthenticated",
+    cookieJar: null,
+    cookiesUpdatedAt: null,
+  });
 
   await store.git.flush();
-  success(`Logged out: ${accountSlug}`);
+  success(`Logged out: ${existing.profileSlug ?? profileId}`);
   info("Cookies cleared. Run `lilac login` to re-authenticate.");
 }

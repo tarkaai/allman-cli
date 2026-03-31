@@ -1,96 +1,95 @@
 /**
  * Contact store operations.
  *
- * Manages {root}/contacts/{slug}/RECORD.json.
- * A contact slug is the LinkedIn URL path segment (e.g. "sarah-chen").
- * The RECORD.json is the source of truth for URN↔slug mapping.
+ * Layout:
+ *   {accountDir}/contacts/{contactProfileId}/RECORD.json
+ *   {accountDir}/contacts/{slug} -> {contactProfileId}   (symlink)
  */
 
-import { readFile, writeFile, mkdir, readdir, access } from "fs/promises";
+import { readFile, writeFile, mkdir, readdir, access, symlink, readlink, unlink } from "fs/promises";
 import { join } from "path";
 import type { StoreGit } from "./git.js";
 import type { ContactRecord } from "./types.js";
 
 const RECORD_FILE = "RECORD.json";
+const PROFILE_ID_PATTERN = /^ACo/;
 
 export class ContactStore {
-  constructor(
-    private readonly root: string,
-    private readonly git: StoreGit
-  ) {}
+  private readonly contactsDir: string;
 
-  private dir(slug: string): string {
-    return join(this.root, "contacts", slug);
+  constructor(
+    accountDir: string,
+    private readonly git: StoreGit
+  ) {
+    this.contactsDir = join(accountDir, "contacts");
+  }
+
+  private dir(profileId: string): string {
+    return join(this.contactsDir, profileId);
   }
 
   async list(): Promise<string[]> {
-    const dir = join(this.root, "contacts");
     try {
-      const entries = await readdir(dir, { withFileTypes: true });
-      return entries.filter((e) => e.isDirectory()).map((e) => e.name);
+      const entries = await readdir(this.contactsDir, { withFileTypes: true });
+      return entries
+        .filter((e) => e.isDirectory() && PROFILE_ID_PATTERN.test(e.name))
+        .map((e) => e.name);
     } catch {
       return [];
     }
   }
 
-  async exists(slug: string): Promise<boolean> {
+  async read(profileId: string): Promise<ContactRecord | null> {
     try {
-      await access(join(this.dir(slug), RECORD_FILE));
-      return true;
-    } catch {
-      return false;
-    }
-  }
-
-  async read(slug: string): Promise<ContactRecord | null> {
-    try {
-      const raw = await readFile(join(this.dir(slug), RECORD_FILE), "utf8");
+      const raw = await readFile(join(this.dir(profileId), RECORD_FILE), "utf8");
       return JSON.parse(raw) as ContactRecord;
     } catch {
       return null;
     }
   }
 
-  async write(slug: string, record: ContactRecord, commitMessage?: string): Promise<void> {
-    const dir = this.dir(slug);
+  async write(profileId: string, record: ContactRecord): Promise<void> {
+    const dir = this.dir(profileId);
     await mkdir(dir, { recursive: true });
     await writeFile(join(dir, RECORD_FILE), JSON.stringify(record, null, 2) + "\n", "utf8");
-    this.git.scheduleCommit(commitMessage ?? `contact: update ${slug}`);
+    this.git.scheduleCommit(`contact: update ${profileId.slice(0, 12)}`);
   }
 
-  async upsert(slug: string, record: ContactRecord): Promise<void> {
-    const existing = await this.read(slug);
-    if (existing) {
-      // Preserve fetchedAt unless explicitly overridden
-      await this.write(slug, { ...existing, ...record }, `contact: update ${slug}`);
-    } else {
-      await this.write(slug, record, `contact: add ${slug}`);
+  async upsert(profileId: string, record: ContactRecord): Promise<void> {
+    const existing = await this.read(profileId);
+    await this.write(profileId, existing ? { ...existing, ...record } : record);
+  }
+
+  /** Create a symlink: contacts/{slug} → {profileId} */
+  async createAlias(slug: string, profileId: string): Promise<void> {
+    await mkdir(this.contactsDir, { recursive: true });
+    const linkPath = join(this.contactsDir, slug);
+    try { await unlink(linkPath); } catch { /* ok */ }
+    await symlink(profileId, linkPath);
+  }
+
+  /** Resolve a slug/alias to a profile ID via symlink, or return the input if it's a direct ID. */
+  async resolveId(slugOrId: string): Promise<string | null> {
+    const path = join(this.contactsDir, slugOrId);
+    try {
+      return await readlink(path);
+    } catch {
+      try {
+        await access(join(this.contactsDir, slugOrId, RECORD_FILE));
+        return slugOrId;
+      } catch {
+        return null;
+      }
     }
   }
 
   /** Find a contact by their LinkedIn profile URN. */
-  async findByUrn(urn: string): Promise<{ slug: string; record: ContactRecord } | null> {
-    const slugs = await this.list();
-    for (const slug of slugs) {
-      const record = await this.read(slug);
-      if (record?.urn === urn) {
-        return { slug, record };
-      }
+  async findByUrn(urn: string): Promise<{ profileId: string; record: ContactRecord } | null> {
+    const ids = await this.list();
+    for (const profileId of ids) {
+      const record = await this.read(profileId);
+      if (record?.urn === urn) return { profileId, record };
     }
     return null;
-  }
-
-  /** Search contacts by partial name match (case-insensitive). */
-  async search(query: string): Promise<Array<{ slug: string; record: ContactRecord }>> {
-    const slugs = await this.list();
-    const results: Array<{ slug: string; record: ContactRecord }> = [];
-    const q = query.toLowerCase();
-    for (const slug of slugs) {
-      const record = await this.read(slug);
-      if (record && (record.name.toLowerCase().includes(q) || slug.includes(q))) {
-        results.push({ slug, record });
-      }
-    }
-    return results;
   }
 }

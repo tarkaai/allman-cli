@@ -27,6 +27,8 @@ export type AccountStatus = "unauthenticated" | "authenticated" | "expired";
 export interface AccountRecord {
   /** urn:li:fsd_profile:{id} */
   urn: string | null;
+  /** LinkedIn profile slug (e.g. "dan-moore") — used for symlink creation */
+  profileSlug: string | null;
   name: string | null;
   headline: string | null;
   profileUrl: string | null;
@@ -41,7 +43,6 @@ export interface AccountRecord {
 }
 
 export interface AccountConfig {
-  displayName?: string;
   proxy?: ProxyConfig;
   /** Minimum ms between outbound messages. Default: 3000 */
   rateLimit?: {
@@ -63,9 +64,11 @@ export interface ProxyConfig {
 export interface ContactRecord {
   /** urn:li:fsd_profile:{id} */
   urn: string;
+  /** LinkedIn profile slug (e.g. "alice-smith") */
+  slug: string | null;
   name: string;
   headline: string | null;
-  profileUrl: string;
+  profileUrl: string | null;
   imageUrl: string | null;
   connectedAt: string | null;
   fetchedAt: string;
@@ -76,9 +79,13 @@ export interface ContactRecord {
 // ---------------------------------------------------------------------------
 
 export interface ConversationParticipant {
-  slug: string;
+  /** LinkedIn profile ID (not full URN) */
+  profileId: string;
+  /** urn:li:fsd_profile:{id} */
   urn: string;
   name: string;
+  /** LinkedIn profile slug if known */
+  slug: string | null;
 }
 
 export interface SyncState {
@@ -98,10 +105,10 @@ export interface ConversationRecord {
   urn: string;
   /** Backend URN: urn:li:messagingThread:... (used in message payloads) */
   backendUrn: string | null;
+  /** Bare conversation ID (folder name): e.g. 2-OTg0N2Nk... */
+  bareId: string;
   title: string;
   isGroup: boolean;
-  /** Account slug this conversation belongs to */
-  account: string;
   participants: ConversationParticipant[];
   unreadCount: number;
   lastActivityAt: string | null;
@@ -135,7 +142,6 @@ export interface StoredMessage {
   timestamp: number;
   fromUrn: string;
   fromName: string;
-  fromSlug: string;
   isFromMe: boolean;
   body: string;
   reactions: MessageReaction[];
