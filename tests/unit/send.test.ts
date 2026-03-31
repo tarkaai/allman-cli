@@ -216,6 +216,63 @@ describe("send command — pre-send sync abort", () => {
     exitSpy.mockRestore();
   });
 
+  it("proceeds when inbound messages exist but user already replied after them", async () => {
+    // Inbound messages arrived, but user sent a reply AFTER them — no abort needed
+    const newMessages = [
+      {
+        urn: "urn:li:msg_message:IN1",
+        deliveredAt: 1743360000001,
+        fromUrn: `urn:li:fsd_profile:${CONTACT_PROFILE_ID}`,
+        fromName: "James Foo",
+        body: "Hey",
+        originToken: null,
+        reactions: [],
+        attachments: [],
+      },
+      {
+        urn: "urn:li:msg_message:IN2",
+        deliveredAt: 1743360000002,
+        fromUrn: `urn:li:fsd_profile:${CONTACT_PROFILE_ID}`,
+        fromName: "James Foo",
+        body: "You're awesome",
+        originToken: null,
+        reactions: [],
+        attachments: [],
+      },
+      {
+        urn: "urn:li:msg_message:OUT1",
+        deliveredAt: 1743360000003, // AFTER the inbounds
+        fromUrn: `urn:li:fsd_profile:${MY_PROFILE_ID}`,
+        fromName: "Test User",
+        body: "Hey, thanks!",
+        originToken: null,
+        reactions: [],
+        attachments: [],
+      },
+    ];
+
+    mockFetchMessages.mockResolvedValue({ messages: newMessages, hasMore: false });
+
+    mockSendMessage.mockResolvedValue({
+      messageUrn: "urn:li:msg_message:SENT1",
+      conversationUrn: `urn:li:msg_conversation:(urn:li:fsd_profile:${MY_PROFILE_ID},${CONV_BARE_ID})`,
+      backendConversationUrn: `urn:li:messagingThread:${CONV_BARE_ID}`,
+      deliveredAt: Date.now(),
+    });
+
+    const exitSpy = vi.spyOn(process, "exit").mockImplementation((() => {
+      throw new Error("process.exit called");
+    }) as never);
+
+    // Should NOT abort — user already replied
+    await sendCommand("jfoo87", "I love you", { store: tempDir });
+
+    expect(mockSendMessage).toHaveBeenCalledOnce();
+    expect(exitSpy).not.toHaveBeenCalled();
+
+    exitSpy.mockRestore();
+  });
+
   it("proceeds with send when no new inbound messages", async () => {
     // No new messages since last sync
     mockFetchMessages.mockResolvedValue({ messages: [], hasMore: false });

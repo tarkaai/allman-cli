@@ -31,10 +31,11 @@ export class StoreGit {
 
   /** Initialize git repo if not already initialized. */
   async init(): Promise<void> {
-    const git = this.getGit();
-    const isRepo = await git.checkIsRepo().catch(() => false);
+    // Reset the cached instance to ensure it points to the (now-existing) dir
+    this.git = simpleGit(this.storePath);
+    const isRepo = await this.git.checkIsRepo().catch(() => false);
     if (!isRepo) {
-      await git.init();
+      await this.git.init();
       output.debug("Initialized git repo in store");
     }
   }

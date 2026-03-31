@@ -21,6 +21,7 @@ import { listenCommand } from "./commands/listen.js";
 import { conversationsCommand } from "./commands/conversations.js";
 import { messagesCommand } from "./commands/messages.js";
 import { sendCommand } from "./commands/send.js";
+import { searchCommand } from "./commands/search.js";
 import {
   storePathCommand,
   storeCommitCommand,
@@ -107,13 +108,15 @@ program
 program
   .command("sync")
   .description("Pull conversation history from LinkedIn into the local store")
+  .argument("[conversation]", "sync a single conversation (slug, profileId, or convId)")
   .option("-a, --account <slug>", "account to sync")
   .option("-s, --store <path>", "store directory")
   .option("--since <duration>", "sync since this date/duration (3mo, 6mo, 1y, YYYY-MM-DD)", "3mo")
   .option("--json", "output as JSON")
-  .action(async (opts, cmd) => {
+  .action(async (conversation: string | undefined, opts, cmd) => {
     const globalOpts = cmd.parent?.opts() ?? {};
     await syncCommand({
+      conversation,
       account: opts.account ?? globalOpts.account,
       store: opts.store ?? globalOpts.store,
       since: opts.since,
@@ -176,6 +179,7 @@ program
   .option("--json", "output as JSON")
   .option("-n, --limit <n>", "max messages to show", "50")
   .option("--since <date>", "show messages since this date (ISO format)")
+  .option("--no-sync", "don't auto-sync if conversation not found")
   .action(async (conversation: string, opts, cmd) => {
     const globalOpts = cmd.parent?.opts() ?? {};
     await messagesCommand(conversation, {
@@ -184,6 +188,7 @@ program
       json: opts.json ?? globalOpts.json,
       limit: parseInt(opts.limit, 10),
       since: opts.since,
+      noSync: opts.sync === false,
     });
   });
 
@@ -206,6 +211,27 @@ program
       account: opts.account ?? globalOpts.account,
       store: opts.store ?? globalOpts.store,
       json: opts.json ?? globalOpts.json,
+    });
+  });
+
+// ---------------------------------------------------------------------------
+// search
+// ---------------------------------------------------------------------------
+
+program
+  .command("search <query>")
+  .description("Search contacts and conversations by name")
+  .option("-a, --account <slug>", "account to search")
+  .option("-s, --store <path>", "store directory")
+  .option("--json", "output as JSON")
+  .option("-n, --limit <n>", "max results (default: 10)", "10")
+  .action(async (query: string, opts, cmd) => {
+    const globalOpts = cmd.parent?.opts() ?? {};
+    await searchCommand(query, {
+      account: opts.account ?? globalOpts.account,
+      store: opts.store ?? globalOpts.store,
+      json: opts.json ?? globalOpts.json,
+      limit: parseInt(opts.limit, 10),
     });
   });
 

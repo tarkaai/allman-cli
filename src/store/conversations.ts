@@ -23,6 +23,23 @@ const RECORD_FILE = "RECORD.json";
 // Conv IDs always start with "2-"
 const CONV_ID_PATTERN = /^2-/;
 
+/**
+ * Extract the bare message ID from any LinkedIn message URN format.
+ * - urn:li:fs_event:(convId,msgId) → msgId (strip trailing paren)
+ * - urn:li:messagingMessage:msgId → msgId
+ * The msgId is identical across both formats (e.g. "2-MTc3NDkz...").
+ */
+function extractMsgId(urn: string): string {
+  // fs_event format: everything after the last comma, strip trailing )
+  if (urn.includes("fs_event")) {
+    const lastComma = urn.lastIndexOf(",");
+    if (lastComma !== -1) return urn.slice(lastComma + 1).replace(/\)$/, "");
+  }
+  // messagingMessage format: everything after the last colon
+  const lastColon = urn.lastIndexOf(":");
+  return lastColon !== -1 ? urn.slice(lastColon + 1) : urn;
+}
+
 const DEFAULT_SYNC_STATE: SyncState = {
   oldestMessageAt: null,
   newestMessageAt: null,
@@ -32,6 +49,8 @@ const DEFAULT_SYNC_STATE: SyncState = {
 };
 
 export class ConversationStore {
+  private writeLocks = new Map<string, Promise<void>>();
+
   constructor(
     private readonly accountDir: string,
     private readonly git: StoreGit
@@ -162,6 +181,7 @@ export class ConversationStore {
   async appendMessages(convId: string, messages: StoredMessage[]): Promise<number> {
     if (messages.length === 0) return 0;
 
+
     const byFile = new Map<string, StoredMessage[]>();
     for (const msg of messages) {
       const file = this.messageFile(convId, msg.timestamp);
@@ -171,27 +191,32 @@ export class ConversationStore {
 
     let totalAdded = 0;
     for (const [file, msgs] of byFile) {
-      await mkdir(join(file, ".."), { recursive: true });
+      // Serialize writes to the same file to prevent race conditions
+      const prev = this.writeLocks.get(file) ?? Promise.resolve();
+      const work = prev.then(async () => {
+        await mkdir(join(file, ".."), { recursive: true });
 
-      // Deduplicate: skip messages whose URN already exists in this file
-      const existingUrns = new Set<string>();
-      try {
-        const content = await readFile(file, "utf8");
-        for (const line of content.split("\n")) {
-          if (!line.trim()) continue;
-          try {
-            const m = JSON.parse(line) as StoredMessage;
-            if (m.urn) existingUrns.add(m.urn);
-          } catch { /* skip malformed */ }
+        const existingMsgIds = new Set<string>();
+        try {
+          const content = await readFile(file, "utf8");
+          for (const line of content.split("\n")) {
+            if (!line.trim()) continue;
+            try {
+              const m = JSON.parse(line) as StoredMessage;
+              if (m.urn) existingMsgIds.add(extractMsgId(m.urn));
+            } catch { /* skip malformed */ }
+          }
+        } catch { /* file doesn't exist yet */ }
+
+        const newMsgs = msgs.filter((m) => !existingMsgIds.has(extractMsgId(m.urn)));
+        if (newMsgs.length > 0) {
+          const lines = newMsgs.map((m) => JSON.stringify(m)).join("\n") + "\n";
+          await appendFile(file, lines, "utf8");
+          totalAdded += newMsgs.length;
         }
-      } catch { /* file doesn't exist yet */ }
-
-      const newMsgs = msgs.filter((m) => !existingUrns.has(m.urn));
-      if (newMsgs.length > 0) {
-        const lines = newMsgs.map((m) => JSON.stringify(m)).join("\n") + "\n";
-        await appendFile(file, lines, "utf8");
-        totalAdded += newMsgs.length;
-      }
+      });
+      this.writeLocks.set(file, work);
+      await work;
     }
     return totalAdded;
   }

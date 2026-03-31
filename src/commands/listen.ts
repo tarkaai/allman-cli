@@ -8,8 +8,8 @@
 import { join } from "path";
 import { appendFile } from "fs/promises";
 import { Store, resolveStorePath } from "../store/index.js";
-import { buildApiClient, type LinkedInApiClient } from "../linkedin/api/client.js";
-import { loadCookieJar, serializeCookieJar } from "../linkedin/api/cookies.js";
+import { type LinkedInApiClient } from "../linkedin/api/client.js";
+import { loadSession } from "../linkedin/api/session.js";
 import { SseClient, type SseEvent } from "../linkedin/realtime/sse-client.js";
 import { listConversations } from "../linkedin/api/endpoints/conversations.js";
 import { fetchMessages } from "../linkedin/api/endpoints/messages.js";
@@ -29,36 +29,16 @@ export async function listenCommand(options: ListenOptions): Promise<void> {
   const store = new Store({ path: storePath });
   await store.init();
 
-  const profileId = await store.accounts.getDefault(options.account);
-  const accountRecord = await store.accounts.read(profileId);
-
-  if (!accountRecord || accountRecord.status !== "authenticated") {
-    error(`Account not authenticated. Run \`lilac login\``, 1);
+  let session;
+  try {
+    session = await loadSession(store, options.account);
+  } catch (err) {
+    error(String((err as Error).message), 1);
     return;
   }
-
-  if (!accountRecord.urn) {
-    error(`Account has no profile URN. Re-run \`lilac login\`.`, 1);
-    return;
-  }
-
-  const myProfileUrn = accountRecord.urn;
-  const accountConfig = await store.accounts.readConfig(profileId);
-  const jar = loadCookieJar(accountRecord);
+  const { apiClient, profileId, myProfileUrn, accountRecord } = session;
   const conversations = store.forAccount(profileId);
   const accountDir = join(storePath, profileId);
-
-  const apiClient = buildApiClient(
-    accountRecord,
-    async (updatedJar) => {
-      await store.accounts.update(profileId, {
-        cookieJar: serializeCookieJar(updatedJar),
-        cookiesUpdatedAt: new Date().toISOString(),
-      });
-    },
-    accountConfig.proxy
-  );
-  apiClient.updateJar(jar);
 
   info(`Listening for messages (${accountRecord.name ?? profileId})...`);
   info("Streaming NDJSON events to stdout. Ctrl+C to stop.");
@@ -119,14 +99,19 @@ async function handleEvent(
       // Sender name: for 1:1 convs, convRecord.name is the other person
       const fromName = isFromMe ? null : (convRecord?.name ?? null);
 
-      // Fetch body if empty
+      // Fetch body and real URN if body is empty (SSE often omits it)
       let body = event.body ?? "";
-      if (!body && event.conversationUrn && convId) {
+      let realUrn: string | null = null;
+      if (!body && event.conversationUrn) {
         try {
           const convUrn = convRecord?.backendUrn ?? event.conversationUrn;
           const { messages } = await fetchMessages(apiClient, convUrn, myProfileUrn, (event.timestamp ?? timestamp) + 1, 5);
-          const match = messages.find((m) => m.urn === event.messageUrn);
-          if (match) body = match.body;
+          const eventTs = event.timestamp ?? timestamp;
+          const match = messages.find((m) => Math.abs(m.timestamp - eventTs) < 2000);
+          if (match) {
+            body = match.body;
+            realUrn = match.urn;
+          }
         } catch { /* non-fatal */ }
       }
 
@@ -141,10 +126,11 @@ async function handleEvent(
         message: { urn: event.messageUrn, body, isFromMe },
       });
 
-      // Persist to store
-      if (convId && event.messageUrn) {
+      // Persist to store — skip empty-body messages (likely duplicate SSE events)
+      const messageUrn = realUrn ?? event.messageUrn;
+      if (convId && messageUrn && body) {
         const storedMsg: StoredMessage = {
-          urn: event.messageUrn,
+          urn: messageUrn,
           timestamp: event.timestamp ?? timestamp,
           fromUrn: event.fromUrn ?? "",
           fromName: fromName ?? "",

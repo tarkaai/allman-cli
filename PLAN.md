@@ -213,24 +213,24 @@ done
 
 ## Implementation order
 
-| # | What | Files | Notes |
-|---|------|-------|-------|
-| 1 | Types rewrite | `src/store/types.ts` | New `ConversationRecord`, delete `ContactRecord` |
-| 2 | Shared alias util | `src/store/alias.ts` (NEW) | Symlink creation with conflict detection |
-| 3 | Profile slug resolver | `src/linkedin/api/endpoints/profiles.ts` | New `getProfileSlugById()` function |
-| 4 | Unified ConversationStore | `src/store/conversations.ts` (REWRITE) | Replaces both old stores |
-| 5 | Account AUTH/COOKIES split | `src/store/accounts.ts` | Two files instead of one |
-| 6 | Store index | `src/store/index.ts` | `forAccount()` returns `ConversationStore` |
-| 7 | Slug util update | `src/utils/slug.ts` | Unicode normalization |
-| 8 | Update sync | `src/commands/sync.ts` | Slug resolution per contact, single store |
-| 9 | Update listen | `src/commands/listen.ts` | Single store, INBOX.jsonl writes |
-| 10 | Update send | `src/commands/send.ts` | Use `conversations.resolve()` |
-| 11 | Update remaining commands | `messages.ts`, `conversations.ts`, `login.ts`, `logout.ts`, `status.ts`, `store-cmd.ts` | |
-| 12 | Search | `src/store/search.ts`, `src/commands/search.ts` (NEW) | + register in index.ts |
-| 13 | Channel | `src/channel/index.ts` (NEW) | MCP server wrapping listen/send/search |
-| 14 | Skills | `.claude/skills/` (NEW) | 4 skill files |
-| 15 | Tests | `tests/unit/store.test.ts` (REWRITE), `search.test.ts`, `alias.test.ts` (NEW) | |
-| 16 | Wipe + verify | Delete `.lilac/`, login, sync, test all paths | |
+| # | What | Files | Status |
+|---|------|-------|--------|
+| 1 | Types rewrite | `src/store/types.ts` | DONE |
+| 2 | Shared alias util | `src/store/alias.ts` | DONE |
+| 3 | Profile slug resolver | `src/linkedin/api/endpoints/profiles.ts` | DONE |
+| 4 | Unified ConversationStore | `src/store/conversations.ts` | DONE |
+| 5 | Account AUTH/COOKIES split | `src/store/accounts.ts` | DONE |
+| 6 | Store index | `src/store/index.ts` | DONE |
+| 7 | Slug util update | `src/utils/slug.ts` | DONE |
+| 8 | Update sync | `src/commands/sync.ts` | DONE |
+| 9 | Update listen | `src/commands/listen.ts` | DONE |
+| 10 | Update send | `src/commands/send.ts` | DONE |
+| 11 | Update remaining commands | `messages.ts`, `conversations.ts`, `login.ts`, `logout.ts`, `status.ts`, `store-cmd.ts` | DONE |
+| 12 | Search | `src/store/search.ts`, `src/commands/search.ts` | DONE |
+| 13 | Channel | `src/channel/index.ts` | DONE |
+| 14 | Skills | `.claude/skills/` | DONE |
+| 15 | Tests | `tests/unit/store.test.ts`, `search.test.ts`, `alias.test.ts` | DONE (106 passing) |
+| 16 | Live verification | Login, sync 281 conversations, send, listen | DONE |
 
 ## Files to delete
 - `src/store/contacts.ts` — merged into conversations.ts

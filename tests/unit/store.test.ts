@@ -236,6 +236,86 @@ describe("ConversationStore", () => {
     expect(count2).toBe(0);
   });
 
+  it("deduplicates across SSE and API URN formats with same message ID", async () => {
+    const conversations = store.forAccount(MY_PROFILE_ID);
+    await conversations.upsert(CONV_ID, conv);
+
+    const msgId = "2-MTc3NDkzOTc3MzE2OGI0MTg2OQ==";
+    const apiMsg: StoredMessage = {
+      urn: `urn:li:messagingMessage:${msgId}`,
+      timestamp: 1774939773168,
+      fromUrn: `urn:li:fsd_profile:${CONTACT_PROFILE_ID}`,
+      fromName: "Sarah Chen",
+      isFromMe: false,
+      body: "Hello!",
+      reactions: [],
+      attachments: [],
+      originToken: null,
+    };
+    const sseMsg: StoredMessage = {
+      urn: `urn:li:fs_event:(${CONV_ID},${msgId})`,
+      timestamp: 1774939773168,
+      fromUrn: `urn:li:fsd_profile:${CONTACT_PROFILE_ID}`,
+      fromName: "Sarah Chen",
+      isFromMe: false,
+      body: "Hello!",
+      reactions: [],
+      attachments: [],
+      originToken: null,
+    };
+
+    const count1 = await conversations.appendMessages(CONV_ID, [apiMsg]);
+    expect(count1).toBe(1);
+
+    // SSE URN with same message ID should be deduped
+    const count2 = await conversations.appendMessages(CONV_ID, [sseMsg]);
+    expect(count2).toBe(0);
+
+    const all = await conversations.readMessages(CONV_ID);
+    expect(all.length).toBe(1);
+    expect(all[0].body).toBe("Hello!");
+  });
+
+  it("concurrent appendMessages calls don't create duplicates", async () => {
+    const conversations = store.forAccount(MY_PROFILE_ID);
+    await conversations.upsert(CONV_ID, conv);
+
+    const msgId = "2-MTc3NDkzOTc3MzE2OGI0MTg2OQ==";
+    const msg1: StoredMessage = {
+      urn: `urn:li:messagingMessage:${msgId}`,
+      timestamp: 1774939773168,
+      fromUrn: `urn:li:fsd_profile:${CONTACT_PROFILE_ID}`,
+      fromName: "Sarah Chen",
+      isFromMe: false,
+      body: "Hello!",
+      reactions: [],
+      attachments: [],
+      originToken: null,
+    };
+    const msg2: StoredMessage = {
+      urn: `urn:li:fs_event:(${CONV_ID},${msgId})`,
+      timestamp: 1774939773168,
+      fromUrn: `urn:li:fsd_profile:${CONTACT_PROFILE_ID}`,
+      fromName: "Sarah Chen",
+      isFromMe: false,
+      body: "Hello!",
+      reactions: [],
+      attachments: [],
+      originToken: null,
+    };
+
+    // Fire both concurrently — simulates two SSE events arriving at once
+    const [count1, count2] = await Promise.all([
+      conversations.appendMessages(CONV_ID, [msg1]),
+      conversations.appendMessages(CONV_ID, [msg2]),
+    ]);
+
+    expect(count1 + count2).toBe(1); // only one should be written
+
+    const all = await conversations.readMessages(CONV_ID);
+    expect(all.length).toBe(1);
+  });
+
   it("readMessages returns messages within time range", async () => {
     const conversations = store.forAccount(MY_PROFILE_ID);
     await conversations.upsert(CONV_ID, conv);
