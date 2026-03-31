@@ -19,11 +19,8 @@ export async function logoutCommand(options: LogoutOptions): Promise<void> {
     return;
   }
 
-  await store.accounts.update(profileId, {
-    status: "unauthenticated",
-    cookieJar: null,
-    cookiesUpdatedAt: null,
-  });
+  await store.accounts.writeCookies(profileId, { cookieJar: null, cookiesUpdatedAt: null });
+  await store.accounts.writeAuth(profileId, { ...existing, status: "unauthenticated" });
 
   await store.git.flush();
   success(`Logged out: ${existing.profileSlug ?? profileId}`);

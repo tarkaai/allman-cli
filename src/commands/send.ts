@@ -13,7 +13,7 @@ import { isUrn, extractBareConvId, profileUrnId } from "../utils/urn.js";
 import { slugFromUrl } from "../utils/slug.js";
 import * as output from "../utils/output.js";
 import type { ConversationRecord, StoredMessage } from "../store/types.js";
-import type { ConversationStore, ContactStore } from "../store/index.js";
+import type { ConversationStore } from "../store/index.js";
 
 export interface SendOptions {
   account?: string;
@@ -42,7 +42,7 @@ export async function sendCommand(target: string, text: string, options: SendOpt
   const myProfileUrn = accountRecord.urn;
   const accountConfig = await store.accounts.readConfig(profileId);
   const jar = loadCookieJar(accountRecord);
-  const { conversations, contacts } = store.forAccount(profileId);
+  const conversations = store.forAccount(profileId);
 
   const apiClient = buildApiClient(
     accountRecord,
@@ -56,7 +56,7 @@ export async function sendCommand(target: string, text: string, options: SendOpt
   );
   apiClient.updateJar(jar);
 
-  const resolved = await resolveTarget(target, myProfileUrn, apiClient, conversations, contacts);
+  const resolved = await resolveTarget(target, myProfileUrn, apiClient, conversations);
 
   if (resolved.error) {
     output.error(resolved.error, 1);
@@ -94,7 +94,7 @@ export async function sendCommand(target: string, text: string, options: SendOpt
       result = await sendFirstMessage(apiClient, contactProfileUrn, myProfileUrn, text);
     } else if (bareConvId) {
       const convRecord = await conversations.read(bareConvId);
-      const convUrn = convRecord?.backendUrn ?? convRecord?.urn ?? bareConvId;
+      const convUrn = convRecord?.backendUrn ?? convRecord?.convUrn ?? bareConvId;
       result = await sendMessage(apiClient, convUrn, myProfileUrn, text);
     } else {
       output.error("Could not determine conversation to send to.", 1);
@@ -126,17 +126,37 @@ export async function sendCommand(target: string, text: string, options: SendOpt
   if (await conversations.exists(targetBareId)) {
     await conversations.appendMessages(targetBareId, [storedMsg]);
   } else if (result.backendConversationUrn) {
+    const contactPid = contactProfileUrn ? contactProfileUrn.replace("urn:li:fsd_profile:", "") : "";
     const newRecord: ConversationRecord = {
-      urn: result.conversationUrn,
+      convId: targetBareId,
+      profileId: contactPid,
+      slug: null,
+      convUrn: result.conversationUrn,
       backendUrn: result.backendConversationUrn,
-      bareId: targetBareId,
-      title: contactProfileUrn ? "New conversation" : "New conversation",
-      isGroup: false,
-      participants: [{ profileId, urn: myProfileUrn, name: accountRecord.name ?? "", slug: accountRecord.profileSlug ?? null }],
+      profileUrn: contactProfileUrn ?? "",
+      memberUrn: null,
+      firstName: "",
+      lastName: "",
+      name: "New conversation",
+      headline: null,
+      profileUrl: null,
+      profilePictures: null,
+      distance: null,
+      pronoun: null,
+      memberBadgeType: null,
+      isPremium: false,
+      isVerified: false,
       unreadCount: 0,
       lastActivityAt: new Date(result.deliveredAt).toISOString(),
+      lastReadAt: null,
       createdAt: new Date(result.deliveredAt).toISOString(),
+      read: true,
+      notificationStatus: null,
+      categories: [],
+      conversationUrl: null,
+      disabledFeatures: [],
       syncState: { oldestMessageAt: result.deliveredAt, newestMessageAt: result.deliveredAt, lastSyncAt: new Date().toISOString(), totalSynced: 1, fullyBackfilled: false },
+      fetchedAt: new Date().toISOString(),
     };
     await conversations.upsert(targetBareId, newRecord);
     await conversations.appendMessages(targetBareId, [storedMsg]);
@@ -168,14 +188,13 @@ async function resolveTarget(
   myProfileUrn: string,
   apiClient: ReturnType<typeof buildApiClient>,
   conversations: ConversationStore,
-  contacts: ContactStore
 ): Promise<ResolvedTarget> {
   // Case 1: Direct URN
   if (isUrn(target)) {
     const bare = extractBareConvId(target);
     if (await conversations.exists(bare)) return { bareConvId: bare, isNewConversation: false };
     const found = await conversations.findByUrn(target);
-    return { bareConvId: found?.bareId, isNewConversation: false };
+    return { bareConvId: found?.convId, isNewConversation: false };
   }
 
   // Case 2: Slug or URL — try symlink first
@@ -187,12 +206,11 @@ async function resolveTarget(
   }
 
   // Try resolving as a conversation symlink directly
-  const directBareId = await conversations.resolveId(contactSlug);
+  const directBareId = await conversations.resolve(contactSlug);
   if (directBareId) return { bareConvId: directBareId, isNewConversation: false };
 
-  // Look up contact profile ID
-  const contactId = await contacts.resolveId(contactSlug);
-  let contactUrn = contactId ? `urn:li:fsd_profile:${contactId}` : null;
+  // Try to find a conversation by profile URN via local store
+  let contactUrn: string | null = null;
 
   // If not in local store, query LinkedIn API
   if (!contactUrn) {
@@ -205,8 +223,8 @@ async function resolveTarget(
   }
 
   // Look for existing conversation with this contact
-  const localConv = await conversations.findByParticipantUrn(contactUrn);
-  if (localConv) return { bareConvId: localConv.bareId, contactProfileUrn: contactUrn, isNewConversation: false };
+  const localConv = await conversations.findByProfileUrn(contactUrn);
+  if (localConv) return { bareConvId: localConv.convId, contactProfileUrn: contactUrn, isNewConversation: false };
 
   // Query LinkedIn API for existing conversation
   output.info("Checking for existing conversation on LinkedIn...");
@@ -231,7 +249,7 @@ async function preSendSync(
 ): Promise<StoredMessage[]> {
   const existing = await conversations.read(bareConvId);
   const knownNewestAt = existing?.syncState.newestMessageAt ?? 0;
-  const convUrn = existing?.backendUrn ?? existing?.urn ?? bareConvId;
+  const convUrn = existing?.backendUrn ?? existing?.convUrn ?? bareConvId;
 
   try {
     const { messages } = await fetchMessages(apiClient, convUrn, myProfileUrn, Date.now(), 5);

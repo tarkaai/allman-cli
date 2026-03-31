@@ -17,7 +17,7 @@ export async function messagesCommand(target: string, options: MessagesOptions):
   await store.init();
 
   const profileId = await store.accounts.getDefault(options.account);
-  const { conversations } = store.forAccount(profileId);
+  const conversations = store.forAccount(profileId);
 
   // Resolve target to a bare conversation ID
   let bareConvId: string | null = null;
@@ -29,7 +29,7 @@ export async function messagesCommand(target: string, options: MessagesOptions):
       bareConvId = bare;
     } else {
       const found = await conversations.findByUrn(target);
-      bareConvId = found?.bareId ?? null;
+      bareConvId = found?.convId ?? null;
     }
   } else {
     // Slug or URL — try resolving as symlink first
@@ -39,7 +39,7 @@ export async function messagesCommand(target: string, options: MessagesOptions):
     } catch {
       slug = target;
     }
-    bareConvId = await conversations.resolveId(slug);
+    bareConvId = await conversations.resolve(slug);
   }
 
   if (!bareConvId) {
@@ -81,6 +81,6 @@ export async function messagesCommand(target: string, options: MessagesOptions):
     return `${prefix} ${sender.padEnd(20)} ${time.padEnd(12)} ${m.body}${attachments}${reactions}`;
   });
 
-  process.stdout.write(`Conversation: ${record.title}\n\n`);
+  process.stdout.write(`Conversation: ${record.name}\n\n`);
   process.stdout.write(lines.join("\n") + "\n");
 }

@@ -1,24 +1,26 @@
 /**
- * Conversation store operations.
+ * Unified conversation store.
  *
- * Layout:
- *   {accountDir}/{bareConvId}/RECORD.json
- *   {accountDir}/{bareConvId}/messages/YYYY-MM.jsonl
- *   {accountDir}/{slug} -> {bareConvId}   (symlink, e.g. "jfoo87" -> "2-OTg0N2Nk...")
+ * Layout (inside account dir):
+ *   {accountDir}/{convId}/RECORD.json         — conversation + contact data
+ *   {accountDir}/{convId}/messages/YYYY-MM.jsonl
+ *   {accountDir}/{profileId} -> {convId}      — symlink
+ *   {accountDir}/{slug} -> {convId}           — symlink (real LinkedIn publicIdentifier)
  *
- * Bare conv ID = the ID portion of urn:li:messagingThread:{bareId}
- * e.g. "2-OTg0N2NkZmMtNTViZC00N2I4LWI3YTYtODdhYmU0YzAzNzhjXzEwMA=="
+ * Every 1:1 conversation maps to exactly one contact.
+ * The convId is the canonical key (directory name).
  */
 
-import { readFile, writeFile, mkdir, readdir, access, appendFile, symlink, readlink, unlink, createReadStream } from "fs/promises";
+import { readFile, writeFile, mkdir, readdir, appendFile } from "fs/promises";
 import { createReadStream as fsCreateReadStream } from "fs";
 import { createInterface } from "readline";
 import { join } from "path";
+import { ensureDir, ensureAlias, forceAlias, resolveAlias } from "./alias.js";
 import type { StoreGit } from "./git.js";
 import type { ConversationRecord, StoredMessage, SyncState } from "./types.js";
 
 const RECORD_FILE = "RECORD.json";
-// Bare conv IDs always start with "2-"
+// Conv IDs always start with "2-"
 const CONV_ID_PATTERN = /^2-/;
 
 const DEFAULT_SYNC_STATE: SyncState = {
@@ -35,21 +37,21 @@ export class ConversationStore {
     private readonly git: StoreGit
   ) {}
 
-  private dir(bareConvId: string): string {
-    return join(this.accountDir, bareConvId);
+  private dir(convId: string): string {
+    return join(this.accountDir, convId);
   }
 
-  private messagesDir(bareConvId: string): string {
-    return join(this.dir(bareConvId), "messages");
+  private messagesDir(convId: string): string {
+    return join(this.dir(convId), "messages");
   }
 
-  private messageFile(bareConvId: string, timestampMs: number): string {
+  private messageFile(convId: string, timestampMs: number): string {
     const d = new Date(timestampMs);
     const month = `${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, "0")}`;
-    return join(this.messagesDir(bareConvId), `${month}.jsonl`);
+    return join(this.messagesDir(convId), `${month}.jsonl`);
   }
 
-  /** List all bare conversation IDs (real dirs only, not symlinks). */
+  /** List all convIds (real dirs with 2- prefix, not symlinks). */
   async list(): Promise<string[]> {
     try {
       const entries = await readdir(this.accountDir, { withFileTypes: true });
@@ -61,30 +63,46 @@ export class ConversationStore {
     }
   }
 
-  async exists(bareConvId: string): Promise<boolean> {
+  async exists(convId: string): Promise<boolean> {
     try {
-      await access(join(this.dir(bareConvId), RECORD_FILE));
+      await readFile(join(this.dir(convId), RECORD_FILE), "utf8");
       return true;
     } catch {
       return false;
     }
   }
 
-  async read(bareConvId: string): Promise<ConversationRecord | null> {
+  async read(convId: string): Promise<ConversationRecord | null> {
     try {
-      const raw = await readFile(join(this.dir(bareConvId), RECORD_FILE), "utf8");
+      const raw = await readFile(join(this.dir(convId), RECORD_FILE), "utf8");
       return JSON.parse(raw) as ConversationRecord;
     } catch {
       return null;
     }
   }
 
-  async upsert(bareConvId: string, record: ConversationRecord): Promise<void> {
-    const dir = this.dir(bareConvId);
-    await mkdir(dir, { recursive: true });
-    const existing = await this.read(bareConvId);
-    // Preserve existing syncState when incoming record has no tracked data (e.g. fresh API fetch).
-    // If the incoming syncState has actual data, it wins (e.g. updateSyncState calls).
+  /**
+   * Resolve any identifier (slug, profileId, or convId) to a convId.
+   * Follows symlinks for slug/profileId, direct lookup for convId.
+   */
+  async resolve(input: string): Promise<string | null> {
+    // Direct convId
+    if (CONV_ID_PATTERN.test(input)) {
+      if (await this.exists(input)) return input;
+    }
+    // Try symlink (slug or profileId)
+    return resolveAlias(this.accountDir, input);
+  }
+
+  /**
+   * Write or update a conversation record.
+   * Also creates/validates profileId and slug symlinks.
+   */
+  async upsert(convId: string, record: ConversationRecord): Promise<void> {
+    await ensureDir(this.accountDir, convId);
+
+    const existing = await this.read(convId);
+    // Preserve existing syncState if incoming has no tracked data
     const incomingSyncHasData =
       record.syncState.oldestMessageAt !== null ||
       record.syncState.newestMessageAt !== null ||
@@ -92,72 +110,61 @@ export class ConversationStore {
     const merged: ConversationRecord = existing
       ? { ...existing, ...record, syncState: incomingSyncHasData ? record.syncState : existing.syncState }
       : record;
-    await writeFile(join(dir, RECORD_FILE), JSON.stringify(merged, null, 2) + "\n", "utf8");
-    this.git.scheduleCommit(`conversation: update ${bareConvId.slice(0, 20)}`);
+
+    await writeFile(
+      join(this.dir(convId), RECORD_FILE),
+      JSON.stringify(merged, null, 2) + "\n",
+      "utf8"
+    );
+
+    // Create profileId symlink → convId
+    if (merged.profileId) {
+      await ensureAlias(this.accountDir, merged.profileId, convId).catch(() => {});
+    }
+
+    // Create slug symlink → convId (only if slug is resolved)
+    if (merged.slug) {
+      // Use forceAlias for slug since it may be newly resolved
+      await forceAlias(this.accountDir, merged.slug, convId).catch(() => {});
+    }
+
+    this.git.scheduleCommit(`conversation: update ${convId.slice(0, 20)}`);
   }
 
-  /** Create a symlink: {accountDir}/{slug} → {bareConvId} */
-  async createAlias(slug: string, bareConvId: string): Promise<void> {
-    const linkPath = join(this.accountDir, slug);
-    try { await unlink(linkPath); } catch { /* ok */ }
-    await symlink(bareConvId, linkPath);
+  /** Find a conversation by its frontend or backend URN. Scans all records. */
+  async findByUrn(urn: string): Promise<{ convId: string; record: ConversationRecord } | null> {
+    const ids = await this.list();
+    for (const convId of ids) {
+      const record = await this.read(convId);
+      if (record && (record.convUrn === urn || record.backendUrn === urn)) {
+        return { convId, record };
+      }
+    }
+    return null;
+  }
+
+  /** Find a 1:1 conversation by the contact's profile URN. Scans all records. */
+  async findByProfileUrn(profileUrn: string): Promise<{ convId: string; record: ConversationRecord } | null> {
+    const ids = await this.list();
+    for (const convId of ids) {
+      const record = await this.read(convId);
+      if (record && record.profileUrn === profileUrn) {
+        return { convId, record };
+      }
+    }
+    return null;
   }
 
   /**
-   * Resolve a slug/alias to a bare conversation ID.
-   * Follows symlink if present, otherwise returns input if it's an existing dir.
+   * Append messages to the JSONL store. Deduplicates by URN within each month file.
+   * Returns the number of new messages actually written.
    */
-  async resolveId(slugOrId: string): Promise<string | null> {
-    const path = join(this.accountDir, slugOrId);
-    try {
-      return await readlink(path);
-    } catch {
-      if (CONV_ID_PATTERN.test(slugOrId)) {
-        try {
-          await access(join(this.accountDir, slugOrId, RECORD_FILE));
-          return slugOrId;
-        } catch {
-          return null;
-        }
-      }
-      return null;
-    }
-  }
-
-  /** Find a conversation by its frontend or backend URN. */
-  async findByUrn(urn: string): Promise<{ bareId: string; record: ConversationRecord } | null> {
-    const ids = await this.list();
-    for (const bareId of ids) {
-      const record = await this.read(bareId);
-      if (record && (record.urn === urn || record.backendUrn === urn || record.bareId === bareId)) {
-        return { bareId, record };
-      }
-    }
-    return null;
-  }
-
-  /** Find a 1:1 conversation with a specific contact by their profile URN. */
-  async findByParticipantUrn(
-    contactUrn: string
-  ): Promise<{ bareId: string; record: ConversationRecord } | null> {
-    const ids = await this.list();
-    for (const bareId of ids) {
-      const record = await this.read(bareId);
-      if (!record || record.isGroup) continue;
-      if (record.participants.some((p) => p.urn === contactUrn)) {
-        return { bareId, record };
-      }
-    }
-    return null;
-  }
-
-  async appendMessages(bareConvId: string, messages: StoredMessage[]): Promise<number> {
+  async appendMessages(convId: string, messages: StoredMessage[]): Promise<number> {
     if (messages.length === 0) return 0;
 
-    // Group by month file
     const byFile = new Map<string, StoredMessage[]>();
     for (const msg of messages) {
-      const file = this.messageFile(bareConvId, msg.timestamp);
+      const file = this.messageFile(convId, msg.timestamp);
       if (!byFile.has(file)) byFile.set(file, []);
       byFile.get(file)!.push(msg);
     }
@@ -190,10 +197,10 @@ export class ConversationStore {
   }
 
   async readMessages(
-    bareConvId: string,
+    convId: string,
     opts: { since?: number; limit?: number } = {}
   ): Promise<StoredMessage[]> {
-    const dir = this.messagesDir(bareConvId);
+    const dir = this.messagesDir(convId);
     let files: string[];
     try {
       files = (await readdir(dir)).filter((f) => f.endsWith(".jsonl")).sort();
@@ -217,7 +224,6 @@ export class ConversationStore {
       }
     }
 
-    // Sort ascending, return last N
     messages.sort((a, b) => a.timestamp - b.timestamp);
     if (opts.limit && messages.length > opts.limit) {
       return messages.slice(messages.length - opts.limit);
@@ -225,10 +231,10 @@ export class ConversationStore {
     return messages;
   }
 
-  async updateSyncState(bareConvId: string, updates: Partial<SyncState>): Promise<void> {
-    const record = await this.read(bareConvId);
+  async updateSyncState(convId: string, updates: Partial<SyncState>): Promise<void> {
+    const record = await this.read(convId);
     if (!record) return;
     const syncState: SyncState = { ...DEFAULT_SYNC_STATE, ...record.syncState, ...updates };
-    await this.upsert(bareConvId, { ...record, syncState });
+    await this.upsert(convId, { ...record, syncState });
   }
 }

@@ -367,6 +367,7 @@ export function buildEmptyApiClient(): LinkedInApiClient {
   return new LinkedInApiClient({
     account: {
       urn: null,
+      profileSlug: null,
       name: null,
       headline: null,
       profileUrl: null,

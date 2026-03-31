@@ -83,25 +83,41 @@ const accountRecord: AccountRecord = {
 };
 
 const convRecord: ConversationRecord = {
-  urn: `urn:li:msg_conversation:(urn:li:fsd_profile:${MY_PROFILE_ID},${CONV_BARE_ID})`,
+  convId: CONV_BARE_ID,
+  profileId: CONTACT_PROFILE_ID,
+  slug: "jfoo87",
+  convUrn: `urn:li:msg_conversation:(urn:li:fsd_profile:${MY_PROFILE_ID},${CONV_BARE_ID})`,
   backendUrn: `urn:li:messagingThread:${CONV_BARE_ID}`,
-  bareId: CONV_BARE_ID,
-  title: "jfoo87",
-  isGroup: false,
-  participants: [
-    { profileId: MY_PROFILE_ID, slug: "mockuser", urn: `urn:li:fsd_profile:${MY_PROFILE_ID}`, name: "Test User" },
-    { profileId: CONTACT_PROFILE_ID, slug: "jfoo87", urn: `urn:li:fsd_profile:${CONTACT_PROFILE_ID}`, name: "James Foo" },
-  ],
+  profileUrn: `urn:li:fsd_profile:${CONTACT_PROFILE_ID}`,
+  memberUrn: null,
+  firstName: "James",
+  lastName: "Foo",
+  name: "James Foo",
+  headline: null,
+  profileUrl: null,
+  profilePictures: null,
+  distance: null,
+  pronoun: null,
+  memberBadgeType: null,
+  isPremium: false,
+  isVerified: false,
   unreadCount: 0,
   lastActivityAt: "2026-03-30T12:00:00Z",
+  lastReadAt: null,
   createdAt: "2026-01-01T00:00:00Z",
+  read: true,
+  notificationStatus: null,
+  categories: [],
+  conversationUrl: null,
+  disabledFeatures: [],
   syncState: {
     oldestMessageAt: 1000000000000,
-    newestMessageAt: 1743350000000, // known newest — messages after this are "new"
+    newestMessageAt: 1743350000000,
     lastSyncAt: "2026-03-30T00:00:00Z",
     totalSynced: 10,
     fullyBackfilled: false,
   },
+  fetchedAt: "2026-03-30T00:00:00Z",
 };
 
 // ---------------------------------------------------------------------------
@@ -122,10 +138,9 @@ describe("send command — pre-send sync abort", () => {
     await store.accounts.write(MY_PROFILE_ID, accountRecord);
     await store.accounts.createAlias("mockuser", MY_PROFILE_ID);
 
-    // Write conversation + alias so "jfoo87" resolves to it
-    const { conversations } = store.forAccount(MY_PROFILE_ID);
+    // Write conversation — upsert creates slug + profileId symlinks automatically
+    const conversations = store.forAccount(MY_PROFILE_ID);
     await conversations.upsert(CONV_BARE_ID, convRecord);
-    await conversations.createAlias("jfoo87", CONV_BARE_ID);
   });
 
   afterEach(async () => {
@@ -177,7 +192,7 @@ describe("send command — pre-send sync abort", () => {
 
     const exitSpy = vi.spyOn(process, "exit").mockImplementation((() => {
       throw new Error("process.exit called");
-    }) as (code?: number) => never);
+    }) as never);
 
     await expect(
       sendCommand("jfoo87", "Hey, thanks!", { store: tempDir })
@@ -214,7 +229,7 @@ describe("send command — pre-send sync abort", () => {
 
     const exitSpy = vi.spyOn(process, "exit").mockImplementation((() => {
       throw new Error("process.exit called");
-    }) as (code?: number) => never);
+    }) as never);
 
     // Should not throw
     await sendCommand("jfoo87", "Hey, thanks!", { store: tempDir });

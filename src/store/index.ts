@@ -6,24 +6,23 @@
  *   ├── .git/
  *   ├── .gitignore
  *   ├── {profileId}/                      ← account dir
- *   │   ├── RECORD.json                   ← cookies + profile
+ *   │   ├── AUTH.json                     ← profile info, auth status
+ *   │   ├── COOKIES.json                  ← cookie jar (gitignored)
  *   │   ├── config.json                   ← proxy, rate limits
- *   │   ├── listen.log                    ← SSE event log
- *   │   ├── contacts/
- *   │   │   ├── {contactProfileId}/RECORD.json
- *   │   │   └── {slug} -> {profileId}     ← symlink
- *   │   └── {bareConvId}/                 ← conversation dir
- *   │       ├── RECORD.json
- *   │       └── messages/YYYY-MM.jsonl
- *   │   (+ {slug} -> {bareConvId} symlinks for conversations)
+ *   │   ├── INBOX.jsonl                   ← new message notifications (gitignored)
+ *   │   ├── listen.log                    ← SSE debug log (gitignored)
+ *   │   ├── {convId}/                     ← conversation dir
+ *   │   │   ├── RECORD.json
+ *   │   │   └── messages/YYYY-MM.jsonl
+ *   │   ├── {profileId} -> {convId}       ← contact profile ID symlink
+ *   │   └── {slug} -> {convId}            ← LinkedIn slug symlink
  *   └── {slug} -> {profileId}             ← account symlink
  */
 
-import { mkdir, access, writeFile } from "fs/promises";
+import { mkdir, access } from "fs/promises";
 import { join, resolve } from "path";
 import { StoreGit, ensureGitignore } from "./git.js";
 import { AccountStore } from "./accounts.js";
-import { ContactStore } from "./contacts.js";
 import { ConversationStore } from "./conversations.js";
 
 export interface StoreOptions {
@@ -46,21 +45,18 @@ export class Store {
 
   /** Initialize the store: create root dir, init git, write .gitignore. */
   async init(): Promise<void> {
-    await ensureDir(this.root);
+    await ensureStoreDir(this.root);
     await ensureGitignore(this.root);
     await this.git.init();
   }
 
   /**
-   * Return conversation and contact stores scoped to a specific account.
+   * Return a conversation store scoped to a specific account.
    * The profileId must be a real profile ID (not an alias).
    */
-  forAccount(profileId: string): { conversations: ConversationStore; contacts: ContactStore } {
+  forAccount(profileId: string): ConversationStore {
     const accountDir = join(this.root, profileId);
-    return {
-      conversations: new ConversationStore(accountDir, this.git),
-      contacts: new ContactStore(accountDir, this.git),
-    };
+    return new ConversationStore(accountDir, this.git);
   }
 
   /** Return the resolved store root path. */
@@ -79,7 +75,7 @@ export function resolveStorePath(flagValue?: string): string {
   return resolve(flagValue ?? process.env["LILAC_STORE"] ?? ".lilac");
 }
 
-async function ensureDir(dirPath: string): Promise<void> {
+async function ensureStoreDir(dirPath: string): Promise<void> {
   try {
     await access(dirPath);
   } catch {
@@ -88,6 +84,5 @@ async function ensureDir(dirPath: string): Promise<void> {
 }
 
 export { AccountStore } from "./accounts.js";
-export { ContactStore } from "./contacts.js";
 export { ConversationStore } from "./conversations.js";
 export * from "./types.js";
