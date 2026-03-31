@@ -6,7 +6,7 @@
  */
 
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
-import { mkdtemp, rm } from "fs/promises";
+import { mkdtemp, rm, readlink } from "fs/promises";
 import { join } from "path";
 import { tmpdir } from "os";
 import { Store } from "@/store/index.js";
@@ -36,13 +36,17 @@ vi.mock("@/linkedin/api/client.js", () => ({
   LinkedInError: class LinkedInError extends Error {},
 }));
 
+const mockFindConversationByRecipient = vi.fn().mockResolvedValue(null);
+
 vi.mock("@/linkedin/api/endpoints/conversations.js", () => ({
-  findConversationByRecipient: vi.fn().mockResolvedValue(null),
+  findConversationByRecipient: (...args: unknown[]) => mockFindConversationByRecipient(...args),
   listConversations: vi.fn().mockResolvedValue({ conversations: [] }),
 }));
 
+const mockGetProfileUrnBySlug = vi.fn().mockResolvedValue("urn:li:fsd_profile:ACoXYZ456CONTACT1");
+
 vi.mock("@/linkedin/api/endpoints/profiles.js", () => ({
-  getProfileUrnBySlug: vi.fn().mockResolvedValue("urn:li:fsd_profile:ACoXYZ456CONTACT1"),
+  getProfileUrnBySlug: (...args: unknown[]) => mockGetProfileUrnBySlug(...args),
 }));
 
 const mockFetchMessages = vi.fn();
@@ -295,5 +299,106 @@ describe("send command — pre-send sync abort", () => {
     expect(exitSpy).not.toHaveBeenCalled();
 
     exitSpy.mockRestore();
+  });
+});
+
+describe("send command — slug persistence", () => {
+  let tempDir: string;
+  let store: Store;
+
+  beforeEach(async () => {
+    vi.clearAllMocks();
+    tempDir = await mkdtemp(join(tmpdir(), "lilac-send-slug-"));
+    store = new Store({ path: tempDir, gitDebounceMs: 0 });
+    await store.init();
+    await store.accounts.write(MY_PROFILE_ID, accountRecord);
+    await store.accounts.createAlias("mockuser", MY_PROFILE_ID);
+  });
+
+  afterEach(async () => {
+    await rm(tempDir, { recursive: true, force: true });
+  });
+
+  it("creates slug symlink when sending to a slug-resolved conversation", async () => {
+    // Conversation exists but without a slug
+    const conversations = store.forAccount(MY_PROFILE_ID);
+    await conversations.upsert(CONV_BARE_ID, { ...convRecord, slug: null });
+
+    mockFetchMessages.mockResolvedValue({ messages: [], hasMore: false });
+    mockSendMessage.mockResolvedValue({
+      messageUrn: "urn:li:msg_message:SENT1",
+      conversationUrn: `urn:li:msg_conversation:(urn:li:fsd_profile:${MY_PROFILE_ID},${CONV_BARE_ID})`,
+      backendConversationUrn: `urn:li:messagingThread:${CONV_BARE_ID}`,
+      deliveredAt: Date.now(),
+    });
+    // findConversationByRecipient returns the existing conversation
+    mockFindConversationByRecipient.mockResolvedValue({
+      urn: convRecord.convUrn,
+      backendUrn: convRecord.backendUrn,
+    });
+
+    await sendCommand("example-user-1", "Hello!", { store: tempDir });
+
+    // Slug should now be set on the record
+    const updated = await conversations.read(CONV_BARE_ID);
+    expect(updated?.slug).toBe("example-user-1");
+
+    // Slug symlink should exist
+    const link = await readlink(join(tempDir, MY_PROFILE_ID, "example-user-1"));
+    expect(link).toBe(CONV_BARE_ID);
+  });
+
+  it("second send to same slug resolves locally without API lookup", async () => {
+    // Conversation with slug already set
+    const conversations = store.forAccount(MY_PROFILE_ID);
+    await conversations.upsert(CONV_BARE_ID, convRecord); // slug: "example-user-1"
+
+    mockFetchMessages.mockResolvedValue({ messages: [], hasMore: false });
+    mockSendMessage.mockResolvedValue({
+      messageUrn: "urn:li:msg_message:SENT1",
+      conversationUrn: `urn:li:msg_conversation:(urn:li:fsd_profile:${MY_PROFILE_ID},${CONV_BARE_ID})`,
+      backendConversationUrn: `urn:li:messagingThread:${CONV_BARE_ID}`,
+      deliveredAt: Date.now(),
+    });
+
+    await sendCommand("example-user-1", "First message", { store: tempDir });
+    mockGetProfileUrnBySlug.mockClear();
+    mockFindConversationByRecipient.mockClear();
+
+    mockFetchMessages.mockResolvedValue({ messages: [], hasMore: false });
+    mockSendMessage.mockResolvedValue({
+      messageUrn: "urn:li:msg_message:SENT2",
+      conversationUrn: `urn:li:msg_conversation:(urn:li:fsd_profile:${MY_PROFILE_ID},${CONV_BARE_ID})`,
+      backendConversationUrn: `urn:li:messagingThread:${CONV_BARE_ID}`,
+      deliveredAt: Date.now(),
+    });
+
+    await sendCommand("example-user-1", "Second message", { store: tempDir });
+
+    // Should NOT have called profile lookup or conversation search
+    expect(mockGetProfileUrnBySlug).not.toHaveBeenCalled();
+    expect(mockFindConversationByRecipient).not.toHaveBeenCalled();
+  });
+
+  it("stores slug on new conversation created via send", async () => {
+    // No existing conversation — sendFirstMessage creates one
+    mockGetProfileUrnBySlug.mockResolvedValue(`urn:li:fsd_profile:ACoNEWCONTACT`);
+    mockFindConversationByRecipient.mockResolvedValue(null);
+    mockSendFirstMessage.mockResolvedValue({
+      messageUrn: "urn:li:msg_message:FIRST1",
+      conversationUrn: `urn:li:msg_conversation:(urn:li:fsd_profile:${MY_PROFILE_ID},2-NEWCONV)`,
+      backendConversationUrn: "urn:li:messagingThread:2-NEWCONV",
+      deliveredAt: Date.now(),
+    });
+
+    await sendCommand("new-contact", "Hey there!", { store: tempDir });
+
+    const conversations = store.forAccount(MY_PROFILE_ID);
+    const record = await conversations.read("2-NEWCONV");
+    expect(record?.slug).toBe("new-contact");
+
+    // Slug symlink should exist
+    const link = await readlink(join(tempDir, MY_PROFILE_ID, "new-contact"));
+    expect(link).toBe("2-NEWCONV");
   });
 });
