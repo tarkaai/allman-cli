@@ -113,3 +113,17 @@ export function uuidToByteArray(uuid: string): Uint8Array {
 export function byteArrayToString(bytes: Uint8Array): string {
   return String.fromCharCode(...bytes);
 }
+
+/**
+ * Extract the bare conversation ID from any conversation URN format.
+ *   urn:li:msg_conversation:(urn:li:fsd_profile:...,2-...)  → 2-...
+ *   urn:li:messagingThread:2-...                             → 2-...
+ *   2-...                                                    → 2-...
+ */
+export function extractBareConvId(urn: string): string {
+  const fullMatch = urn.match(/\(urn:li:fsd_profile:[^,]+,([^)]+)\)/);
+  if (fullMatch?.[1]) return fullMatch[1];
+  const threadMatch = urn.match(/urn:li:messagingThread:(.+)/);
+  if (threadMatch?.[1]) return threadMatch[1];
+  return urn;
+}

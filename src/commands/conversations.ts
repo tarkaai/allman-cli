@@ -13,20 +13,23 @@ export async function conversationsCommand(options: ConversationsOptions): Promi
   const store = new Store({ path: storePath });
   await store.init();
 
-  const accountSlug = await store.accounts.getDefault(options.account);
-  const slugs = await store.conversations.list(accountSlug);
+  const profileId = await store.accounts.getDefault(options.account);
+  const { conversations } = store.forAccount(profileId);
+  const bareIds = await conversations.list();
 
-  if (slugs.length === 0) {
-    info(`No conversations found. Run \`lilac sync --account ${accountSlug}\` to pull history.`);
+  if (bareIds.length === 0) {
+    info(`No conversations found. Run \`lilac sync\` to pull history.`);
     return;
   }
 
   const limit = options.limit ?? 50;
+
+  // Read all records, sort by lastActivityAt, then slice
   const records = (
     await Promise.all(
-      slugs.map(async (s) => {
-        const r = await store.conversations.read(s);
-        return r ? { slug: s, record: r } : null;
+      bareIds.map(async (id) => {
+        const r = await conversations.read(id);
+        return r ? { bareId: id, record: r } : null;
       })
     )
   )
@@ -43,7 +46,6 @@ export async function conversationsCommand(options: ConversationsOptions): Promi
     return;
   }
 
-  // Human-readable table
   const lines = records.map((r) => {
     const rec = r!.record;
     const time = rec.lastActivityAt

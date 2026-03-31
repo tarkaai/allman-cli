@@ -13,30 +13,30 @@ export async function statusCommand(options: StatusOptions): Promise<void> {
   const store = new Store({ path: storePath });
   await store.init();
 
-  const slugs = options.account
-    ? [options.account]
+  const profileIds = options.account
+    ? [await store.accounts.resolveId(options.account) ?? options.account]
     : await store.accounts.list();
 
-  if (slugs.length === 0) {
-    info("No accounts found. Run `lilac login --account <name>` to get started.");
+  if (profileIds.length === 0) {
+    info("No accounts found. Run `lilac login` to get started.");
     return;
   }
 
   const statuses = await Promise.all(
-    slugs.map(async (slug) => {
-      const record = await store.accounts.read(slug);
+    profileIds.map(async (profileId) => {
+      const record = await store.accounts.read(profileId);
       if (!record) return null;
       const jar = loadCookieJar(record);
       const hasValidCookies = await isAuthenticated(jar);
-      const config = await store.accounts.readConfig(slug);
+      const config = await store.accounts.readConfig(profileId);
       return {
-        account: slug,
+        profileId,
+        slug: record.profileSlug,
         name: record.name,
         status: record.status,
         cookiesValid: hasValidCookies,
         cookiesUpdatedAt: record.cookiesUpdatedAt,
         lastSyncAt: record.lastSyncAt,
-        profileUrn: record.urn,
         proxy: config.proxy ? `${config.proxy.host}:${config.proxy.port}` : null,
         storePath,
       };
@@ -53,8 +53,9 @@ export async function statusCommand(options: StatusOptions): Promise<void> {
   for (const s of results) {
     if (!s) continue;
     const cookieStatus = s.cookiesValid ? "✓ valid" : "✗ expired";
-    process.stdout.write(`Account: ${s.account}\n`);
+    process.stdout.write(`Account: ${s.slug ?? s.profileId}\n`);
     process.stdout.write(`  Name:    ${s.name ?? "unknown"}\n`);
+    process.stdout.write(`  ID:      ${s.profileId}\n`);
     process.stdout.write(`  Status:  ${s.status}\n`);
     process.stdout.write(`  Cookies: ${cookieStatus}\n`);
     if (s.lastSyncAt) process.stdout.write(`  Synced:  ${new Date(s.lastSyncAt).toLocaleString()}\n`);

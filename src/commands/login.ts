@@ -17,16 +17,6 @@ export async function loginCommand(options: LoginOptions): Promise<void> {
   const store = new Store({ path: storePath });
   await store.init();
 
-  // Determine account slug — required for login
-  const accountSlug = options.account ?? process.env["LILAC_ACCOUNT"];
-  if (!accountSlug) {
-    output.error(
-      'Account name required. Use --account <name>, e.g.: lilac login --account work',
-      1
-    );
-    return;
-  }
-
   // Parse proxy config if provided
   let proxyConfig: { host: string; port: number; username?: string; password?: string } | undefined;
   if (options.proxy) {
@@ -43,23 +33,26 @@ export async function loginCommand(options: LoginOptions): Promise<void> {
     };
   }
 
-  // Load existing account if any (for re-auth cookie injection)
-  const existingRecord = await store.accounts.read(accountSlug);
-  const existingCookieJar = existingRecord?.cookieJar ?? null;
+  // Check for existing account to inject cookies (re-auth flow)
+  // If --account is provided, try resolving it to an existing profile ID
+  let existingCookieJar: object | null = null;
+  let existingProfileId: string | null = null;
 
-  if (existingRecord?.status === "authenticated" && existingCookieJar) {
-    output.info(`Re-authenticating account "${accountSlug}" (existing cookies will be tried first)`);
-  } else {
-    output.info(`Logging in to LinkedIn as "${accountSlug}"...`);
+  if (options.account) {
+    const resolved = await store.accounts.resolveId(options.account);
+    if (resolved) {
+      const existing = await store.accounts.read(resolved);
+      existingCookieJar = existing?.cookieJar ?? null;
+      existingProfileId = resolved;
+      if (existingCookieJar) {
+        output.info(`Re-authenticating existing account (${options.account})...`);
+      }
+    }
   }
 
-  // Save proxy config if provided
-  if (proxyConfig) {
-    await store.accounts.writeConfig(accountSlug, { proxy: proxyConfig });
-    output.info(`Proxy configured: ${proxyConfig.host}:${proxyConfig.port}`);
-  }
+  output.info("Opening LinkedIn in browser — please complete login in the browser window.");
+  output.info(`Waiting up to 5 minutes...`);
 
-  // Run the interactive browser login
   const result = await runLogin({ existingCookieJar });
 
   if (!result.success) {
@@ -67,65 +60,98 @@ export async function loginCommand(options: LoginOptions): Promise<void> {
     return;
   }
 
-  // Save to store
-  await store.accounts.write(
-    accountSlug,
-    {
-      urn: result.profileUrn,
-      name: result.name,
-      headline: result.headline,
-      profileUrl: result.profileUrl,
-      imageUrl: result.imageUrl,
-      userType: null,
-      networkSize: null,
-      status: "authenticated",
-      cookieJar: result.cookieJar,
-      cookiesUpdatedAt: new Date().toISOString(),
-      lastSyncAt: null,
-    },
-    `login: ${accountSlug}`
-  );
+  // Extract profile ID from the URN
+  let profileId = result.profileUrn?.replace("urn:li:fsd_profile:", "") ?? null;
 
-  // If the browser didn't capture the profile URN, try fetching it via API.
-  // Extract the slug from the profile URL (e.g. linkedin.com/in/dan-vega → dan-vega).
-  let resolvedUrn = result.profileUrn;
-  if (!resolvedUrn) {
-    const slugMatch = result.profileUrl?.match(/linkedin\.com\/in\/([^/?]+)/);
-    const slug = slugMatch?.[1];
-    if (slug) {
-      output.info(`Fetching profile URN for "${slug}" via API...`);
-      try {
-        const savedRecord = await store.accounts.read(accountSlug);
-        if (savedRecord) {
-          const jar = loadCookieJar(savedRecord);
-          const apiClient = buildApiClient(savedRecord, async () => {}, undefined);
-          apiClient.updateJar(jar);
-          resolvedUrn = await getProfileUrnBySlug(apiClient, slug);
-          if (resolvedUrn) {
-            await store.accounts.update(accountSlug, { urn: resolvedUrn });
-            output.debug(`Resolved URN via API: ${resolvedUrn}`);
-          }
-        }
-      } catch (err) {
-        output.debug(`API URN lookup failed: ${String(err)}`);
+  // Extract profile slug from the URL (e.g. "dan-moore" from linkedin.com/in/dan-moore)
+  const profileSlug =
+    result.profileUrl?.match(/linkedin\.com\/in\/([^/?]+)/)?.[1] ?? null;
+
+  // If we didn't get a URN from the browser, try the API
+  if (!profileId && profileSlug) {
+    output.info(`Fetching profile URN for "${profileSlug}" via API...`);
+    try {
+      // Build a temporary client using the cookies we just got
+      const tempRecord = {
+        urn: null,
+        profileSlug: null,
+        name: result.name,
+        headline: result.headline,
+        profileUrl: result.profileUrl,
+        imageUrl: result.imageUrl,
+        userType: null as null,
+        networkSize: null,
+        status: "authenticated" as const,
+        cookieJar: result.cookieJar,
+        cookiesUpdatedAt: new Date().toISOString(),
+        lastSyncAt: null,
+      };
+      const jar = loadCookieJar(tempRecord);
+      const apiClient = buildApiClient(tempRecord, async () => {}, undefined);
+      apiClient.updateJar(jar);
+      const fetchedUrn = await getProfileUrnBySlug(apiClient, profileSlug);
+      if (fetchedUrn) {
+        profileId = fetchedUrn.replace("urn:li:fsd_profile:", "");
       }
+    } catch (err) {
+      output.debug(`API URN lookup failed: ${String(err)}`);
     }
+  }
+
+  if (!profileId) {
+    output.error("Could not determine LinkedIn profile ID. Try logging in again.", 1);
+    return;
+  }
+
+  const profileUrn = `urn:li:fsd_profile:${profileId}`;
+
+  // Save account record
+  await store.accounts.write(profileId, {
+    urn: profileUrn,
+    profileSlug,
+    name: result.name,
+    headline: result.headline,
+    profileUrl: result.profileUrl,
+    imageUrl: result.imageUrl,
+    userType: null,
+    networkSize: null,
+    status: "authenticated",
+    cookieJar: result.cookieJar,
+    cookiesUpdatedAt: new Date().toISOString(),
+    lastSyncAt: null,
+  }, `login: ${profileId.slice(0, 12)}`);
+
+  // Save proxy config if provided
+  if (proxyConfig) {
+    await store.accounts.writeConfig(profileId, { proxy: proxyConfig });
+    output.info(`Proxy configured: ${proxyConfig.host}:${proxyConfig.port}`);
+  }
+
+  // Create symlinks
+  if (profileSlug) {
+    await store.accounts.createAlias(profileSlug, profileId);
+    output.debug(`Created symlink: ${profileSlug} → ${profileId}`);
+  }
+  // If --account alias was given and differs from the profile slug, create it too
+  if (options.account && options.account !== profileSlug) {
+    await store.accounts.createAlias(options.account, profileId);
+    output.debug(`Created alias: ${options.account} → ${profileId}`);
   }
 
   await store.git.flush();
 
   if (options.json) {
     output.printData({
-      account: accountSlug,
+      profileId,
+      profileSlug,
       status: "authenticated",
       name: result.name,
-      profileUrn: result.profileUrn,
       storePath,
     });
   } else {
-    output.success(`Logged in as: ${result.name ?? "unknown"}`);
-    output.info(`  Account: ${accountSlug}`);
-    output.info(`  Store:   ${storePath}`);
-    if (resolvedUrn) output.info(`  URN:     ${resolvedUrn}`);
+    output.success(`Logged in as: ${result.name ?? profileSlug ?? profileId}`);
+    output.info(`  Profile ID: ${profileId}`);
+    if (profileSlug) output.info(`  Slug:       ${profileSlug}`);
+    output.info(`  Store:      ${storePath}`);
   }
 }

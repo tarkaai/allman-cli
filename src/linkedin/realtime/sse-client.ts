@@ -294,18 +294,29 @@ export class SseClient {
         "com.linkedin.voyager.messaging.MessagingMember"
       ] as Record<string, unknown> | undefined;
 
-    const fromUrn =
+    // fromUrn: normalize fs_miniProfile → fsd_profile
+    const rawFromUrn =
       (fromMember?.["miniProfile"] as Record<string, unknown> | undefined)?.[
         "entityUrn"
       ] as string | undefined;
+    const fromUrn = rawFromUrn?.replace("urn:li:fs_miniProfile:", "urn:li:fsd_profile:");
 
     const messageUrn =
       (event["entityUrn"] as string | undefined) ??
       (event["backendUrn"] as string | undefined);
 
-    const conversationUrn =
+    // conversationUrn: check payload/event fields, then extract from message URN
+    // Message URN format: urn:li:fs_event:(CONV_BARE_ID,MSG_ID)
+    let conversationUrn =
       (event["conversationUrn"] as string | undefined) ??
       (payload["conversationUrn"] as string | undefined);
+
+    if (!conversationUrn && messageUrn) {
+      const convMatch = messageUrn.match(/urn:li:fs_event:\(([^,]+),/);
+      if (convMatch?.[1]) {
+        conversationUrn = `urn:li:messagingThread:${convMatch[1]}`;
+      }
+    }
 
     const timestamp =
       (event["createdAt"] as number | undefined) ??

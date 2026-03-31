@@ -19,7 +19,7 @@
 
 import { randomUUID } from "crypto";
 import type { LinkedInApiClient } from "../client.js";
-import { uuidToByteArray, byteArrayToString } from "../../../utils/urn.js";
+import { uuidToByteArray, byteArrayToString, extractBareConvId } from "../../../utils/urn.js";
 
 const GRAPHQL_URL =
   "https://www.linkedin.com/voyager/api/voyagerMessagingGraphQL/graphql";
@@ -106,21 +106,6 @@ interface ParticipantRaw {
       lastName?: { text?: string };
     };
   };
-}
-
-/**
- * Extract the bare inner conversation ID from any form of conversation URN.
- * Handles: full urn:li:msg_conversation:(...), urn:li:messagingThread:..., or bare 2-...
- */
-function extractConvBareId(convUrn: string): string {
-  // Full format: urn:li:msg_conversation:(urn:li:fsd_profile:...,2-...)
-  const fullMatch = convUrn.match(/\(urn:li:fsd_profile:[^,]+,([^)]+)\)/);
-  if (fullMatch?.[1]) return fullMatch[1];
-  // Backend format: urn:li:messagingThread:2-...
-  const threadMatch = convUrn.match(/urn:li:messagingThread:(.+)/);
-  if (threadMatch?.[1]) return threadMatch[1];
-  // Already bare
-  return convUrn;
 }
 
 /**

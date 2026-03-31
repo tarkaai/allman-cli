@@ -66,3 +66,12 @@ export function conversationSlug(title: string, isGroup: boolean): string {
   const base = sanitizeSlug(title);
   return isGroup ? `group-${base}` : base;
 }
+
+/**
+ * Extract a LinkedIn profile slug from a profile URL.
+ * Returns null if the URL doesn't match.
+ */
+export function slugFromLinkedInUrl(url: string): string | null {
+  const match = url.match(LINKEDIN_PROFILE_PATTERN);
+  return match?.[1]?.toLowerCase() ?? null;
+}

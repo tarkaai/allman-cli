@@ -1,13 +1,5 @@
 /**
  * lilac sync — pull conversation history into the local file store.
- *
- * Algorithm:
- *   1. Fetch conversation list (paginated, stops at last sync time or --since date)
- *   2. For each conversation: fetch last 100 messages using anchor timestamp pagination
- *   3. Update syncState in RECORD.json after each conversation
- *   4. Git commit on completion
- *
- * --since accepts: 3mo, 6mo, 1y, or YYYY-MM-DD
  */
 
 import { Store, resolveStorePath } from "../store/index.js";
@@ -15,9 +7,10 @@ import { buildApiClient } from "../linkedin/api/client.js";
 import { loadCookieJar, serializeCookieJar } from "../linkedin/api/cookies.js";
 import { listConversations } from "../linkedin/api/endpoints/conversations.js";
 import { fetchMessages } from "../linkedin/api/endpoints/messages.js";
-import { slugFromUrl, conversationSlug } from "../utils/slug.js";
+import { slugFromLinkedInUrl } from "../utils/slug.js";
 import * as output from "../utils/output.js";
 import type { ConversationRecord, StoredMessage } from "../store/types.js";
+import { extractBareConvId } from "../utils/urn.js";
 
 const MESSAGES_PER_CONVERSATION = 100;
 const MESSAGES_PER_PAGE = 20;
@@ -34,36 +27,32 @@ export async function syncCommand(options: SyncOptions): Promise<void> {
   const store = new Store({ path: storePath });
   await store.init();
 
-  const accountSlug = await store.accounts.getDefault(options.account);
-  const accountRecord = await store.accounts.read(accountSlug);
+  const profileId = await store.accounts.getDefault(options.account);
+  const accountRecord = await store.accounts.read(profileId);
 
   if (!accountRecord || accountRecord.status !== "authenticated") {
-    output.error(
-      `Account "${accountSlug}" is not authenticated. Run \`lilac login --account ${accountSlug}\``,
-      1
-    );
+    output.error(`Account not authenticated. Run \`lilac login\``, 1);
     return;
   }
 
   if (!accountRecord.urn) {
-    output.error(`Account "${accountSlug}" has no profile URN. Re-run \`lilac login\`.`, 1);
+    output.error(`Account has no profile URN. Re-run \`lilac login\`.`, 1);
     return;
   }
 
   const sinceMs = parseSince(options.since);
   const sinceDate = new Date(sinceMs);
+  const { conversations, contacts } = store.forAccount(profileId);
 
-  output.info(
-    `Syncing account "${accountSlug}" (since ${sinceDate.toISOString().slice(0, 10)})...`
-  );
+  output.info(`Syncing ${accountRecord.name ?? profileId} (since ${sinceDate.toISOString().slice(0, 10)})...`);
 
-  const accountConfig = await store.accounts.readConfig(accountSlug);
+  const accountConfig = await store.accounts.readConfig(profileId);
   const jar = loadCookieJar(accountRecord);
 
   const apiClient = buildApiClient(
     accountRecord,
     async (updatedJar) => {
-      await store.accounts.update(accountSlug, {
+      await store.accounts.update(profileId, {
         cookieJar: serializeCookieJar(updatedJar),
         cookiesUpdatedAt: new Date().toISOString(),
       });
@@ -78,41 +67,42 @@ export async function syncCommand(options: SyncOptions): Promise<void> {
   let nextCursor: string | null | undefined = undefined;
   let lastUpdatedBefore = Date.now();
 
-  // Phase 1: Fetch all conversations
   output.info("Fetching conversation list...");
 
   while (true) {
-    const { conversations, nextCursor: cursor } = await listConversations(
+    const { conversations: convPage, nextCursor: cursor } = await listConversations(
       apiClient,
       myProfileUrn,
       lastUpdatedBefore,
       nextCursor ?? undefined
     );
 
-    if (conversations.length === 0) break;
+    if (convPage.length === 0) break;
 
-    for (const conv of conversations) {
+    for (const conv of convPage) {
       if (conv.lastActivityAt && conv.lastActivityAt < sinceMs) {
-        // All subsequent conversations are older than --since, stop
         nextCursor = null;
         break;
       }
 
-      // Build the slug for this conversation
-      const slug = buildConversationSlug(conv, accountRecord.urn!);
-      const participants = conv.participants.map((p) => ({
-        slug: p.profileUrl ? slugFromUrl(p.profileUrl) : sanitizeUrnToSlug(p.entityUrn),
+      const bareId = extractBareConvId(conv.backendUrn || conv.urn);
+      const otherParticipant = conv.participants.find((p) => p.entityUrn !== myProfileUrn);
+      const title = conv.title ?? otherParticipant?.name ?? "Unknown";
+
+      const participantsList = conv.participants.map((p) => ({
+        profileId: p.entityUrn.replace("urn:li:fsd_profile:", ""),
         urn: p.entityUrn,
         name: p.name ?? "",
+        slug: p.profileUrl ? slugFromLinkedInUrl(p.profileUrl) : null,
       }));
 
       const record: ConversationRecord = {
         urn: conv.urn,
         backendUrn: conv.backendUrn,
-        title: conv.title ?? (participants.find((p) => p.urn !== myProfileUrn)?.name ?? "Unknown"),
+        bareId,
+        title,
         isGroup: conv.isGroup,
-        account: accountSlug,
-        participants,
+        participants: participantsList,
         unreadCount: conv.unreadCount,
         lastActivityAt: conv.lastActivityAt ? new Date(conv.lastActivityAt).toISOString() : null,
         createdAt: null,
@@ -125,28 +115,53 @@ export async function syncCommand(options: SyncOptions): Promise<void> {
         },
       };
 
-      await store.conversations.upsert(slug, record);
+      await conversations.upsert(bareId, record);
+
+      // Create symlink from contact slug → bare conv ID
+      if (!conv.isGroup && otherParticipant) {
+        const contactSlug = otherParticipant.profileUrl
+          ? slugFromLinkedInUrl(otherParticipant.profileUrl)
+          : null;
+        if (contactSlug) {
+          await conversations.createAlias(contactSlug, bareId).catch(() => {});
+        }
+
+        // Upsert contact record
+        const contactProfileId = otherParticipant.entityUrn.replace("urn:li:fsd_profile:", "");
+        await contacts.upsert(contactProfileId, {
+          urn: otherParticipant.entityUrn,
+          slug: contactSlug,
+          name: otherParticipant.name ?? "",
+          headline: otherParticipant.headline ?? null,
+          profileUrl: otherParticipant.profileUrl ?? null,
+          imageUrl: otherParticipant.imageUrl ?? null,
+          connectedAt: null,
+          fetchedAt: new Date().toISOString(),
+        });
+
+        if (contactSlug) {
+          await contacts.createAlias(contactSlug, contactProfileId).catch(() => {});
+        }
+      }
+
       totalConversations++;
 
-      // Phase 2: Fetch messages for this conversation
+      // Fetch messages
       const messagesWritten = await syncConversationMessages(
         apiClient,
-        store,
-        slug,
+        conversations,
+        bareId,
         conv.backendUrn || conv.urn,
         myProfileUrn,
         sinceMs
       );
       totalMessages += messagesWritten;
-
-      output.debug(`  ${slug}: ${messagesWritten} messages`);
     }
 
     if (!cursor || nextCursor === null) break;
     nextCursor = cursor;
 
-    // Update pagination anchor to oldest conversation's last activity
-    const oldest = conversations[conversations.length - 1];
+    const oldest = convPage[convPage.length - 1];
     if (oldest?.lastActivityAt) {
       lastUpdatedBefore = oldest.lastActivityAt;
     } else {
@@ -154,33 +169,25 @@ export async function syncCommand(options: SyncOptions): Promise<void> {
     }
   }
 
-  // Update account lastSyncAt
-  await store.accounts.update(accountSlug, { lastSyncAt: new Date().toISOString() });
+  await store.accounts.update(profileId, { lastSyncAt: new Date().toISOString() });
   await store.git.flush();
 
   if (options.json) {
-    output.printData({
-      account: accountSlug,
-      conversationsSynced: totalConversations,
-      messagesSynced: totalMessages,
-      since: sinceDate.toISOString(),
-    });
+    output.printData({ profileId, conversationsSynced: totalConversations, messagesSynced: totalMessages });
   } else {
-    output.success(
-      `Sync complete: ${totalConversations} conversations, ${totalMessages} messages`
-    );
+    output.success(`Sync complete: ${totalConversations} conversations, ${totalMessages} messages`);
   }
 }
 
 async function syncConversationMessages(
   apiClient: ReturnType<typeof buildApiClient>,
-  store: Store,
-  slug: string,
+  conversations: import("../store/conversations.js").ConversationStore,
+  bareConvId: string,
   conversationUrn: string,
   myProfileUrn: string,
   sinceMs: number
 ): Promise<number> {
-  const existing = await store.conversations.read(slug);
+  const existing = await conversations.read(bareConvId);
   const knownNewestAt = existing?.syncState.newestMessageAt;
 
   let anchorTimestamp = Date.now();
@@ -190,63 +197,38 @@ async function syncConversationMessages(
   const allMessages: StoredMessage[] = [];
 
   while (fetched < MESSAGES_PER_CONVERSATION) {
-    let result: { messages: ReturnType<typeof parseToStoredMessage>[]; hasMore: boolean };
+    let result: { messages: StoredMessage[]; hasMore: boolean };
     try {
-      const raw = await fetchMessages(
-        apiClient,
-        conversationUrn,
-        myProfileUrn,
-        anchorTimestamp,
-        MESSAGES_PER_PAGE
-      );
+      const raw = await fetchMessages(apiClient, conversationUrn, myProfileUrn, anchorTimestamp, MESSAGES_PER_PAGE);
       result = {
-        messages: raw.messages.map((m) => parseToStoredMessage(m, myProfileUrn)),
+        messages: raw.messages.map((m) => toStoredMessage(m, myProfileUrn)),
         hasMore: raw.hasMore,
       };
-    } catch (err: unknown) {
-      output.debug(`Failed to fetch messages for ${slug}: ${String(err)}`);
+    } catch (err) {
+      output.debug(`Failed to fetch messages for ${bareConvId}: ${String(err)}`);
       break;
     }
 
     if (result.messages.length === 0) break;
 
     for (const msg of result.messages) {
-      if (msg.timestamp < sinceMs) {
-        // Gone past our --since cutoff
-        break;
-      }
-      if (knownNewestAt && msg.timestamp <= knownNewestAt) {
-        // Already have this message
-        break;
-      }
+      if (msg.timestamp < sinceMs) break;
+      if (knownNewestAt && msg.timestamp <= knownNewestAt) break;
       allMessages.push(msg);
       fetched++;
-
-      if (oldestFetchedAt === null || msg.timestamp < oldestFetchedAt) {
-        oldestFetchedAt = msg.timestamp;
-      }
-      if (newestFetchedAt === null || msg.timestamp > newestFetchedAt) {
-        newestFetchedAt = msg.timestamp;
-      }
+      if (oldestFetchedAt === null || msg.timestamp < oldestFetchedAt) oldestFetchedAt = msg.timestamp;
+      if (newestFetchedAt === null || msg.timestamp > newestFetchedAt) newestFetchedAt = msg.timestamp;
     }
 
     if (!result.hasMore || fetched >= MESSAGES_PER_CONVERSATION) break;
-
-    // Move anchor to oldest message fetched so far
     anchorTimestamp = oldestFetchedAt ?? anchorTimestamp - 1;
   }
 
   if (allMessages.length > 0) {
-    await store.conversations.appendMessages(slug, allMessages);
-    await store.conversations.updateSyncState(slug, {
-      oldestMessageAt: Math.min(
-        oldestFetchedAt ?? Infinity,
-        existing?.syncState.oldestMessageAt ?? Infinity
-      ),
-      newestMessageAt: Math.max(
-        newestFetchedAt ?? 0,
-        existing?.syncState.newestMessageAt ?? 0
-      ),
+    await conversations.appendMessages(bareConvId, allMessages);
+    await conversations.updateSyncState(bareConvId, {
+      oldestMessageAt: Math.min(oldestFetchedAt ?? Infinity, existing?.syncState.oldestMessageAt ?? Infinity),
+      newestMessageAt: Math.max(newestFetchedAt ?? 0, existing?.syncState.newestMessageAt ?? 0),
       lastSyncAt: new Date().toISOString(),
       totalSynced: (existing?.syncState.totalSynced ?? 0) + allMessages.length,
     });
@@ -255,51 +237,23 @@ async function syncConversationMessages(
   return allMessages.length;
 }
 
-// ---------------------------------------------------------------------------
-// Helpers
-// ---------------------------------------------------------------------------
-
 function parseSince(since: string | undefined): number {
-  if (!since) {
-    // Default: 3 months ago
-    return Date.now() - 90 * 24 * 60 * 60 * 1000;
-  }
+  if (!since) return Date.now() - 90 * 24 * 60 * 60 * 1000;
   const match = since.match(/^(\d+)(mo|y|d)$/);
   if (match && match[1] && match[2]) {
     const n = parseInt(match[1], 10);
     const unit = match[2];
-    const ms =
-      unit === "mo"
-        ? n * 30 * 24 * 60 * 60 * 1000
-        : unit === "y"
-          ? n * 365 * 24 * 60 * 60 * 1000
-          : n * 24 * 60 * 60 * 1000;
+    const ms = unit === "mo" ? n * 30 * 24 * 60 * 60 * 1000
+      : unit === "y" ? n * 365 * 24 * 60 * 60 * 1000
+      : n * 24 * 60 * 60 * 1000;
     return Date.now() - ms;
   }
-  // Try parsing as a date string
   const d = new Date(since);
   if (!isNaN(d.getTime())) return d.getTime();
   throw new Error(`Invalid --since value: "${since}". Use 3mo, 6mo, 1y, or YYYY-MM-DD.`);
 }
 
-function buildConversationSlug(
-  conv: { title: string | null; isGroup: boolean; participants: Array<{ name: string | null; entityUrn: string; profileUrl: string | null }> },
-  myProfileUrn: string
-): string {
-  if (conv.title) return conversationSlug(conv.title, conv.isGroup);
-
-  // For 1:1 chats without a title, use the other participant's name
-  const other = conv.participants.find((p) => p.entityUrn !== myProfileUrn);
-  const name = other?.name ?? other?.profileUrl ?? "unknown";
-  return conversationSlug(name, conv.isGroup);
-}
-
-function sanitizeUrnToSlug(urn: string): string {
-  const match = urn.match(/fsd_profile:([^,)]+)/);
-  return match ? `profile-${(match[1] ?? "").slice(-8)}` : "unknown";
-}
-
-function parseToStoredMessage(
+function toStoredMessage(
   m: { urn: string; deliveredAt: number; fromUrn: string; fromName: string | null; body: string; originToken: string | null; reactions: Array<{ emoji: string; count: number; hasUserReacted: boolean }>; attachments: Array<{ type: string; url?: string; name?: string; mimeType?: string; raw?: unknown }> },
   myProfileUrn: string
 ): StoredMessage {
@@ -308,7 +262,6 @@ function parseToStoredMessage(
     timestamp: m.deliveredAt,
     fromUrn: m.fromUrn,
     fromName: m.fromName ?? "",
-    fromSlug: sanitizeUrnToSlug(m.fromUrn),
     isFromMe: m.fromUrn === myProfileUrn || m.fromUrn.includes(myProfileUrn.replace("urn:li:fsd_profile:", "")),
     body: m.body,
     reactions: m.reactions,
