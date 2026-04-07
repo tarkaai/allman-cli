@@ -113,8 +113,11 @@ export async function listConversations(
     : `lastUpdatedBefore:${lastUpdatedBefore}`;
 
   // Variables passed raw — only inner URN values are percent-encoded.
+  // Use INBOX (not PRIMARY_INBOX) to capture all conversations including
+  // message requests and non-connection messages. PRIMARY_INBOX is LinkedIn's
+  // "Focused" tab — a subset of INBOX — and misses connection-request threads.
   const variables =
-    `(query:(predicateUnions:List((conversationCategoryPredicate:(category:PRIMARY_INBOX)))),count:20,mailboxUrn:${encodeUrn(`urn:li:fsd_profile:${profileId}`)},${paginationPart})`;
+    `(query:(predicateUnions:List((conversationCategoryPredicate:(category:INBOX)))),count:20,mailboxUrn:${encodeUrn(`urn:li:fsd_profile:${profileId}`)},${paginationPart})`;
 
   const response = await client.request<NormalizedResponse>({
     method: "GET",
