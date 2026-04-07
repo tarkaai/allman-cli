@@ -47,6 +47,10 @@ export async function syncCommand(options: SyncOptions): Promise<void> {
 
   const sinceMs = parseSince(options.since, accountRecord.lastSyncAt ?? undefined);
   const sinceDate = new Date(sinceMs);
+  // Capture start time before any API calls — used as the new lastSyncAt.
+  // This ensures the next sync picks up from exactly where this one started,
+  // with no gap even if LinkedIn returns 0 results for a transient API issue.
+  const syncStartedAt = new Date().toISOString();
   const conversations = store.forAccount(profileId);
 
   // Single-conversation sync
@@ -191,9 +195,7 @@ export async function syncCommand(options: SyncOptions): Promise<void> {
     }
   }
 
-  // Use sinceMs (window start) not Date.now() — prevents lastSyncAt from jumping
-  // ahead of conversations that fell between two back-to-back sync runs.
-  await store.accounts.update(profileId, { lastSyncAt: new Date(sinceMs).toISOString() });
+  await store.accounts.update(profileId, { lastSyncAt: syncStartedAt });
   await store.git.flush();
 
   if (options.json) {
