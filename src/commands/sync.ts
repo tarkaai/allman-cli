@@ -191,7 +191,9 @@ export async function syncCommand(options: SyncOptions): Promise<void> {
     }
   }
 
-  await store.accounts.update(profileId, { lastSyncAt: new Date().toISOString() });
+  // Use sinceMs (window start) not Date.now() — prevents lastSyncAt from jumping
+  // ahead of conversations that fell between two back-to-back sync runs.
+  await store.accounts.update(profileId, { lastSyncAt: new Date(sinceMs).toISOString() });
   await store.git.flush();
 
   if (options.json) {
