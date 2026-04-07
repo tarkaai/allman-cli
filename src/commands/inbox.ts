@@ -53,9 +53,9 @@ export async function inboxCommand(options: InboxOptions): Promise<void> {
     const newest = record.syncState?.newestMessageAt ?? 0;
     if (!newest || newest <= sinceMs) continue;
 
-    const messages = (await conversations.readMessages(convId, { since: sinceMs + 1 }))
-      .filter((m) => !m.isFromMe);
-    if (messages.length === 0) continue;
+    const messages = await conversations.readMessages(convId, { since: sinceMs + 1 });
+    const hasInbound = messages.some((m) => !m.isFromMe);
+    if (!hasInbound) continue;
     results.push({ name: record.name, slug: record.slug, messages });
   }
 
