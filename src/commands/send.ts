@@ -106,6 +106,7 @@ export async function sendCommand(target: string, text: string, options: SendOpt
         ...existing,
         slug: contactSlug && !existing.slug ? contactSlug : existing.slug,
         lastActivityAt: new Date(result.deliveredAt).toISOString(),
+        lastReadAt: new Date(result.deliveredAt).toISOString(),
         syncState: {
           ...existing.syncState,
           newestMessageAt: Math.max(existing.syncState?.newestMessageAt ?? 0, result.deliveredAt),
@@ -135,7 +136,7 @@ export async function sendCommand(target: string, text: string, options: SendOpt
       isVerified: false,
       unreadCount: 0,
       lastActivityAt: new Date(result.deliveredAt).toISOString(),
-      lastReadAt: null,
+      lastReadAt: new Date(result.deliveredAt).toISOString(),
       createdAt: new Date(result.deliveredAt).toISOString(),
       read: true,
       notificationStatus: null,
