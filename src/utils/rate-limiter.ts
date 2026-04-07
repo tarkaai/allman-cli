@@ -70,3 +70,15 @@ function sleep(ms: number): Promise<void> {
 export function buildRateLimiter(options: RateLimiterOptions = {}): RateLimiter {
   return new RateLimiter(options);
 }
+
+/** Per-account singleton registry. Returns the same limiter instance for the same account slug. */
+const _registry = new Map<string, RateLimiter>();
+
+export function getRateLimiter(accountSlug: string, options?: RateLimiterOptions): RateLimiter {
+  let limiter = _registry.get(accountSlug);
+  if (!limiter) {
+    limiter = new RateLimiter(options);
+    _registry.set(accountSlug, limiter);
+  }
+  return limiter;
+}

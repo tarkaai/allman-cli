@@ -8,6 +8,7 @@ import { listConversations } from "../linkedin/api/endpoints/conversations.js";
 import { fetchMessages } from "../linkedin/api/endpoints/messages.js";
 import { getProfileSlugById } from "../linkedin/api/endpoints/profiles.js";
 import * as output from "../utils/output.js";
+import { parseSince } from "../utils/time.js";
 import type { ConversationRecord, StoredMessage } from "../store/types.js";
 import type { ConversationStore } from "../store/conversations.js";
 import { extractBareConvId } from "../utils/urn.js";
@@ -45,7 +46,7 @@ export async function syncCommand(options: SyncOptions): Promise<void> {
   }
   const { apiClient, profileId, myProfileUrn, accountRecord } = session;
 
-  const sinceMs = parseSince(options.since, accountRecord.lastSyncAt ?? undefined);
+  const sinceMs = parseSince(options.since, accountRecord.lastSyncAt ?? undefined, 90 * 24 * 60 * 60 * 1000);
   const sinceDate = new Date(sinceMs);
   // Capture start time before any API calls — used as the new lastSyncAt.
   // This ensures the next sync picks up from exactly where this one started,
@@ -323,24 +324,6 @@ async function syncConversationMessages(
   return allMessages.length;
 }
 
-function parseSince(since: string | undefined, lastSyncAt?: string): number {
-  if (!since) {
-    if (lastSyncAt) return new Date(lastSyncAt).getTime();
-    return Date.now() - 90 * 24 * 60 * 60 * 1000;
-  }
-  const match = since.match(/^(\d+)(mo|y|d)$/);
-  if (match && match[1] && match[2]) {
-    const n = parseInt(match[1], 10);
-    const unit = match[2];
-    const ms = unit === "mo" ? n * 30 * 24 * 60 * 60 * 1000
-      : unit === "y" ? n * 365 * 24 * 60 * 60 * 1000
-      : n * 24 * 60 * 60 * 1000;
-    return Date.now() - ms;
-  }
-  const d = new Date(since);
-  if (!isNaN(d.getTime())) return d.getTime();
-  throw new Error(`Invalid --since value: "${since}". Use 3mo, 6mo, 1y, or YYYY-MM-DD.`);
-}
 
 function toStoredMessage(
   m: { urn: string; deliveredAt: number; fromUrn: string; fromName: string | null; body: string; originToken: string | null; reactions: Array<{ emoji: string; count: number; hasUserReacted: boolean }>; attachments: Array<{ type: string; url?: string; name?: string; mimeType?: string; raw?: unknown }> },
