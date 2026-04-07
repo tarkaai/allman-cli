@@ -7,7 +7,7 @@ import { LinkedInError } from "../linkedin/api/client.js";
 import { loadSession } from "../linkedin/api/session.js";
 import { findConversationByRecipient } from "../linkedin/api/endpoints/conversations.js";
 import { fetchMessages, sendMessage, sendFirstMessage } from "../linkedin/api/endpoints/messages.js";
-import { getProfileDataBySlug } from "../linkedin/api/endpoints/profiles.js";
+import { getProfileUrnBySlug } from "../linkedin/api/endpoints/profiles.js";
 import { isUrn, extractBareConvId, profileUrnId } from "../utils/urn.js";
 import { slugFromUrl } from "../utils/slug.js";
 import * as output from "../utils/output.js";
@@ -207,13 +207,11 @@ async function resolveTarget(
   let contactLastName: string | null = null;
   if (!contactUrn) {
     output.info(`Looking up profile "${contactSlug}" on LinkedIn...`);
-    const fetched = await getProfileDataBySlug(apiClient, contactSlug);
-    if (!fetched) {
+    const urn = await getProfileUrnBySlug(apiClient, contactSlug);
+    if (!urn) {
       return { error: `Profile "${contactSlug}" not found on LinkedIn.` };
     }
-    contactUrn = fetched.urn;
-    contactFirstName = fetched.firstName;
-    contactLastName = fetched.lastName;
+    contactUrn = urn;
   }
 
   // Look for existing conversation with this contact

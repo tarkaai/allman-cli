@@ -8,6 +8,7 @@ import { join } from "path";
 import { createInterface } from "readline";
 import { Store, resolveStorePath } from "../store/index.js";
 import { printData, relativeTime } from "../utils/output.js";
+import { parseSince } from "../utils/time.js";
 import type { StoredMessage } from "../store/types.js";
 
 export interface GrepOptions {
@@ -97,18 +98,3 @@ export async function grepCommand(query: string, options: GrepOptions): Promise<
   }
 }
 
-function parseSince(value: string): number {
-  const durationMatch = value.match(/^(\d+)(h|d|w|mo)$/);
-  if (durationMatch) {
-    const n = parseInt(durationMatch[1]!, 10);
-    const unit = durationMatch[2]!;
-    const ms = unit === "h" ? n * 60 * 60 * 1000
-      : unit === "d" ? n * 24 * 60 * 60 * 1000
-      : unit === "w" ? n * 7 * 24 * 60 * 60 * 1000
-      : n * 30 * 24 * 60 * 60 * 1000;
-    return Date.now() - ms;
-  }
-  const ts = Date.parse(value);
-  if (!isNaN(ts)) return ts;
-  throw new Error(`Cannot parse --since value: "${value}". Use a duration (1h, 3d, 1w) or ISO date.`);
-}
