@@ -6,7 +6,8 @@
  */
 
 import { Store, resolveStorePath } from "../store/index.js";
-import { printData, relativeTime } from "../utils/output.js";
+import { printData, relativeTime, info } from "../utils/output.js";
+import { syncCommand } from "./sync.js";
 import type { StoredMessage } from "../store/types.js";
 
 export interface InboxOptions {
@@ -26,6 +27,10 @@ export async function inboxCommand(options: InboxOptions): Promise<void> {
   const profileId = await store.accounts.getDefault(options.account);
   const conversations = store.forAccount(profileId);
   const now = Date.now();
+
+  // Sync first to pull in latest messages
+  info("Syncing...");
+  await syncCommand({ account: options.account, store: options.store });
 
   // Determine watermark
   let sinceMs: number;
