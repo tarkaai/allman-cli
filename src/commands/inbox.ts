@@ -51,9 +51,16 @@ export async function inboxCommand(options: InboxOptions): Promise<void> {
     const record = await conversations.read(convId);
     if (!record) continue;
     const newest = record.syncState?.newestMessageAt ?? 0;
-    if (!newest || newest <= sinceMs) continue;
+    // Per-conversation threshold: use the later of the global watermark or when
+    // we last sent/read in this conversation. This means sending to a conversation
+    // marks it as read up to that point without affecting other conversations.
+    const convSince = Math.max(
+      sinceMs,
+      record.lastReadAt ? new Date(record.lastReadAt).getTime() : 0
+    );
+    if (!newest || newest <= convSince) continue;
 
-    const messages = await conversations.readMessages(convId, { since: sinceMs + 1 });
+    const messages = await conversations.readMessages(convId, { since: convSince + 1 });
     const hasInbound = messages.some((m) => !m.isFromMe);
     if (!hasInbound) continue;
     results.push({ name: record.name, slug: record.slug, messages });
