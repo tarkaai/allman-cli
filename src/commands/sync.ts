@@ -100,7 +100,17 @@ export async function syncCommand(options: SyncOptions): Promise<void> {
       nextCursor ?? undefined
     );
 
-    if (convPage.length === 0) break;
+    // LinkedIn occasionally returns an empty first page transiently.
+    // Only treat empty as "done" if we have a cursor (mid-pagination) or
+    // if this is the very first page and we got nothing (genuine empty inbox).
+    // We detect first-page vs mid-pagination by whether nextCursor was set.
+    if (convPage.length === 0) {
+      if (nextCursor == null) {
+        // Empty first page — could be transient. Warn but don't silently skip.
+        output.debug("LinkedIn returned 0 conversations on first page — may be transient");
+      }
+      break;
+    }
 
     for (const conv of convPage) {
       // Stop when we've gone past the --since boundary
