@@ -45,7 +45,7 @@ export async function syncCommand(options: SyncOptions): Promise<void> {
   }
   const { apiClient, profileId, myProfileUrn, accountRecord } = session;
 
-  const sinceMs = parseSince(options.since);
+  const sinceMs = parseSince(options.since, accountRecord.lastSyncAt ?? undefined);
   const sinceDate = new Date(sinceMs);
   const conversations = store.forAccount(profileId);
 
@@ -319,8 +319,11 @@ async function syncConversationMessages(
   return allMessages.length;
 }
 
-function parseSince(since: string | undefined): number {
-  if (!since) return Date.now() - 90 * 24 * 60 * 60 * 1000;
+function parseSince(since: string | undefined, lastSyncAt?: string): number {
+  if (!since) {
+    if (lastSyncAt) return new Date(lastSyncAt).getTime();
+    return Date.now() - 90 * 24 * 60 * 60 * 1000;
+  }
   const match = since.match(/^(\d+)(mo|y|d)$/);
   if (match && match[1] && match[2]) {
     const n = parseInt(match[1], 10);

@@ -35,9 +35,9 @@ export async function conversationsCommand(options: ConversationsOptions): Promi
   )
     .filter(Boolean)
     .sort((a, b) => {
-      const at = a!.record.lastActivityAt ?? "";
-      const bt = b!.record.lastActivityAt ?? "";
-      return bt.localeCompare(at);
+      const at = a!.record.syncState?.newestMessageAt ?? new Date(a!.record.lastActivityAt ?? 0).getTime();
+      const bt = b!.record.syncState?.newestMessageAt ?? new Date(b!.record.lastActivityAt ?? 0).getTime();
+      return bt - at;
     })
     .slice(0, limit);
 
@@ -48,9 +48,8 @@ export async function conversationsCommand(options: ConversationsOptions): Promi
 
   const lines = records.map((r) => {
     const rec = r!.record;
-    const time = rec.lastActivityAt
-      ? relativeTime(new Date(rec.lastActivityAt).getTime())
-      : "never";
+    const timeMs = rec.syncState?.newestMessageAt ?? (rec.lastActivityAt ? new Date(rec.lastActivityAt).getTime() : 0);
+    const time = timeMs ? relativeTime(timeMs) : "never";
     const unread = rec.unreadCount > 0 ? ` [${rec.unreadCount} unread]` : "";
     return `  ${rec.name.padEnd(30)} ${time.padEnd(12)}${unread}`;
   });
