@@ -41,6 +41,12 @@ export interface AccountRateState {
   lastMessageSentAt: number;
 }
 
+/** inbox-state.json — tracks what messages have been shown in `inbox`. Not git-committed. */
+export interface AccountInboxState {
+  /** Unix ms — show messages newer than this */
+  lastSeenAt: number;
+}
+
 export interface AccountConfig {
   proxy?: ProxyConfig;
   /** Minimum ms between outbound messages. Default: 3000 */

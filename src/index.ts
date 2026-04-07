@@ -22,11 +22,14 @@ import { conversationsCommand } from "./commands/conversations.js";
 import { messagesCommand } from "./commands/messages.js";
 import { sendCommand } from "./commands/send.js";
 import { searchCommand } from "./commands/search.js";
+import { inboxCommand } from "./commands/inbox.js";
+import { grepCommand } from "./commands/grep.js";
 import {
   storePathCommand,
   storeCommitCommand,
   storeStatusCommand,
 } from "./commands/store-cmd.js";
+import { startCommand } from "./commands/start.js";
 
 const program = new Command();
 
@@ -62,6 +65,23 @@ program
       store: opts.store ?? globalOpts.store,
       proxy: opts.proxy,
       json: opts.json ?? globalOpts.json,
+    });
+  });
+
+// ---------------------------------------------------------------------------
+// start
+// ---------------------------------------------------------------------------
+
+program
+  .command("start")
+  .description("Verify auth (login if needed), sync from last sync date, then listen")
+  .option("-a, --account <slug>", "account to use")
+  .option("-s, --store <path>", "store directory")
+  .action(async (opts, cmd) => {
+    const globalOpts = cmd.parent?.opts() ?? {};
+    await startCommand({
+      account: opts.account ?? globalOpts.account,
+      store: opts.store ?? globalOpts.store,
     });
   });
 
@@ -111,7 +131,7 @@ program
   .argument("[conversation]", "sync a single conversation (slug, profileId, or convId)")
   .option("-a, --account <slug>", "account to sync")
   .option("-s, --store <path>", "store directory")
-  .option("--since <duration>", "sync since this date/duration (3mo, 6mo, 1y, YYYY-MM-DD)", "3mo")
+  .option("--since <duration>", "sync since this date/duration (3mo, 6mo, 1y, YYYY-MM-DD)")
   .option("--json", "output as JSON")
   .action(async (conversation: string | undefined, opts, cmd) => {
     const globalOpts = cmd.parent?.opts() ?? {};
@@ -232,6 +252,54 @@ program
       store: opts.store ?? globalOpts.store,
       json: opts.json ?? globalOpts.json,
       limit: parseInt(opts.limit, 10),
+    });
+  });
+
+// ---------------------------------------------------------------------------
+// inbox
+// ---------------------------------------------------------------------------
+
+program
+  .command("inbox")
+  .description("Show new messages since last check (watermark-based)")
+  .option("-a, --account <slug>", "account to check")
+  .option("-s, --store <path>", "store directory")
+  .option("--since <duration>", "override watermark (1h, 3d, 1w, or ISO date)")
+  .option("--no-mark", "don't advance the watermark after viewing")
+  .option("-n, --limit <n>", "max conversations to show")
+  .option("--json", "output as JSON")
+  .action(async (opts, cmd) => {
+    const globalOpts = cmd.parent?.opts() ?? {};
+    await inboxCommand({
+      account: opts.account ?? globalOpts.account,
+      store: opts.store ?? globalOpts.store,
+      since: opts.since,
+      noMark: opts.mark === false,
+      limit: opts.limit ? parseInt(opts.limit, 10) : undefined,
+      json: opts.json ?? globalOpts.json,
+    });
+  });
+
+// ---------------------------------------------------------------------------
+// grep
+// ---------------------------------------------------------------------------
+
+program
+  .command("grep <query>")
+  .description("Full-text search across all stored messages")
+  .option("-a, --account <slug>", "account to search")
+  .option("-s, --store <path>", "store directory")
+  .option("--since <duration>", "only search messages after this date/duration")
+  .option("-n, --limit <n>", "max results (default: 50)", "50")
+  .option("--json", "output as JSON")
+  .action(async (query: string, opts, cmd) => {
+    const globalOpts = cmd.parent?.opts() ?? {};
+    await grepCommand(query, {
+      account: opts.account ?? globalOpts.account,
+      store: opts.store ?? globalOpts.store,
+      since: opts.since,
+      limit: parseInt(opts.limit, 10),
+      json: opts.json ?? globalOpts.json,
     });
   });
 

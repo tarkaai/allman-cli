@@ -99,12 +99,18 @@ export async function sendCommand(target: string, text: string, options: SendOpt
 
   if (await conversations.exists(targetBareId)) {
     await conversations.appendMessages(targetBareId, [storedMsg]);
-    // Backfill slug if missing
-    if (contactSlug) {
-      const existing = await conversations.read(targetBareId);
-      if (existing && !existing.slug) {
-        await conversations.upsert(targetBareId, { ...existing, slug: contactSlug });
-      }
+    // Update lastActivityAt, newestMessageAt, and backfill slug if missing
+    const existing = await conversations.read(targetBareId);
+    if (existing) {
+      await conversations.upsert(targetBareId, {
+        ...existing,
+        slug: contactSlug && !existing.slug ? contactSlug : existing.slug,
+        lastActivityAt: new Date(result.deliveredAt).toISOString(),
+        syncState: {
+          ...existing.syncState,
+          newestMessageAt: Math.max(existing.syncState?.newestMessageAt ?? 0, result.deliveredAt),
+        },
+      });
     }
   } else if (result.backendConversationUrn) {
     const contactPid = contactProfileUrn ? contactProfileUrn.replace("urn:li:fsd_profile:", "") : "";
