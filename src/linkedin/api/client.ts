@@ -281,8 +281,9 @@ export class LinkedInApiClient {
       }
     }
 
-    // Handle error status codes
-    if (response.status >= 400) {
+    // Handle error status codes — includes 3xx redirects (LinkedIn 302s on session
+    // expiry must throw, not silently return empty JSON).
+    if (response.status >= 300 && response.status !== 304) {
       this.handleErrorResponse(response);
     }
 
