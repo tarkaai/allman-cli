@@ -149,12 +149,6 @@ export async function sendCommand(target: string, text: string, options: SendOpt
     await conversations.appendMessages(targetBareId, [storedMsg]);
   }
 
-  // Advance inbox watermark so the sent message doesn't surface as "new" on next inbox check
-  const inboxState = await store.accounts.readInboxState(profileId);
-  if (!inboxState || result.deliveredAt > inboxState.lastSeenAt) {
-    await store.accounts.writeInboxState(profileId, { lastSeenAt: result.deliveredAt });
-  }
-
   await store.git.flush();
 
   if (options.json) {
