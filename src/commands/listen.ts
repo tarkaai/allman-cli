@@ -72,6 +72,7 @@ async function handleEvent(
 
     case "heartbeat": {
       emitEvent({ event: "heartbeat", account: profileId, timestamp });
+      await store.accounts.update(profileId, { lastSyncAt: new Date(timestamp).toISOString() }).catch(() => {});
       return;
     }
 
