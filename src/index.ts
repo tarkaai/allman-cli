@@ -131,7 +131,22 @@ program
   .argument("[conversation]", "sync a single conversation (slug, profileId, or convId)")
   .option("-a, --account <slug>", "account to sync")
   .option("-s, --store <path>", "store directory")
-  .option("--since <duration>", "sync since this date/duration (3mo, 6mo, 1y, YYYY-MM-DD)")
+  .option(
+    "--from <duration>",
+    "older boundary — oldest message to fetch (3mo, 6mo, 1y, YYYY-MM-DD)"
+  )
+  .option(
+    "--to <duration>",
+    "newer boundary — newest message to fetch (defaults to now)"
+  )
+  .option(
+    "--since <duration>",
+    "[deprecated] alias for --from"
+  )
+  .option(
+    "-n, --limit <n>",
+    "max conversations (inbox sync) or messages (single-conv sync)"
+  )
   .option("--json", "output as JSON")
   .action(async (conversation: string | undefined, opts, cmd) => {
     const globalOpts = cmd.parent?.opts() ?? {};
@@ -140,6 +155,9 @@ program
       account: opts.account ?? globalOpts.account,
       store: opts.store ?? globalOpts.store,
       since: opts.since,
+      from: opts.from,
+      to: opts.to,
+      limit: opts.limit ? parseInt(opts.limit, 10) : undefined,
       json: opts.json ?? globalOpts.json,
     });
   });

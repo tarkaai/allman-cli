@@ -1,26 +1,54 @@
 /**
  * lilac sync — pull conversation history into the local file store.
+ *
+ * Usage:
+ *   lilac sync                                  # incremental: since lastSyncAt
+ *   lilac sync --since 1mo                      # absolute floor
+ *   lilac sync --from 2024-01-01 --to 2024-02-01  # date window
+ *   lilac sync --limit 10                       # max conversations to walk
+ *   lilac sync <conv> --limit 1000              # max messages on a single conv
+ *
+ * Direction semantics:
+ *   - Inbox sync walks newest → oldest, stops at the older boundary (--from).
+ *   - Single-conv sync paginates backwards from the newer boundary (--to or now)
+ *     and bypasses the "newest known" dedup so it can backfill arbitrarily far.
+ *
+ * Streaming progress (--json mode only): NDJSON events emitted to stdout as
+ * the sync runs — sync.start, sync.conversation, sync.conversation.progress,
+ * sync.complete. Final summary is the last event.
  */
 
 import { Store, resolveStorePath } from "../store/index.js";
 import { loadSession } from "../linkedin/api/session.js";
 import { listConversations } from "../linkedin/api/endpoints/conversations.js";
-import { fetchMessages } from "../linkedin/api/endpoints/messages.js";
+import { fetchMessages, type MessageData } from "../linkedin/api/endpoints/messages.js";
 import { getProfileSlugById } from "../linkedin/api/endpoints/profiles.js";
 import * as output from "../utils/output.js";
 import { parseSince } from "../utils/time.js";
+import { getDownloadRateLimiter, type DownloadRateLimiter } from "../utils/rate-limiter.js";
 import type { ConversationRecord, StoredMessage } from "../store/types.js";
 import type { ConversationStore } from "../store/conversations.js";
 import { extractBareConvId } from "../utils/urn.js";
+import type { LinkedInApiClient } from "../linkedin/api/client.js";
 
-const MESSAGES_PER_CONVERSATION = 1000;
+const DEFAULT_MESSAGES_PER_CONVERSATION = 1000;
 const MESSAGES_PER_PAGE = 20;
 
 export interface SyncOptions {
   conversation?: string;
   account?: string;
   store?: string;
+  /** Legacy alias for --from. Older callers still pass this. */
   since?: string;
+  /** Older boundary (oldest message to fetch). Duration or ISO date. */
+  from?: string;
+  /** Newer boundary (newest message to fetch). Duration or ISO date. Defaults to now. */
+  to?: string;
+  /**
+   * Max items. For inbox sync this caps conversations walked. For single-conv
+   * sync this caps messages fetched. Default: unlimited (inbox), 1000 (conv).
+   */
+  limit?: number;
   json?: boolean;
 }
 
@@ -46,19 +74,49 @@ export async function syncCommand(options: SyncOptions): Promise<void> {
   }
   const { apiClient, profileId, myProfileUrn, accountRecord } = session;
 
-  const sinceMs = parseSince(options.since, accountRecord.lastSyncAt ?? undefined, 90 * 24 * 60 * 60 * 1000);
-  const sinceDate = new Date(sinceMs);
-  // Capture start time before any API calls — used as the new lastSyncAt.
-  // This ensures the next sync picks up from exactly where this one started,
-  // with no gap even if LinkedIn returns 0 results for a transient API issue.
+  // Resolve the older boundary. Precedence: --from > --since > lastSyncAt > 90d ago.
+  // For single-conv sync the default is "all of time" so backfill works.
+  const olderBoundarySource = options.from ?? options.since;
+  const fromMs = options.conversation
+    ? olderBoundarySource
+      ? parseSince(olderBoundarySource, undefined, 0)
+      : 0
+    : parseSince(
+        olderBoundarySource,
+        accountRecord.lastSyncAt ?? undefined,
+        90 * 24 * 60 * 60 * 1000
+      );
+
+  // Resolve the newer boundary. Defaults to "now". `parseSince` returns a past
+  // timestamp for durations, which is what we want — `--to 1d` means "as new as
+  // 1 day ago", clamping the top of the window.
+  const toMs = options.to ? parseSince(options.to, undefined, 0) : Date.now();
+
+  if (toMs <= fromMs) {
+    output.error(
+      `Empty sync window: --to (${new Date(toMs).toISOString()}) must be after --from (${new Date(fromMs).toISOString()}).`,
+      1
+    );
+    return;
+  }
+
+  const fromDate = new Date(fromMs);
+  // Capture start time before any API calls — used as the new lastSyncAt so
+  // the next incremental sync picks up from exactly where this one started.
   const syncStartedAt = new Date().toISOString();
   const conversations = store.forAccount(profileId);
+  const downloadLimiter = getDownloadRateLimiter(profileId);
 
-  // Single-conversation sync
+  // -------------------------------------------------------------------------
+  // Single-conversation sync (backfill)
+  // -------------------------------------------------------------------------
   if (options.conversation) {
     const convId = await conversations.resolve(options.conversation);
     if (!convId) {
-      output.error(`Conversation "${options.conversation}" not found in store. Run \`lilac sync\` first.`, 1);
+      output.error(
+        `Conversation "${options.conversation}" not found in store. Run \`lilac sync\` first.`,
+        1
+      );
       return;
     }
     const record = await conversations.read(convId);
@@ -67,32 +125,88 @@ export async function syncCommand(options: SyncOptions): Promise<void> {
       return;
     }
     const convUrn = record.backendUrn || record.convUrn;
-    output.info(`Syncing conversation: ${record.name ?? convId}...`);
+    if (!options.json) {
+      output.info(`Syncing conversation: ${record.name ?? convId}...`);
+    }
 
+    if (options.json) {
+      output.emitEvent({
+        event: "sync.start",
+        scope: "conversation",
+        account: profileId,
+        convId,
+        slug: record.slug,
+        from: fromMs,
+        to: toMs,
+      });
+    }
+
+    const messageLimit = options.limit ?? DEFAULT_MESSAGES_PER_CONVERSATION;
     const messagesWritten = await syncConversationMessages(
-      apiClient, conversations, convId, convUrn, myProfileUrn, sinceMs, true
+      apiClient,
+      conversations,
+      convId,
+      convUrn,
+      myProfileUrn,
+      fromMs,
+      toMs,
+      messageLimit,
+      true,
+      downloadLimiter,
+      options.json === true,
+      record.slug
     );
 
     await store.git.flush();
 
     if (options.json) {
-      output.printData({ profileId, convId, messagesSynced: messagesWritten });
+      output.emitEvent({
+        event: "sync.complete",
+        scope: "conversation",
+        account: profileId,
+        convId,
+        slug: record.slug,
+        messagesSynced: messagesWritten,
+      });
     } else {
-      output.success(`Sync complete: ${messagesWritten} messages for ${record.name ?? convId}`);
+      output.success(
+        `Sync complete: ${messagesWritten} messages for ${record.name ?? convId}`
+      );
     }
     return;
   }
 
-  output.info(`Syncing ${accountRecord.name ?? profileId} (since ${sinceDate.toISOString().slice(0, 10)})...`);
+  // -------------------------------------------------------------------------
+  // Inbox sync — walk conversations, fetch messages for each
+  // -------------------------------------------------------------------------
+  if (!options.json) {
+    output.info(
+      `Syncing ${accountRecord.name ?? profileId} (since ${fromDate.toISOString().slice(0, 10)})...`
+    );
+  }
+  if (options.json) {
+    output.emitEvent({
+      event: "sync.start",
+      scope: "inbox",
+      account: profileId,
+      from: fromMs,
+      to: toMs,
+      limit: options.limit ?? null,
+    });
+  }
+
   let totalConversations = 0;
   let totalMessages = 0;
   let nextCursor: string | null | undefined = undefined;
-  let lastUpdatedBefore = Date.now();
+  // Start pagination from the newer boundary so `--to` actually clamps the
+  // top of the window.
+  let lastUpdatedBefore = toMs;
   const backoff: BackoffState = { delayMs: BACKOFF_INITIAL_MS };
+  const convLimit = options.limit ?? Number.POSITIVE_INFINITY;
 
-  output.info("Fetching conversation list...");
+  if (!options.json) output.info("Fetching conversation list...");
 
-  while (true) {
+  outer: while (true) {
     const { conversations: convPage, nextCursor: cursor } = await listConversations(
       apiClient,
       myProfileUrn,
@@ -101,23 +215,22 @@ export async function syncCommand(options: SyncOptions): Promise<void> {
     );
 
     // LinkedIn occasionally returns an empty first page transiently.
-    // Only treat empty as "done" if we have a cursor (mid-pagination) or
-    // if this is the very first page and we got nothing (genuine empty inbox).
-    // We detect first-page vs mid-pagination by whether nextCursor was set.
     if (convPage.length === 0) {
       if (nextCursor == null) {
-        // Empty first page — could be transient. Warn but don't silently skip.
         output.debug("LinkedIn returned 0 conversations on first page — may be transient");
       }
       break;
     }
 
     for (const conv of convPage) {
-      // Stop when we've gone past the --since boundary
-      if (conv.lastActivityAt && conv.lastActivityAt < sinceMs) {
+      // Stop when we've gone past the older boundary.
+      if (conv.lastActivityAt && conv.lastActivityAt < fromMs) {
         nextCursor = null;
         break;
       }
+
+      // Skip activity above the newer boundary (e.g. when --to is in the past).
+      if (conv.lastActivityAt && conv.lastActivityAt > toMs) continue;
 
       // Skip group conversations — we only support 1:1
       if (conv.isGroup) continue;
@@ -138,7 +251,6 @@ export async function syncCommand(options: SyncOptions): Promise<void> {
         slug = await resolveSlugWithBackoff(apiClient, contactProfileId, backoff);
       }
 
-      // Split name into first/last as best effort
       const fullName = otherParticipant.name ?? "Unknown";
       const { firstName, lastName } = splitName(fullName);
 
@@ -183,16 +295,39 @@ export async function syncCommand(options: SyncOptions): Promise<void> {
       await conversations.upsert(convId, record);
       totalConversations++;
 
-      // Fetch messages
+      if (options.json) {
+        output.emitEvent({
+          event: "sync.conversation",
+          account: profileId,
+          convId,
+          slug,
+          name: fullName,
+          conversationsSeen: totalConversations,
+        });
+      }
+
+      // Fetch messages for this conversation. Inbox sync uses incremental
+      // dedup (knownNewestAt skip), single-conv sync below uses forceResync.
       const messagesWritten = await syncConversationMessages(
         apiClient,
         conversations,
         convId,
         conv.backendUrn || conv.urn,
         myProfileUrn,
-        sinceMs
+        fromMs,
+        toMs,
+        DEFAULT_MESSAGES_PER_CONVERSATION,
+        false,
+        downloadLimiter,
+        options.json === true,
+        slug
       );
       totalMessages += messagesWritten;
+
+      if (totalConversations >= convLimit) {
+        nextCursor = null;
+        break outer;
+      }
     }
 
     if (!cursor || nextCursor === null) break;
@@ -210,9 +345,17 @@ export async function syncCommand(options: SyncOptions): Promise<void> {
   await store.git.flush();
 
   if (options.json) {
-    output.printData({ profileId, conversationsSynced: totalConversations, messagesSynced: totalMessages });
+    output.emitEvent({
+      event: "sync.complete",
+      scope: "inbox",
+      account: profileId,
+      conversationsSynced: totalConversations,
+      messagesSynced: totalMessages,
+    });
   } else {
-    output.success(`Sync complete: ${totalConversations} conversations, ${totalMessages} messages`);
+    output.success(
+      `Sync complete: ${totalConversations} conversations, ${totalMessages} messages`
+    );
   }
 }
 
@@ -222,7 +365,7 @@ export async function syncCommand(options: SyncOptions): Promise<void> {
  * Throws on 401 (auth expired — abort the whole sync).
  */
 async function resolveSlugWithBackoff(
-  apiClient: ReturnType<typeof buildApiClient>,
+  apiClient: LinkedInApiClient,
   profileId: string,
   backoff: BackoffState
 ): Promise<string | null> {
@@ -230,7 +373,6 @@ async function resolveSlugWithBackoff(
 
   try {
     const slug = await getProfileSlugById(apiClient, profileId);
-    // Success — reset backoff toward initial
     backoff.delayMs = BACKOFF_INITIAL_MS;
     return slug;
   } catch (err: unknown) {
@@ -267,29 +409,63 @@ function splitName(name: string): { firstName: string; lastName: string } {
   return { firstName: name.slice(0, spaceIdx), lastName: name.slice(spaceIdx + 1) };
 }
 
+/**
+ * Fetch messages for a single conversation in the [fromMs, toMs] window.
+ *
+ * `forceResync = false` (inbox sync): use the existing `newestMessageAt` as a
+ * cheap "stop here" hint — we know everything older than that. We still walk
+ * one extra page past it so dedup-by-URN catches gap fillers.
+ *
+ * `forceResync = true` (single-conv backfill): never apply the newest filter.
+ * Walk straight from `toMs` (or `Date.now()`) backwards toward `fromMs`,
+ * stopping when LinkedIn says hasMore=false or we hit the message limit.
+ *
+ * Sets `fullyBackfilled = true` when LinkedIn reports no more pages and we
+ * weren't stopped by the time window or limit.
+ */
 async function syncConversationMessages(
-  apiClient: ReturnType<typeof buildApiClient>,
+  apiClient: LinkedInApiClient,
   conversations: ConversationStore,
   convId: string,
   conversationUrn: string,
   myProfileUrn: string,
-  sinceMs: number,
-  forceResync = false
+  fromMs: number,
+  toMs: number,
+  messageLimit: number,
+  forceResync: boolean,
+  downloadLimiter: DownloadRateLimiter,
+  jsonMode: boolean,
+  slug: string | null
 ): Promise<number> {
   const existing = await conversations.read(convId);
-  const knownNewestAt = forceResync ? null : existing?.syncState.newestMessageAt;
-  output.debug(`syncConvMessages: knownNewestAt=${knownNewestAt}, sinceMs=${sinceMs}`);
+  const knownNewestAt = forceResync ? null : existing?.syncState.newestMessageAt ?? null;
+  output.debug(
+    `syncConvMessages: knownNewestAt=${knownNewestAt}, fromMs=${fromMs}, toMs=${toMs}, force=${forceResync}`
+  );
 
-  let anchorTimestamp = Date.now();
+  // Anchor at toMs (or just past it so the first page includes toMs itself).
+  // The LinkedIn API uses `deliveredAt` as a strict upper bound on the page.
+  let anchorTimestamp = Math.min(toMs + 1, Date.now() + 1);
   let fetched = 0;
   let oldestFetchedAt: number | null = null;
   let newestFetchedAt: number | null = null;
+  let reachedEnd = false;
   const allMessages: StoredMessage[] = [];
 
-  while (fetched < MESSAGES_PER_CONVERSATION) {
+  while (fetched < messageLimit) {
+    // Reserve a page worth of slots up front. Worst case we ask for slightly
+    // more than we use; the limiter ages them out either way.
+    await downloadLimiter.acquire(MESSAGES_PER_PAGE);
+
     let result: { messages: StoredMessage[]; hasMore: boolean };
     try {
-      const raw = await fetchMessages(apiClient, conversationUrn, myProfileUrn, anchorTimestamp, MESSAGES_PER_PAGE);
+      const raw = await fetchMessages(
+        apiClient,
+        conversationUrn,
+        myProfileUrn,
+        anchorTimestamp,
+        MESSAGES_PER_PAGE
+      );
       output.debug(`fetchMessages returned ${raw.messages.length} messages, hasMore=${raw.hasMore}`);
       result = {
         messages: raw.messages.map((m) => toStoredMessage(m, myProfileUrn)),
@@ -300,34 +476,98 @@ async function syncConversationMessages(
       break;
     }
 
-    if (result.messages.length === 0) break;
+    if (result.messages.length === 0) {
+      reachedEnd = true;
+      break;
+    }
 
     const prevFetched = fetched;
     let skipped = 0;
+    let crossedFromBoundary = false;
     for (const msg of result.messages) {
-      if (msg.timestamp < sinceMs) { skipped++; continue; }
-      if (knownNewestAt && msg.timestamp <= knownNewestAt) { skipped++; continue; }
+      // Older boundary: stop the whole sync once we cross it. We still record
+      // the page so allMessages contains everything ≥ fromMs.
+      if (msg.timestamp < fromMs) {
+        skipped++;
+        crossedFromBoundary = true;
+        continue;
+      }
+      // Newer boundary: skip anything outside the requested window.
+      if (msg.timestamp > toMs) {
+        skipped++;
+        continue;
+      }
+      // Inbox-sync dedup: skip messages we already know about. Backfill
+      // (forceResync) bypasses this so it can fill in older history.
+      if (knownNewestAt !== null && msg.timestamp <= knownNewestAt) {
+        skipped++;
+        continue;
+      }
       allMessages.push(msg);
       fetched++;
       if (oldestFetchedAt === null || msg.timestamp < oldestFetchedAt) oldestFetchedAt = msg.timestamp;
       if (newestFetchedAt === null || msg.timestamp > newestFetchedAt) newestFetchedAt = msg.timestamp;
     }
-    output.debug(`page: ${fetched - prevFetched} new, ${skipped} skipped, oldest=${oldestFetchedAt}`);
 
-    // No new messages on this page — stop to avoid infinite loop
+    output.debug(
+      `page: ${fetched - prevFetched} new, ${skipped} skipped, oldest=${oldestFetchedAt}`
+    );
+
+    if (jsonMode && fetched > prevFetched) {
+      output.emitEvent({
+        event: "sync.conversation.progress",
+        convId,
+        slug,
+        messagesFetched: fetched,
+        oldestMessageAt: oldestFetchedAt,
+        newestMessageAt: newestFetchedAt,
+      });
+    }
+
+    // Crossed the older boundary on this page — done.
+    if (crossedFromBoundary) {
+      reachedEnd = false;
+      break;
+    }
+
+    // No new messages on this page. For backfill that's fatal (we've hit a
+    // wall). For inbox sync it usually means we caught up to the dedup floor.
     if (fetched === prevFetched) break;
-    if (!result.hasMore || fetched >= MESSAGES_PER_CONVERSATION) break;
-    // Subtract 1ms to avoid re-fetching the same oldest message
+
+    if (!result.hasMore || fetched >= messageLimit) {
+      reachedEnd = !result.hasMore;
+      break;
+    }
+
+    // Walk back: subtract 1 ms so the next page doesn't re-include the page
+    // boundary message.
     anchorTimestamp = (oldestFetchedAt ?? anchorTimestamp) - 1;
   }
 
   if (allMessages.length > 0) {
     await conversations.appendMessages(convId, allMessages);
+    const mergedOldest = Math.min(
+      oldestFetchedAt ?? Number.POSITIVE_INFINITY,
+      existing?.syncState.oldestMessageAt ?? Number.POSITIVE_INFINITY
+    );
+    const mergedNewest = Math.max(
+      newestFetchedAt ?? 0,
+      existing?.syncState.newestMessageAt ?? 0
+    );
     await conversations.updateSyncState(convId, {
-      oldestMessageAt: Math.min(oldestFetchedAt ?? Infinity, existing?.syncState.oldestMessageAt ?? Infinity),
-      newestMessageAt: Math.max(newestFetchedAt ?? 0, existing?.syncState.newestMessageAt ?? 0),
+      oldestMessageAt: Number.isFinite(mergedOldest) ? mergedOldest : null,
+      newestMessageAt: mergedNewest > 0 ? mergedNewest : null,
       lastSyncAt: new Date().toISOString(),
       totalSynced: (existing?.syncState.totalSynced ?? 0) + allMessages.length,
+      fullyBackfilled:
+        (existing?.syncState.fullyBackfilled ?? false) || (forceResync && reachedEnd),
+    });
+  } else if (forceResync && reachedEnd && existing) {
+    // Backfill walked the whole conversation but found nothing new — still
+    // mark it as fully backfilled so the TUI knows not to ask again.
+    await conversations.updateSyncState(convId, {
+      lastSyncAt: new Date().toISOString(),
+      fullyBackfilled: true,
     });
   }
 
@@ -336,7 +576,7 @@ async function syncConversationMessages(
 
 
 function toStoredMessage(
-  m: { urn: string; deliveredAt: number; fromUrn: string; fromName: string | null; body: string; originToken: string | null; reactions: Array<{ emoji: string; count: number; hasUserReacted: boolean }>; attachments: Array<{ type: string; url?: string; name?: string; mimeType?: string; raw?: unknown }> },
+  m: MessageData,
   myProfileUrn: string
 ): StoredMessage {
   return {
