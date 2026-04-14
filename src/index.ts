@@ -21,6 +21,7 @@ import { listenCommand } from "./commands/listen.js";
 import { conversationsCommand } from "./commands/conversations.js";
 import { messagesCommand } from "./commands/messages.js";
 import { sendCommand } from "./commands/send.js";
+import { reactCommand } from "./commands/react.js";
 import { searchCommand } from "./commands/search.js";
 import { inboxCommand } from "./commands/inbox.js";
 import { grepCommand } from "./commands/grep.js";
@@ -249,6 +250,33 @@ program
       account: opts.account ?? globalOpts.account,
       store: opts.store ?? globalOpts.store,
       json: opts.json ?? globalOpts.json,
+    });
+  });
+
+// ---------------------------------------------------------------------------
+// react
+// ---------------------------------------------------------------------------
+
+program
+  .command("react <target> <emoji>")
+  .description(
+    "Add an emoji reaction to a message\n" +
+      "  <target> can be: slug, LinkedIn URL, or conversation URN\n" +
+      "  Defaults to the most recent message (use --message to pick one)"
+  )
+  .option("-a, --account <slug>", "account to react from")
+  .option("-s, --store <path>", "store directory")
+  .option("-m, --message <urn>", "message URN to react to (defaults to most recent)")
+  .option("--unreact", "remove your reaction instead of adding")
+  .option("--json", "output as JSON")
+  .action(async (target: string, emoji: string, opts, cmd) => {
+    const globalOpts = cmd.parent?.opts() ?? {};
+    await reactCommand(target, emoji, {
+      account: opts.account ?? globalOpts.account,
+      store: opts.store ?? globalOpts.store,
+      json: opts.json ?? globalOpts.json,
+      message: opts.message,
+      unreact: opts.unreact,
     });
   });
 
