@@ -256,6 +256,64 @@ export class ConversationStore {
     return messages;
   }
 
+  /**
+   * Rewrite a single message's fields in place.
+   *
+   * Scans every JSONL file in the conversation's messages/ directory (since
+   * we don't know which month the message lives in without the timestamp)
+   * and replaces the matching line. Returns true if the message was found.
+   */
+  async updateMessage(
+    convId: string,
+    messageUrn: string,
+    patch: Partial<StoredMessage>
+  ): Promise<boolean> {
+    const dir = this.messagesDir(convId);
+    let files: string[];
+    try {
+      files = (await readdir(dir)).filter((f) => f.endsWith(".jsonl"));
+    } catch {
+      return false;
+    }
+
+    const targetId = extractMsgId(messageUrn);
+    for (const name of files) {
+      const file = join(dir, name);
+      const prev = this.writeLocks.get(file) ?? Promise.resolve();
+      let found = false;
+      const work = prev.then(async () => {
+        const content = await readFile(file, "utf8").catch(() => "");
+        if (!content) return;
+        const lines = content.split("\n");
+        const out: string[] = [];
+        for (const line of lines) {
+          if (!line.trim()) {
+            out.push(line);
+            continue;
+          }
+          try {
+            const msg = JSON.parse(line) as StoredMessage;
+            if (msg.urn && extractMsgId(msg.urn) === targetId) {
+              out.push(JSON.stringify({ ...msg, ...patch }));
+              found = true;
+            } else {
+              out.push(line);
+            }
+          } catch {
+            out.push(line);
+          }
+        }
+        if (found) {
+          await writeFile(file, out.join("\n"), "utf8");
+        }
+      });
+      this.writeLocks.set(file, work);
+      await work;
+      if (found) return true;
+    }
+    return false;
+  }
+
   async updateSyncState(convId: string, updates: Partial<SyncState>): Promise<void> {
     const record = await this.read(convId);
     if (!record) return;

@@ -90,7 +90,13 @@ interface MessageRaw {
   deliveredAt?: number;
   body?: { text?: string };
   originToken?: string | null;
-  reactionSummaries?: Array<{ emoji?: string; count?: number; hasUserReacted?: boolean }>;
+  // LinkedIn returns `viewerReacted` (bool); older clients called it `hasUserReacted`.
+  reactionSummaries?: Array<{
+    emoji?: string;
+    count?: number;
+    viewerReacted?: boolean;
+    hasUserReacted?: boolean;
+  }>;
   renderContent?: unknown[];
   "*sender"?: string;
   "*actor"?: string;
@@ -289,6 +295,76 @@ export async function sendFirstMessage(
 }
 
 // ---------------------------------------------------------------------------
+// Reactions
+// ---------------------------------------------------------------------------
+
+/**
+ * Build the composite "entity URN" form that LinkedIn requires for reaction
+ * payloads. Messages are normally stored as their `backendUrn`
+ * (`urn:li:messagingMessage:2-...`), but the `reactWithEmoji` action only
+ * accepts the frontend entity URN:
+ *
+ *   urn:li:msg_message:(urn:li:fsd_profile:{senderProfileId},{bareMessageId})
+ *
+ * This helper accepts any of those forms and returns the composite shape.
+ *
+ * Decompiled source: web-messenger POST /voyagerMessagingDashMessengerMessages?action=reactWithEmoji
+ */
+function buildReactionMessageUrn(messageUrn: string, senderProfileId: string): string {
+  // Already composite? Pass through.
+  if (messageUrn.startsWith("urn:li:msg_message:(")) return messageUrn;
+  // urn:li:messagingMessage:2-... → bare 2-...
+  const backendMatch = messageUrn.match(/^urn:li:messagingMessage:(.+)$/);
+  const bare = backendMatch?.[1] ?? messageUrn;
+  return `urn:li:msg_message:(urn:li:fsd_profile:${senderProfileId},${bare})`;
+}
+
+/**
+ * Add a reaction to a message.
+ *
+ * @param messageUrn  Any known URN form for the message (backend, composite, or bare id).
+ * @param senderProfileUrn  Authenticated user's profile URN (the reacting viewer).
+ * @param emoji  Unicode emoji (e.g. "👍", "❤️"). LinkedIn accepts most single emoji.
+ */
+export async function addReaction(
+  client: LinkedInApiClient,
+  messageUrn: string,
+  senderProfileUrn: string,
+  emoji: string,
+): Promise<void> {
+  const senderProfileId = senderProfileUrn.replace("urn:li:fsd_profile:", "");
+  const compositeUrn = buildReactionMessageUrn(messageUrn, senderProfileId);
+
+  await client.request<unknown>({
+    method: "POST",
+    url: MESSAGES_REST_URL,
+    params: { action: "reactWithEmoji" },
+    data: { messageUrn: compositeUrn, emoji },
+  });
+}
+
+/**
+ * Remove the authenticated user's reaction from a message.
+ * Silently no-ops server-side if no matching reaction exists.
+ */
+export async function removeReaction(
+  client: LinkedInApiClient,
+  messageUrn: string,
+  senderProfileUrn: string,
+  emoji: string,
+): Promise<void> {
+  const senderProfileId = senderProfileUrn.replace("urn:li:fsd_profile:", "");
+  const compositeUrn = buildReactionMessageUrn(messageUrn, senderProfileId);
+
+  await client.request<unknown>({
+    method: "POST",
+    url: MESSAGES_REST_URL,
+    params: { action: "unreactWithEmoji" },
+    data: { messageUrn: compositeUrn, emoji },
+  });
+}
+
+// ---------------------------------------------------------------------------
 // Parsing helpers
 // ---------------------------------------------------------------------------
 
@@ -377,9 +453,9 @@ function parseMessageRaw(
     body: raw.body?.text ?? "",
     originToken: raw.originToken ?? null,
     reactions: (raw.reactionSummaries ?? []).map((r) => ({
-      emoji: (r as { emoji?: string }).emoji ?? "",
-      count: (r as { count?: number }).count ?? 0,
-      hasUserReacted: (r as { hasUserReacted?: boolean }).hasUserReacted ?? false,
+      emoji: r.emoji ?? "",
+      count: r.count ?? 0,
+      hasUserReacted: r.viewerReacted ?? r.hasUserReacted ?? false,
     })),
     attachments: parseAttachments(raw.renderContent),
   };
