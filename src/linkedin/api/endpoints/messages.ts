@@ -52,10 +52,49 @@ export interface MessageReactionData {
 }
 
 export interface MessageAttachmentData {
-  type: string;
+  /**
+   * Broad category so consumers can pick a renderer without needing to know
+   * every LinkedIn render-content URN. "other" means we preserved the raw
+   * payload but didn't recognize the shape — consult `raw` to render it.
+   */
+  type:
+    | "image"
+    | "video"
+    | "audio"
+    | "voice"
+    | "file"
+    | "gif"
+    | "link_preview"
+    | "post_share"
+    | "forwarded"
+    | "replied"
+    | "unavailable"
+    | "away_message"
+    | "other";
+  /** Direct URL (download for files, first frame for images, etc.). */
   url?: string;
+  /** Filename for files; title for link previews; original-sender name for forwarded. */
   name?: string;
+  /** MIME type when available. */
   mimeType?: string;
+  /** Byte size for files. */
+  size?: number;
+  /** Intrinsic pixel dimensions for images/videos. */
+  width?: number;
+  height?: number;
+  /** Media duration in milliseconds (video / voice). */
+  durationMs?: number;
+  /** Title for link previews / shared content. */
+  title?: string;
+  /** Short description for link previews. */
+  description?: string;
+  /** Poster/thumbnail URL for video / gif / link previews. */
+  previewUrl?: string;
+  /** Human text embedded in a shared post, forwarded message, or reply. */
+  originalText?: string;
+  /** Original author name (for forwarded / shared posts). */
+  authorName?: string;
+  /** Raw LinkedIn renderContent object. Always preserved for fidelity. */
   raw?: unknown;
 }
 
@@ -445,9 +484,21 @@ function parseMessageRaw(
     }
   }
 
+  // LinkedIn usually sets `deliveredAt` on every message, but some special
+  // content types (shared posts, system notices) omit it. Fall back to other
+  // timestamp-ish fields before surrendering to 0, so downstream sync logic
+  // can still file and order the message.
+  const rawObj = raw as unknown as Record<string, unknown>;
+  const fallbackTs =
+    pickNumber(rawObj, "deliveredAt") ??
+    pickNumber(rawObj, "createdAt") ??
+    pickNumber(rawObj, "lastEditedAt") ??
+    pickNumber(rawObj, "insertedAt") ??
+    0;
+
   return {
     urn: raw.backendUrn ?? raw.entityUrn ?? urn,
-    deliveredAt: raw.deliveredAt ?? 0,
+    deliveredAt: fallbackTs,
     fromUrn,
     fromName,
     body: raw.body?.text ?? "",
@@ -457,37 +508,278 @@ function parseMessageRaw(
       count: r.count ?? 0,
       hasUserReacted: r.viewerReacted ?? r.hasUserReacted ?? false,
     })),
-    attachments: parseAttachments(raw.renderContent),
+    attachments: parseAttachments(raw.renderContent, included),
   };
 }
 
-function parseAttachments(renderContent: unknown[] | undefined): MessageAttachmentData[] {
-  if (!renderContent || renderContent.length === 0) return [];
-  return renderContent.map((rc) => {
-    const content = rc as Record<string, unknown>;
-    // LinkedIn wraps each attachment in a typed key
-    const typeKey = Object.keys(content).find((k) => k.startsWith("com.linkedin"));
-    if (!typeKey) return { type: "other", raw: rc };
-
-    const inner = content[typeKey] as Record<string, unknown>;
-    const type = detectAttachmentType(typeKey);
-
-    return {
-      type,
-      url: (inner["url"] as string) ?? (inner["downloadUrl"] as string) ?? undefined,
-      name: (inner["name"] as string) ?? undefined,
-      mimeType: (inner["mediaType"] as string) ?? undefined,
-      raw: rc,
-    };
-  });
+function pickNumber(obj: Record<string, unknown>, key: string): number | null {
+  const v = obj[key];
+  return typeof v === "number" && Number.isFinite(v) && v > 0 ? v : null;
 }
 
-function detectAttachmentType(typeKey: string): string {
-  if (typeKey.includes("Image") || typeKey.includes("Photo")) return "image";
-  if (typeKey.includes("Video")) return "video";
-  if (typeKey.includes("Audio") || typeKey.includes("Voice")) return "voice";
-  if (typeKey.includes("File") || typeKey.includes("Document")) return "file";
-  if (typeKey.includes("ExternalMedia") || typeKey.includes("Link")) return "link_preview";
-  if (typeKey.includes("Gif") || typeKey.includes("gif")) return "gif";
-  return "other";
+/**
+ * Decode a LinkedIn renderContent list into structured attachments.
+ *
+ * Each entry is an object keyed by a `com.linkedin.*` type URI — we match
+ * on the short leaf name ("file", "video", "forwardedMessageContent", etc.)
+ * rather than the full URI, because the prefix varies between contexts
+ * (messenger vs voyager vs feed) but the leaf is stable.
+ *
+ * Shapes are derived from the decompiled LinkedIn web bundle
+ * (`playground/linkedin/messenger.js`, schema validators ~line 13617).
+ */
+function parseAttachments(
+  renderContent: unknown[] | undefined,
+  included: Map<string, Record<string, unknown>>
+): MessageAttachmentData[] {
+  if (!renderContent || renderContent.length === 0) return [];
+  return renderContent.map((rc) => parseOneAttachment(rc, included));
+}
+
+function parseOneAttachment(
+  rc: unknown,
+  included: Map<string, Record<string, unknown>>
+): MessageAttachmentData {
+  if (!rc || typeof rc !== "object") return { type: "other", raw: rc };
+  const wrapper = rc as Record<string, unknown>;
+
+  // LinkedIn's content unions are keyed either by the short leaf name
+  // ("file", "video") or by the full `com.linkedin.*` URI. Try both —
+  // plucking either gives us an inner object.
+  const tryKeys = [
+    "file",
+    "video",
+    "audio",
+    "voice",
+    "vectorImage",
+    "externalMedia",
+    "forwardedMessageContent",
+    "repliedMessageContent",
+    "unavailableContent",
+    "awayMessage",
+    "feedUpdate",
+    "sharedFeedUpdate",
+    "articleMedia",
+    "messageAdRenderContent",
+  ];
+  for (const k of tryKeys) {
+    if (wrapper[k] !== undefined) return parseAttachmentByKind(k, wrapper[k], rc, included);
+  }
+
+  // Fall back to the fully-qualified URI form, e.g.
+  // `com.linkedin.messenger.FileAttachmentContent`. Strip the prefix and
+  // lowercase the first letter so detection still works.
+  const longKey = Object.keys(wrapper).find((k) => k.startsWith("com.linkedin"));
+  if (longKey) {
+    const leaf = longKey.split(".").pop() ?? "";
+    const normalized = leaf.charAt(0).toLowerCase() + leaf.slice(1);
+    return parseAttachmentByKind(normalized, wrapper[longKey], rc, included);
+  }
+
+  return { type: "other", raw: rc };
+}
+
+function parseAttachmentByKind(
+  kind: string,
+  innerUnknown: unknown,
+  raw: unknown,
+  included: Map<string, Record<string, unknown>>
+): MessageAttachmentData {
+  const inner = (innerUnknown ?? {}) as Record<string, unknown>;
+  const lk = kind.toLowerCase();
+
+  if (lk.includes("file") || lk.includes("document") || lk.includes("attachment")) {
+    return {
+      type: "file",
+      url: str(inner["url"]) ?? str(inner["downloadUrl"]),
+      name: str(inner["name"]),
+      mimeType: str(inner["mediaType"]),
+      size: num(inner["byteSize"]),
+      raw,
+    };
+  }
+
+  if (lk.includes("vectorimage") || lk.includes("photo") || lk === "image") {
+    const path = str(inner["fileIdentifyingUrlPathSegment"]);
+    return {
+      type: "image",
+      url: path ? buildVectorImageUrl(inner, path) : str(inner["url"]),
+      width: num(inner["width"]),
+      height: num(inner["height"]),
+      raw,
+    };
+  }
+
+  if (lk.includes("externalmedia") || lk.includes("linkpreview")) {
+    // External media covers GIFs, Giphy embeds, and link-preview cards.
+    // Distinguish on mediaType when available: image/gif → gif.
+    const media = (inner["media"] as Record<string, unknown>) ?? {};
+    const preview = (inner["previewMedia"] as Record<string, unknown>) ?? {};
+    const mime = str(media["mediaType"]) ?? str(inner["mediaType"]);
+    const isGif = mime === "image/gif" || /gif/i.test(kind);
+    return {
+      type: isGif ? "gif" : "link_preview",
+      url: str(media["url"]) ?? str(inner["url"]),
+      previewUrl: str(preview["url"]) ?? str(media["url"]),
+      title: str(inner["title"]),
+      description: str(inner["description"]),
+      width: num(media["originalWidth"]) ?? num(inner["width"]),
+      height: num(media["originalHeight"]) ?? num(inner["height"]),
+      mimeType: mime,
+      raw,
+    };
+  }
+
+  if (lk === "video" || lk.includes("videomessage") || lk.includes("videomeeting")) {
+    // Video renderContent often references media via URN; the actual URL
+    // is embedded in the included[] map under that URN. Grab whatever
+    // "url"/"thumbnail" field surfaces.
+    const mediaRef = str(inner["media"]);
+    let url: string | undefined;
+    let previewUrl: string | undefined;
+    let width = num(inner["width"]);
+    let height = num(inner["height"]);
+    if (mediaRef) {
+      const mediaDoc = included.get(mediaRef);
+      if (mediaDoc) {
+        url = str(mediaDoc["progressiveStreams"]) ?? str(mediaDoc["url"]);
+        previewUrl = str(mediaDoc["thumbnail"]);
+        width = width ?? num(mediaDoc["width"]);
+        height = height ?? num(mediaDoc["height"]);
+      }
+    }
+    return {
+      type: "video",
+      url: url ?? str(inner["url"]),
+      previewUrl,
+      durationMs: num(inner["duration"]),
+      width,
+      height,
+      raw,
+    };
+  }
+
+  if (lk === "audio" || lk === "voice" || lk.includes("voicemessage")) {
+    return {
+      type: lk.includes("voice") ? "voice" : "audio",
+      url: str(inner["url"]),
+      durationMs: num(inner["duration"]),
+      raw,
+    };
+  }
+
+  if (lk.includes("forwardedmessage")) {
+    const sender = (inner["originalSender"] as Record<string, unknown>) ?? {};
+    return {
+      type: "forwarded",
+      originalText: str(inner["forwardedBody"]) ?? str(inner["messageBody"]),
+      authorName: buildSenderName(sender),
+      raw,
+    };
+  }
+
+  if (lk.includes("repliedmessage")) {
+    const sender = (inner["originalSender"] as Record<string, unknown>) ?? {};
+    return {
+      type: "replied",
+      originalText: str(inner["messageBody"]) ?? str(inner["forwardedBody"]),
+      authorName: buildSenderName(sender),
+      raw,
+    };
+  }
+
+  if (lk.includes("unavailable")) {
+    return {
+      type: "unavailable",
+      description: str(inner["unavailableReason"]) ?? str(inner["contentType"]),
+      raw,
+    };
+  }
+
+  if (lk.includes("awaymessage")) {
+    return {
+      type: "away_message",
+      originalText: str(inner["text"]),
+      description: str(inner["footerText"]),
+      raw,
+    };
+  }
+
+  // Feed / post shares (and anything else with an embedded post-like shape).
+  // LinkedIn uses several keys here depending on the share source; we
+  // normalize them all to "post_share" so consumers render a unified card.
+  if (
+    lk.includes("feed") ||
+    lk.includes("share") ||
+    lk.includes("post") ||
+    lk.includes("article")
+  ) {
+    const actorName =
+      buildActor(inner["actor"]) ??
+      buildActor(inner["author"]) ??
+      str(inner["authorName"]);
+    return {
+      type: "post_share",
+      title: str(inner["title"]) ?? str(inner["headline"]),
+      description: str(inner["description"]) ?? str(inner["subtitle"]),
+      originalText:
+        str(inner["commentary"]) ?? str(inner["summary"]) ?? str(inner["body"]),
+      authorName: actorName,
+      url: str(inner["permalink"]) ?? str(inner["navigationUrl"]) ?? str(inner["url"]),
+      raw,
+    };
+  }
+
+  return { type: "other", raw };
+}
+
+function str(v: unknown): string | undefined {
+  return typeof v === "string" && v.length > 0 ? v : undefined;
+}
+
+function num(v: unknown): number | undefined {
+  return typeof v === "number" && Number.isFinite(v) ? v : undefined;
+}
+
+function buildSenderName(sender: Record<string, unknown>): string | undefined {
+  const pt = (sender["participantType"] as Record<string, unknown>) ?? {};
+  const member = (pt["member"] as Record<string, unknown>) ?? {};
+  const first = (member["firstName"] as { text?: string } | undefined)?.text ?? "";
+  const last = (member["lastName"] as { text?: string } | undefined)?.text ?? "";
+  const full = `${first} ${last}`.trim();
+  return full || str(sender["name"]);
+}
+
+function buildActor(actor: unknown): string | undefined {
+  if (!actor || typeof actor !== "object") return undefined;
+  const a = actor as Record<string, unknown>;
+  return (
+    str(a["name"]) ??
+    (a["firstName"] && a["lastName"]
+      ? `${String(a["firstName"])} ${String(a["lastName"])}`.trim()
+      : undefined)
+  );
+}
+
+/**
+ * Build a CDN URL for a LinkedIn vectorImage. LinkedIn stores the artifact
+ * path as `fileIdentifyingUrlPathSegment` which is meant to be appended to
+ * a `rootUrl` (provided on the image). Fall back to returning the raw
+ * path segment so callers can still fetch it.
+ */
+function buildVectorImageUrl(inner: Record<string, unknown>, path: string): string {
+  const rootUrl = str(inner["rootUrl"]);
+  if (rootUrl) return `${rootUrl.replace(/\/$/, "")}/${path}`;
+  // Artifacts array fallback — some vectorImage payloads nest the path under
+  // `artifacts[].fileIdentifyingUrlPathSegment` without a top-level rootUrl.
+  const artifacts = inner["artifacts"];
+  if (Array.isArray(artifacts)) {
+    for (const a of artifacts) {
+      const aa = a as Record<string, unknown>;
+      const r = str(aa["rootUrl"]);
+      const p = str(aa["fileIdentifyingUrlPathSegment"]);
+      if (r && p) return `${r.replace(/\/$/, "")}/${p}`;
+    }
+  }
+  return path;
 }

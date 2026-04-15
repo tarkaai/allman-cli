@@ -485,6 +485,16 @@ async function syncConversationMessages(
     let skipped = 0;
     let crossedFromBoundary = false;
     for (const msg of result.messages) {
+      // LinkedIn sometimes omits `deliveredAt` on special content types
+      // (shared posts, system messages). We don't trust timestamp=0 to
+      // drive boundary logic — it would falsely look "older than fromMs"
+      // and stop the whole sync. Keep the message but skip boundary checks.
+      if (msg.timestamp === 0) {
+        output.debug(`message ${msg.urn} has no deliveredAt — including anyway`);
+        allMessages.push(msg);
+        fetched++;
+        continue;
+      }
       // Older boundary: stop the whole sync once we cross it. We still record
       // the page so allMessages contains everything ≥ fromMs.
       if (msg.timestamp < fromMs) {
@@ -588,10 +598,19 @@ function toStoredMessage(
     body: m.body,
     reactions: m.reactions,
     attachments: m.attachments.map((a) => ({
-      type: a.type as StoredMessage["attachments"][number]["type"],
+      type: a.type,
       url: a.url,
       name: a.name,
+      size: a.size,
       mimeType: a.mimeType,
+      previewUrl: a.previewUrl,
+      width: a.width,
+      height: a.height,
+      durationMs: a.durationMs,
+      title: a.title,
+      description: a.description,
+      originalText: a.originalText,
+      authorName: a.authorName,
       raw: a.raw,
     })),
     originToken: m.originToken,
