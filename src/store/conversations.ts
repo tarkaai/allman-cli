@@ -65,7 +65,10 @@ export class ConversationStore {
   }
 
   private messageFile(convId: string, timestampMs: number): string {
-    const d = new Date(timestampMs);
+    // Messages with no server-provided timestamp (rare — certain shared-post
+    // payloads) get filed under the current month so they still land near
+    // their sync time instead of in 1970-01.jsonl.
+    const d = new Date(timestampMs > 0 ? timestampMs : Date.now());
     const month = `${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, "0")}`;
     return join(this.messagesDir(convId), `${month}.jsonl`);
   }

@@ -150,13 +150,44 @@ export interface ConversationRecord {
 // ---------------------------------------------------------------------------
 
 export interface MessageAttachment {
-  type: "image" | "video" | "file" | "gif" | "link_preview" | "voice" | "other";
+  /**
+   * Broad category. "other" means the raw payload is preserved but the
+   * shape wasn't recognized by the parser; renderers should fall back
+   * to a generic placeholder (or inspect `raw`).
+   */
+  type:
+    | "image"
+    | "video"
+    | "audio"
+    | "voice"
+    | "file"
+    | "gif"
+    | "link_preview"
+    | "post_share"
+    | "forwarded"
+    | "replied"
+    | "unavailable"
+    | "away_message"
+    | "other";
   url?: string;
   name?: string;
   size?: number;
   mimeType?: string;
   previewUrl?: string;
-  /** Raw LinkedIn renderContent object for types we don't fully parse */
+  /** Pixel dimensions when the attachment is visual. */
+  width?: number;
+  height?: number;
+  /** Duration in milliseconds (video / voice / audio). */
+  durationMs?: number;
+  /** Title for link previews / post shares. */
+  title?: string;
+  /** Short description for link previews / post shares. */
+  description?: string;
+  /** Commentary / original body for shared posts, forwarded messages, replies. */
+  originalText?: string;
+  /** Original author name (shared post author, forwarded sender). */
+  authorName?: string;
+  /** Raw LinkedIn renderContent object for types we don't fully parse. */
   raw?: unknown;
 }
 

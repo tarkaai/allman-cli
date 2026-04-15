@@ -100,18 +100,39 @@ async function handleEvent(
       // Sender name: for 1:1 convs, convRecord.name is the other person
       const fromName = isFromMe ? null : (convRecord?.name ?? null);
 
-      // Fetch body and real URN if body is empty (SSE often omits it)
+      // Fetch body, attachments, and real URN if body is empty (SSE often
+      // omits body text for non-plaintext messages like shared posts, and
+      // never carries attachments directly).
       let body = event.body ?? "";
       let realUrn: string | null = null;
-      if (!body && event.conversationUrn) {
+      let attachments: StoredMessage["attachments"] = [];
+      let reactions: StoredMessage["reactions"] = [];
+      if (event.conversationUrn) {
         try {
           const convUrn = convRecord?.backendUrn ?? event.conversationUrn;
           const { messages } = await fetchMessages(apiClient, convUrn, myProfileUrn, (event.timestamp ?? timestamp) + 1, 5);
           const eventTs = event.timestamp ?? timestamp;
-          const match = messages.find((m) => Math.abs(m.timestamp - eventTs) < 2000);
+          const match = messages.find((m) => Math.abs(m.deliveredAt - eventTs) < 2000);
           if (match) {
-            body = match.body;
+            if (!body) body = match.body;
             realUrn = match.urn;
+            attachments = match.attachments.map((a) => ({
+              type: a.type,
+              url: a.url,
+              name: a.name,
+              size: a.size,
+              mimeType: a.mimeType,
+              previewUrl: a.previewUrl,
+              width: a.width,
+              height: a.height,
+              durationMs: a.durationMs,
+              title: a.title,
+              description: a.description,
+              originalText: a.originalText,
+              authorName: a.authorName,
+              raw: a.raw,
+            }));
+            reactions = match.reactions;
           }
         } catch { /* non-fatal */ }
       }
@@ -127,9 +148,12 @@ async function handleEvent(
         message: { urn: event.messageUrn, body, isFromMe },
       });
 
-      // Persist to store — skip empty-body messages (likely duplicate SSE events)
+      // Persist to store — a message is worth keeping if it has a body OR
+      // any attachment content. Purely-empty events are duplicate SSE echoes
+      // we can safely drop.
       const messageUrn = realUrn ?? event.messageUrn;
-      if (convId && messageUrn && body) {
+      const hasContent = Boolean(body) || attachments.length > 0;
+      if (convId && messageUrn && hasContent) {
         const storedMsg: StoredMessage = {
           urn: messageUrn,
           timestamp: event.timestamp ?? timestamp,
@@ -137,8 +161,8 @@ async function handleEvent(
           fromName: fromName ?? "",
           isFromMe,
           body,
-          reactions: [],
-          attachments: [],
+          reactions,
+          attachments,
           originToken: event.originToken ?? null,
         };
         await conversations.appendMessages(convId, [storedMsg]).catch((err) => {
@@ -147,12 +171,15 @@ async function handleEvent(
         await conversations.updateSyncState(convId, { newestMessageAt: event.timestamp ?? timestamp }).catch(() => {});
         store.git.scheduleCommit(`listen: new message in ${convId.slice(0, 20)}`);
 
-        // Append to INBOX.jsonl for inbound messages
+        // Append to INBOX.jsonl for inbound messages. For attachment-only
+        // messages (e.g. shared posts with no commentary), fall back to a
+        // short placeholder so the inbox line is still meaningful.
         if (!isFromMe) {
+          const inboxBody = body || summarizeAttachments(attachments);
           const inboxLine = JSON.stringify({
             from: fromName ?? event.fromUrn ?? "unknown",
             slug: convRecord?.slug ?? null,
-            body,
+            body: inboxBody,
             timestamp: event.timestamp ?? timestamp,
           });
           const inboxPath = join(accountDir, "INBOX.jsonl");
@@ -271,4 +298,54 @@ function splitName(name: string): { firstName: string; lastName: string } {
   const spaceIdx = name.indexOf(" ");
   if (spaceIdx === -1) return { firstName: name, lastName: "" };
   return { firstName: name.slice(0, spaceIdx), lastName: name.slice(spaceIdx + 1) };
+}
+
+/**
+ * Produce a short, human-readable placeholder for messages whose body text is
+ * empty (attachment-only payloads like shared posts, images, or videos).
+ * Used for INBOX.jsonl lines so the inbox stays readable.
+ */
+function summarizeAttachments(attachments: StoredMessage["attachments"]): string {
+  const a = attachments[0];
+  if (!a) return "";
+  switch (a.type) {
+    case "post_share":
+      return a.authorName ? `[shared a post by ${a.authorName}]` : "[shared a post]";
+    case "link_preview":
+      return a.title ? `[link: ${a.title}]` : "[shared a link]";
+    case "image":
+      return "[image]";
+    case "gif":
+      return "[gif]";
+    case "video": {
+      const dur = formatDuration(a.durationMs);
+      return dur ? `[video ${dur}]` : "[video]";
+    }
+    case "audio":
+    case "voice": {
+      const dur = formatDuration(a.durationMs);
+      return dur ? `[voice ${dur}]` : "[voice message]";
+    }
+    case "file":
+      return a.name ? `[file: ${a.name}]` : "[file]";
+    case "forwarded":
+      return a.authorName ? `[forwarded from ${a.authorName}]` : "[forwarded message]";
+    case "replied":
+      return a.originalText ? `[replied: ${a.originalText.slice(0, 60)}]` : "[reply]";
+    case "unavailable":
+      return "[unavailable message]";
+    case "away_message":
+      return "[away message]";
+    default:
+      return "[attachment]";
+  }
+}
+
+function formatDuration(ms: number | undefined): string {
+  if (!ms || ms <= 0) return "";
+  const total = Math.round(ms / 1000);
+  const m = Math.floor(total / 60);
+  const s = total % 60;
+  if (m === 0) return `${s}s`;
+  return `${m}m ${s}s`;
 }
