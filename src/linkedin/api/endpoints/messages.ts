@@ -461,7 +461,10 @@ function buildIncludedMap(included: Array<Record<string, unknown>> | undefined):
   return map;
 }
 
-function parseMessageRaw(
+// Exported for unit tests. Parses a raw message document (with its included-
+// lookup map) into the normalized MessageData shape. Not part of the public
+// API — callers should use fetchMessages.
+export function parseMessageRaw(
   urn: string,
   included: Map<string, Record<string, unknown>>
 ): MessageData | null {
@@ -528,7 +531,8 @@ function pickNumber(obj: Record<string, unknown>, key: string): number | null {
  * Shapes are derived from the decompiled LinkedIn web bundle
  * (`playground/linkedin/messenger.js`, schema validators ~line 13617).
  */
-function parseAttachments(
+// Exported for unit tests.
+export function parseAttachments(
   renderContent: unknown[] | undefined,
   included: Map<string, Record<string, unknown>>
 ): MessageAttachmentData[] {
@@ -543,9 +547,11 @@ function parseOneAttachment(
   if (!rc || typeof rc !== "object") return { type: "other", raw: rc };
   const wrapper = rc as Record<string, unknown>;
 
-  // LinkedIn's content unions are keyed either by the short leaf name
-  // ("file", "video") or by the full `com.linkedin.*` URI. Try both —
-  // plucking either gives us an inner object.
+  // LinkedIn's renderContent is a tagged union: the payload sets one key to
+  // an object, and the remaining alternatives to `null`. So we can't use
+  // `!== undefined` — that would match the null sentinels too. We need
+  // non-null, non-undefined. The order still matters for the URI-style
+  // fallback, but the null check makes the short-name loop robust.
   const tryKeys = [
     "file",
     "video",
@@ -557,19 +563,23 @@ function parseOneAttachment(
     "repliedMessageContent",
     "unavailableContent",
     "awayMessage",
+    "hostUrnData",
     "feedUpdate",
     "sharedFeedUpdate",
     "articleMedia",
     "messageAdRenderContent",
   ];
   for (const k of tryKeys) {
-    if (wrapper[k] !== undefined) return parseAttachmentByKind(k, wrapper[k], rc, included);
+    const v = wrapper[k];
+    if (v != null) return parseAttachmentByKind(k, v, rc, included);
   }
 
   // Fall back to the fully-qualified URI form, e.g.
   // `com.linkedin.messenger.FileAttachmentContent`. Strip the prefix and
   // lowercase the first letter so detection still works.
-  const longKey = Object.keys(wrapper).find((k) => k.startsWith("com.linkedin"));
+  const longKey = Object.keys(wrapper).find(
+    (k) => k.startsWith("com.linkedin") && wrapper[k] != null
+  );
   if (longKey) {
     const leaf = longKey.split(".").pop() ?? "";
     const normalized = leaf.charAt(0).toLowerCase() + leaf.slice(1);
@@ -705,6 +715,24 @@ function parseAttachmentByKind(
     };
   }
 
+  // Post shares delivered as a "host URN" reference — the message just
+  // points at a feed update (`urn:li:fsd_update:(urn:li:activity:...)`) and
+  // the client renders the linked post inline. No inline commentary, author
+  // or title is delivered; all we can usefully recover is a permalink.
+  if (lk === "hosturndata" || (lk.includes("host") && lk.includes("urn"))) {
+    const hostUrn = str(inner["hostUrn"]);
+    const hostType = str(inner["type"]);
+    const activityId = hostUrn ? extractActivityId(hostUrn) : null;
+    return {
+      type: "post_share",
+      url: activityId
+        ? `https://www.linkedin.com/feed/update/urn:li:activity:${activityId}/`
+        : undefined,
+      description: hostType ?? undefined,
+      raw,
+    };
+  }
+
   // Feed / post shares (and anything else with an embedded post-like shape).
   // LinkedIn uses several keys here depending on the share source; we
   // normalize them all to "post_share" so consumers render a unified card.
@@ -748,6 +776,16 @@ function buildSenderName(sender: Record<string, unknown>): string | undefined {
   const last = (member["lastName"] as { text?: string } | undefined)?.text ?? "";
   const full = `${first} ${last}`.trim();
   return full || str(sender["name"]);
+}
+
+/**
+ * Extract the numeric activity ID from a feed-update host URN.
+ * Example: `urn:li:fsd_update:(urn:li:activity:7450188970220638208,MESSAGING_RESHARE,...)`
+ * → `7450188970220638208`
+ */
+function extractActivityId(hostUrn: string): string | null {
+  const m = hostUrn.match(/urn:li:activity:(\d+)/);
+  return m ? (m[1] ?? null) : null;
 }
 
 function buildActor(actor: unknown): string | undefined {
