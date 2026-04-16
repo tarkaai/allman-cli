@@ -67,7 +67,7 @@ export async function loginCommand(options: LoginOptions): Promise<void> {
   // Extract profile ID from the URN
   let profileId = result.profileUrn?.replace("urn:li:fsd_profile:", "") ?? null;
 
-  // Extract profile slug from the URL (e.g. "dan-moore" from linkedin.com/in/dan-moore)
+  // Extract profile slug from the URL (e.g. "jamie-rivera" from linkedin.com/in/jamie-rivera)
   const profileSlug =
     result.profileUrl?.match(/linkedin\.com\/in\/([^/?]+)/)?.[1] ?? null;
 

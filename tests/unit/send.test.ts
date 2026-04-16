@@ -73,10 +73,10 @@ const CONV_BARE_ID = "2-ZGQ2ZmM4MGItMjRmYy00M2YzLTg0MTEtNjgxMzYwMzM0ZjM3XzEwMA==
 
 const accountRecord: AccountRecord = {
   urn: `urn:li:fsd_profile:${MY_PROFILE_ID}`,
-  profileSlug: "mockuser",
+  profileSlug: "test-user",
   name: "Test User",
   headline: null,
-  profileUrl: "https://www.linkedin.com/in/mockuser/",
+  profileUrl: "https://www.linkedin.com/in/test-user/",
   imageUrl: null,
   userType: "basic",
   networkSize: 500,
