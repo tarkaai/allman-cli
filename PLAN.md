@@ -33,8 +33,8 @@ A flat, file-based messaging store designed for AI agents. One directory per con
 │   ├── {profileId} -> {convId}            # symlink: contact profile ID → conversation
 │   └── alice-smith -> {convId}         # symlink: real LinkedIn slug → conversation
 │
-├── mockuser -> {myProfileId}             # symlink: account login slug
-└── dan-moore -> {myProfileId}             # symlink: account name slug
+├── your-login-slug -> {myProfileId}             # symlink: account login slug
+└── your-name-slug -> {myProfileId}             # symlink: account name slug
 ```
 
 **Gitignored inside .lilac:** `COOKIES.json`, `rate-state.json`, `INBOX.jsonl`, `listen.log`

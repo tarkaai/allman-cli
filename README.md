@@ -66,7 +66,7 @@ Authenticate with LinkedIn. Opens a headed Chromium browser. Complete the login 
 
 ```bash
 lilac login
-lilac login --account dan-moore
+lilac login --account your-account
 lilac login --proxy host:port
 lilac login --proxy host:port:username:password
 ```
@@ -88,7 +88,7 @@ Clear session cookies for an account. Does not delete message history.
 
 ```bash
 lilac logout
-lilac logout --account dan-moore
+lilac logout --account your-account
 ```
 
 ---
@@ -99,7 +99,7 @@ Show authentication status for one or all accounts.
 
 ```bash
 lilac status
-lilac status --account dan-moore
+lilac status --account your-account
 lilac status --json
 ```
 
@@ -113,7 +113,7 @@ Verify auth (login if needed), sync from the last sync date, then run `listen` i
 
 ```bash
 lilac start
-lilac start --account dan-moore
+lilac start --account your-account
 ```
 
 ---
@@ -151,7 +151,7 @@ Stream real-time LinkedIn events to **stdout** as NDJSON. All logs go to stderr.
 
 ```bash
 lilac listen
-lilac listen --account dan-moore
+lilac listen --account your-account
 
 # Pipe to a handler
 lilac listen | while read -r event; do
@@ -417,7 +417,7 @@ Each line in a `YYYY-MM.jsonl` file is one message:
   "urn": "urn:li:messagingMessage:...",
   "timestamp": 1704067200000,
   "fromUrn": "urn:li:fsd_profile:...",
-  "fromName": "Sarah Chen",
+  "fromName": "Jamie Rivera",
   "isFromMe": false,
   "body": "Hey, got a minute?",
   "reactions": [],
