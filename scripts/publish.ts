@@ -1,27 +1,28 @@
 #!/usr/bin/env bun
 /**
- * Build and publish lilac as platform-specific npm packages.
+ * Build and publish lilac as platform-specific npm packages via GitHub Packages.
  *
  * Package structure (follows esbuild/swc pattern):
  *
- *   @anthropic/lilac            — wrapper with optional-deps, JS shim picks correct platform
- *   @anthropic/lilac-darwin-arm64   — macOS ARM binary
- *   @anthropic/lilac-darwin-x64     — macOS Intel binary
- *   @anthropic/lilac-linux-x64      — Linux x64 binary
- *   @anthropic/lilac-linux-arm64    — Linux ARM binary
+ *   @tarkaai/lilac                  — wrapper with optional-deps, JS shim picks correct platform
+ *   @tarkaai/lilac-darwin-arm64     — macOS ARM binary
+ *   @tarkaai/lilac-darwin-x64       — macOS Intel binary
+ *   @tarkaai/lilac-linux-x64        — Linux x64 binary
+ *   @tarkaai/lilac-linux-arm64      — Linux ARM binary
+ *
+ * Published to GitHub Packages (npm.pkg.github.com). Access is controlled by
+ * GitHub org membership — anyone with read access to the repo can install.
  *
  * Usage:
  *   bun scripts/publish.ts build              — build binaries for all platforms
  *   bun scripts/publish.ts build --local      — build only for current platform
  *   bun scripts/publish.ts pack               — create .tgz files for testing
- *   bun scripts/publish.ts publish [--tag]     — publish to npm registry
+ *   bun scripts/publish.ts publish [--tag]     — publish to GitHub Packages
  *
- * Environment:
- *   LILAC_NPM_SCOPE    — npm scope (default: @anthropic)
- *   LILAC_REGISTRY     — npm registry URL (default: https://registry.npmjs.org)
- *
- * Note: Cross-compilation requires `bun build --compile --target` support.
- * For now, build on each target platform or use CI matrix builds.
+ * Prerequisites:
+ *   1. Authenticate to GitHub Packages:
+ *      echo "//npm.pkg.github.com/:_authToken=YOUR_GITHUB_PAT" >> ~/.npmrc
+ *   2. PAT needs `packages:write` scope (for publishing) or `packages:read` (for installing)
  */
 
 import { mkdirSync, writeFileSync, copyFileSync, existsSync, rmSync } from "fs";
@@ -33,7 +34,8 @@ const DIST = join(ROOT, "npm-dist");
 const PKG = JSON.parse(await Bun.file(join(ROOT, "package.json")).text());
 const VERSION = PKG.version;
 
-const SCOPE = process.env.LILAC_NPM_SCOPE ?? "@tarka";
+const SCOPE = "@tarkaai";
+const REGISTRY = "https://npm.pkg.github.com";
 
 interface Platform {
   os: string;
@@ -65,7 +67,6 @@ function buildPlatformPackage(platform: Platform): void {
   const pkgName = platformPkgName(platform);
   const dir = join(DIST, `lilac-${platform.os}-${platform.arch}`);
 
-  // Clean and create
   if (existsSync(dir)) rmSync(dir, { recursive: true });
   mkdirSync(dir, { recursive: true });
   mkdirSync(join(dir, "bin"), { recursive: true });
@@ -74,20 +75,11 @@ function buildPlatformPackage(platform: Platform): void {
     platform.os === process.platform && platform.arch === process.arch;
 
   if (isCurrent) {
-    // Export invite codes before build
-    try {
-      execSync("bun scripts/invite.ts export", { cwd: ROOT, stdio: "pipe" });
-    } catch {
-      // No invite codes = open access dev build
-    }
-
-    // Build for current platform
     execSync(
       `bun build --compile --minify src/index.ts --outfile ${join(dir, "bin", "lilac")} --external chromium-bidi --external electron`,
       { cwd: ROOT, stdio: "inherit" }
     );
   } else {
-    // Cross-compile using bun's --target flag
     try {
       execSync(
         `bun build --compile --minify --target=${platform.bunTarget} src/index.ts --outfile ${join(dir, "bin", "lilac")} --external chromium-bidi --external electron`,
@@ -101,7 +93,6 @@ function buildPlatformPackage(platform: Platform): void {
     }
   }
 
-  // Write package.json for the platform package
   writeFileSync(
     join(dir, "package.json"),
     JSON.stringify(
@@ -113,12 +104,21 @@ function buildPlatformPackage(platform: Platform): void {
         cpu: [platform.arch],
         bin: { lilac: "bin/lilac" },
         files: ["bin/lilac"],
-        publishConfig: { access: "restricted" },
+        repository: {
+          type: "git",
+          url: "https://github.com/tarkaai/lilac-cli.git",
+        },
+        publishConfig: {
+          registry: REGISTRY,
+        },
       },
       null,
       2
     ) + "\n"
   );
+
+  // Write .npmrc so publish targets GitHub Packages
+  writeFileSync(join(dir, ".npmrc"), `${SCOPE}:registry=${REGISTRY}\n`);
 
   console.log(`✓ Built ${pkgName}@${VERSION}`);
 }
@@ -138,7 +138,6 @@ function buildWrapperPackage(): void {
     optionalDependencies[platformPkgName(p)] = VERSION;
   }
 
-  // Write package.json
   writeFileSync(
     join(dir, "package.json"),
     JSON.stringify(
@@ -150,18 +149,23 @@ function buildWrapperPackage(): void {
         bin: { lilac: "bin/lilac" },
         files: ["bin/lilac"],
         optionalDependencies,
-        publishConfig: { access: "restricted" },
         license: "SEE LICENSE IN LICENSE",
         homepage: "https://lilac.tarka.ai",
         repository: {
           type: "git",
           url: "https://github.com/tarkaai/lilac-cli.git",
         },
+        publishConfig: {
+          registry: REGISTRY,
+        },
       },
       null,
       2
     ) + "\n"
   );
+
+  // Write .npmrc so publish targets GitHub Packages
+  writeFileSync(join(dir, ".npmrc"), `${SCOPE}:registry=${REGISTRY}\n`);
 
   // Write the JS shim that finds the right platform binary
   mkdirSync(join(dir, "bin"), { recursive: true });
@@ -171,7 +175,6 @@ function buildWrapperPackage(): void {
 "use strict";
 
 const { platform, arch } = process;
-const path = require("path");
 const { execFileSync } = require("child_process");
 
 const pkg = \`${SCOPE}/lilac-\${platform}-\${arch}\`;
@@ -199,7 +202,6 @@ try {
 `
   );
 
-  // Copy LICENSE
   if (existsSync(join(ROOT, "LICENSE"))) {
     copyFileSync(join(ROOT, "LICENSE"), join(dir, "LICENSE"));
   }
@@ -237,7 +239,6 @@ switch (command) {
   }
 
   case "pack": {
-    // Create .tgz files for local testing
     const packages = [
       "lilac",
       ...PLATFORMS.map((p) => `lilac-${p.os}-${p.arch}`),
@@ -258,7 +259,6 @@ switch (command) {
   case "publish": {
     const tag = args.find((a) => a.startsWith("--tag="))?.split("=")[1] ?? "latest";
     const packages = [
-      // Publish platform packages first, then wrapper
       ...PLATFORMS.map((p) => `lilac-${p.os}-${p.arch}`),
       "lilac",
     ];
@@ -269,7 +269,10 @@ switch (command) {
         continue;
       }
       try {
-        execSync(`npm publish --tag ${tag}`, { cwd: dir, stdio: "inherit" });
+        execSync(`npm publish --registry ${REGISTRY} --tag ${tag}`, {
+          cwd: dir,
+          stdio: "inherit",
+        });
         console.log(`✓ Published ${pkg}`);
       } catch {
         console.error(`✗ Failed to publish ${pkg}`);
@@ -279,14 +282,21 @@ switch (command) {
   }
 
   default:
-    console.log(`lilac npm publish tool
+    console.log(`lilac GitHub Packages publish tool
 
 Usage:
   bun scripts/publish.ts build [--local]     — build platform binary packages
   bun scripts/publish.ts pack                — create .tgz files for testing
-  bun scripts/publish.ts publish [--tag=TAG] — publish to npm registry
+  bun scripts/publish.ts publish [--tag=TAG] — publish to GitHub Packages
 
-Environment:
-  LILAC_NPM_SCOPE   — npm scope (default: @tarka)
+Setup (one-time):
+  1. Create a GitHub PAT with packages:write scope
+  2. echo "//npm.pkg.github.com/:_authToken=YOUR_PAT" >> ~/.npmrc
+
+For beta users (install only):
+  1. Create a GitHub PAT with packages:read scope
+  2. echo "//npm.pkg.github.com/:_authToken=YOUR_PAT" >> ~/.npmrc
+  3. echo "@tarkaai:registry=https://npm.pkg.github.com" >> ~/.npmrc
+  4. npx @tarkaai/lilac login
 `);
 }
