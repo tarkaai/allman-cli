@@ -50,6 +50,10 @@ export async function loginCommand(options: LoginOptions): Promise<void> {
     }
   }
 
+  output.info("This tool accesses your LinkedIn account on your behalf using your own");
+  output.info("credentials. You are responsible for compliance with LinkedIn's Terms of Service.");
+  output.info("All data stays on your machine — nothing is sent to Tarka or any third party.");
+  output.info("");
   output.info("Opening LinkedIn in browser — please complete login in the browser window.");
   output.info(`Waiting up to 5 minutes...`);
 

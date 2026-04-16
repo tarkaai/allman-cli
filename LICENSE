@@ -1,0 +1,31 @@
+Copyright (c) 2025-present Tarka Labs, Inc. All rights reserved.
+
+LILAC SOFTWARE LICENSE AGREEMENT
+
+This software and associated documentation files (the "Software") are the
+proprietary property of Tarka Labs, Inc. ("Tarka").
+
+Permission is hereby granted to individuals who have received an authorized
+copy of this Software to use it solely for personal, non-commercial purposes,
+subject to the following conditions:
+
+1. RESTRICTIONS. You may not:
+   a. Copy, modify, merge, publish, distribute, sublicense, or sell copies of
+      the Software;
+   b. Reverse engineer, decompile, or disassemble the Software;
+   c. Use the Software to build a competing product or service;
+   d. Remove or alter any proprietary notices in the Software.
+
+2. USER RESPONSIBILITY. The Software accesses third-party services (including
+   LinkedIn) using credentials you provide. You are solely responsible for
+   your compliance with the terms of service of any third-party platform you
+   access through the Software. Tarka does not access, store, or transmit your
+   credentials or data to any server — all data remains on your local machine.
+
+3. NO WARRANTY. THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND,
+   EXPRESS OR IMPLIED. IN NO EVENT SHALL TARKA BE LIABLE FOR ANY CLAIM, DAMAGES,
+   OR OTHER LIABILITY ARISING FROM THE USE OF THE SOFTWARE.
+
+4. TERMINATION. This license is effective until terminated. Tarka may terminate
+   this license at any time. Upon termination, you must destroy all copies of
+   the Software in your possession.
