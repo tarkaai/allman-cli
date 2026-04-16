@@ -149,6 +149,7 @@ program
     "max conversations (inbox sync) or messages (single-conv sync)"
   )
   .option("--json", "output as JSON")
+  .option("--resync", "full re-sync: upsert all fetched messages (fixes stale reactions, parser changes)")
   .action(async (conversation: string | undefined, opts, cmd) => {
     const globalOpts = cmd.parent?.opts() ?? {};
     await syncCommand({
@@ -160,6 +161,7 @@ program
       to: opts.to,
       limit: opts.limit ? parseInt(opts.limit, 10) : undefined,
       json: opts.json ?? globalOpts.json,
+      resync: opts.resync,
     });
   });
 
