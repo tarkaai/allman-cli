@@ -50,6 +50,13 @@ export interface SyncOptions {
    */
   limit?: number;
   json?: boolean;
+  /**
+   * Force a full re-sync: bypass the knownNewestAt dedup so every fetched
+   * message is passed to appendMessages for upsert. This propagates parser
+   * fixes, reaction updates, etc. to already-stored messages. Expensive —
+   * use sparingly (the TUI's Shift-R "full resync" triggers this).
+   */
+  resync?: boolean;
 }
 
 /** Backoff state for rate-limited profile slug lookups. */
@@ -307,7 +314,8 @@ export async function syncCommand(options: SyncOptions): Promise<void> {
       }
 
       // Fetch messages for this conversation. Inbox sync uses incremental
-      // dedup (knownNewestAt skip), single-conv sync below uses forceResync.
+      // dedup (knownNewestAt skip) unless --resync is set, which forces
+      // a full upsert pass. Single-conv sync always uses forceResync.
       const messagesWritten = await syncConversationMessages(
         apiClient,
         conversations,
@@ -317,7 +325,7 @@ export async function syncCommand(options: SyncOptions): Promise<void> {
         fromMs,
         toMs,
         DEFAULT_MESSAGES_PER_CONVERSATION,
-        false,
+        options.resync === true,
         downloadLimiter,
         options.json === true,
         slug
@@ -507,12 +515,10 @@ async function syncConversationMessages(
         skipped++;
         continue;
       }
-      // Inbox-sync dedup: messages we already have are still collected for
-      // upsert (so reaction updates / parser fixes propagate), but they
-      // don't count toward `fetched` — that way pagination stops once we
-      // cross into already-known territory.
+      // Inbox-sync dedup: skip messages we already know about. Backfill
+      // (forceResync) bypasses this so it can fill in older history and
+      // upsert stale data (reactions, parser fixes, etc.).
       if (knownNewestAt !== null && msg.timestamp <= knownNewestAt) {
-        allMessages.push(msg);
         skipped++;
         continue;
       }
