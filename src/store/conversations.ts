@@ -11,7 +11,7 @@
  * The convId is the canonical key (directory name).
  */
 
-import { readFile, writeFile, mkdir, readdir, appendFile } from "fs/promises";
+import { readFile, writeFile, mkdir, readdir } from "fs/promises";
 import { createReadStream as fsCreateReadStream } from "fs";
 import { createInterface } from "readline";
 import { join } from "path";
@@ -178,12 +178,13 @@ export class ConversationStore {
   }
 
   /**
-   * Append messages to the JSONL store. Deduplicates by URN within each month file.
-   * Returns the number of new messages actually written.
+   * Upsert messages into the JSONL store. New messages are appended;
+   * existing messages (matched by URN) are replaced with fresh data so
+   * re-syncing picks up reaction changes, parser fixes, etc.
+   * Returns the number of new messages written (updates are not counted).
    */
   async appendMessages(convId: string, messages: StoredMessage[]): Promise<number> {
     if (messages.length === 0) return 0;
-
 
     const byFile = new Map<string, StoredMessage[]>();
     for (const msg of messages) {
@@ -199,24 +200,31 @@ export class ConversationStore {
       const work = prev.then(async () => {
         await mkdir(join(file, ".."), { recursive: true });
 
-        const existingMsgIds = new Set<string>();
+        // Read existing lines into an ordered map keyed by message ID.
+        const existing = new Map<string, string>();
         try {
           const content = await readFile(file, "utf8");
           for (const line of content.split("\n")) {
             if (!line.trim()) continue;
             try {
               const m = JSON.parse(line) as StoredMessage;
-              if (m.urn) existingMsgIds.add(extractMsgId(m.urn));
+              if (m.urn) existing.set(extractMsgId(m.urn), line);
             } catch { /* skip malformed */ }
           }
         } catch { /* file doesn't exist yet */ }
 
-        const newMsgs = msgs.filter((m) => !existingMsgIds.has(extractMsgId(m.urn)));
-        if (newMsgs.length > 0) {
-          const lines = newMsgs.map((m) => JSON.stringify(m)).join("\n") + "\n";
-          await appendFile(file, lines, "utf8");
-          totalAdded += newMsgs.length;
+        const beforeSize = existing.size;
+
+        // Upsert: replace existing lines or add new ones.
+        for (const m of msgs) {
+          existing.set(extractMsgId(m.urn), JSON.stringify(m));
         }
+
+        totalAdded += existing.size - beforeSize;
+
+        // Write the merged file.
+        const out = [...existing.values()].join("\n") + "\n";
+        await writeFile(file, out, "utf8");
       });
       this.writeLocks.set(file, work);
       await work;

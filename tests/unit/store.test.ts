@@ -316,6 +316,42 @@ describe("ConversationStore", () => {
     expect(all.length).toBe(1);
   });
 
+  it("upserts existing messages with fresh data (reactions, attachments)", async () => {
+    const conversations = store.forAccount(MY_PROFILE_ID);
+    await conversations.upsert(CONV_ID, conv);
+
+    const msg: StoredMessage = {
+      urn: "urn:li:msg_message:MSG_UPSERT",
+      timestamp: new Date("2026-03-10T10:00:00Z").getTime(),
+      fromUrn: `urn:li:fsd_profile:${CONTACT_PROFILE_ID}`,
+      fromName: "Sarah Chen",
+      isFromMe: false,
+      body: "Hello!",
+      reactions: [],
+      attachments: [{ type: "file", name: "resume.pdf" }],
+      originToken: null,
+    };
+
+    // First write
+    const count1 = await conversations.appendMessages(CONV_ID, [msg]);
+    expect(count1).toBe(1);
+
+    // Re-sync with updated reactions and corrected attachment type
+    const updated: StoredMessage = {
+      ...msg,
+      reactions: [{ emoji: "👍", count: 1, hasUserReacted: true }],
+      attachments: [{ type: "post_share", url: "https://linkedin.com/feed/update/..." }],
+    };
+    const count2 = await conversations.appendMessages(CONV_ID, [updated]);
+    expect(count2).toBe(0); // not a new message
+
+    // But the stored data should reflect the update
+    const all = await conversations.readMessages(CONV_ID);
+    expect(all.length).toBe(1);
+    expect(all[0].reactions).toEqual([{ emoji: "👍", count: 1, hasUserReacted: true }]);
+    expect(all[0].attachments[0].type).toBe("post_share");
+  });
+
   it("readMessages returns messages within time range", async () => {
     const conversations = store.forAccount(MY_PROFILE_ID);
     await conversations.upsert(CONV_ID, conv);
