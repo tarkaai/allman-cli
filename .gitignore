@@ -1,10 +1,6 @@
 # local bot runs
 .lilac
 
-# invite codes (private — keep a backup)
-scripts/invite-codes.json
-src/utils/invite-codes.json
-
 
 # dependencies (bun install)
 node_modules

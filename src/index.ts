@@ -13,7 +13,6 @@
 
 import { Command } from "commander";
 import { setJsonMode, setDebugMode } from "./utils/output.js";
-import { promptInviteCode } from "./utils/invite.js";
 import { loginCommand } from "./commands/login.js";
 import { logoutCommand } from "./commands/logout.js";
 import { statusCommand } from "./commands/status.js";
@@ -43,15 +42,10 @@ program
   .option("-s, --store <path>", "store directory ($LILAC_STORE)")
   .option("--json", "output as JSON")
   .option("--debug", "enable debug output")
-  .hook("preAction", async (thisCommand) => {
+  .hook("preAction", (thisCommand) => {
     const opts = thisCommand.opts();
     if (opts.json) setJsonMode(true);
     if (opts.debug) setDebugMode(true);
-
-    // Invite code gate — skip for help/version (handled by commander)
-    const storePath = opts.store ?? process.env["LILAC_STORE"];
-    const ok = await promptInviteCode(storePath);
-    if (!ok) process.exit(1);
   });
 
 // ---------------------------------------------------------------------------
