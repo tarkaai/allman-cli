@@ -8,7 +8,6 @@
   },
   "scripts": {
     "dev": "bun run src/index.ts",
-    "prebuild": "bun scripts/invite.ts export",
     "build": "bun build --compile --minify src/index.ts --outfile dist/lilac --external chromium-bidi --external electron",
     "test": "vitest run",
     "test:watch": "vitest",
