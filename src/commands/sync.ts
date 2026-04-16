@@ -507,9 +507,12 @@ async function syncConversationMessages(
         skipped++;
         continue;
       }
-      // Inbox-sync dedup: skip messages we already know about. Backfill
-      // (forceResync) bypasses this so it can fill in older history.
+      // Inbox-sync dedup: messages we already have are still collected for
+      // upsert (so reaction updates / parser fixes propagate), but they
+      // don't count toward `fetched` — that way pagination stops once we
+      // cross into already-known territory.
       if (knownNewestAt !== null && msg.timestamp <= knownNewestAt) {
+        allMessages.push(msg);
         skipped++;
         continue;
       }
