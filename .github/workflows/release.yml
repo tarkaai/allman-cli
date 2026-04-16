@@ -1,0 +1,68 @@
+name: release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        target:
+          - { arch: x64,   bun: bun-linux-x64 }
+          - { arch: arm64, bun: bun-linux-arm64 }
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+
+      - run: bun install --frozen-lockfile
+
+      - name: Build binary
+        run: |
+          mkdir -p dist
+          bun build --compile --minify \
+            --target=${{ matrix.target.bun }} \
+            src/index.ts \
+            --outfile dist/lilac-linux-${{ matrix.target.arch }} \
+            --external chromium-bidi --external electron
+
+      - name: Checksum
+        run: |
+          cd dist
+          sha256sum lilac-linux-${{ matrix.target.arch }} > lilac-linux-${{ matrix.target.arch }}.sha256
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: lilac-linux-${{ matrix.target.arch }}
+          path: |
+            dist/lilac-linux-${{ matrix.target.arch }}
+            dist/lilac-linux-${{ matrix.target.arch }}.sha256
+          if-no-files-found: error
+
+  release:
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+
+      - name: Create release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release create "$GITHUB_REF_NAME" \
+            --repo "$GITHUB_REPOSITORY" \
+            --title "$GITHUB_REF_NAME" \
+            --generate-notes \
+            dist/*

@@ -8,6 +8,23 @@ Messages are stored locally as JSONL files in a git repository. All reads come f
 
 ## Installation
 
+### From GitHub Releases (Linux, x64 and arm64)
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/tarkaai/lilac-cli/main/install.sh | bash
+```
+
+Pin a version or change the install prefix:
+
+```bash
+curl -fsSL .../install.sh | VERSION=v0.1.0 bash
+curl -fsSL .../install.sh | PREFIX=$HOME/.local bash
+```
+
+Or grab a binary directly from the [releases page](https://github.com/tarkaai/lilac-cli/releases).
+
+### From source
+
 Requires [Bun](https://bun.sh) (latest, via asdf or direct install).
 
 ```bash
