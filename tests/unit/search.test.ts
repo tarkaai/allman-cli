@@ -54,7 +54,7 @@ function mockStore(records: ConversationRecord[]): ConversationStore {
 
 const alice = makeRecord({
   convId: "2-alice",
-  profileId: "ACoAABjennifer",
+  profileId: "ACoAABalice",
   slug: "alice-smith",
   firstName: "Alice",
   lastName: "Smith",
@@ -100,7 +100,7 @@ describe("search", () => {
   });
 
   it("95: exact name match (case-insensitive)", async () => {
-    const results = await search("alice smith", store);
+    const results = await search("alice moore", store);
     expect(results[0]?.confidence).toBe(95);
     expect(results[0]?.convId).toBe("2-alice");
   });
@@ -161,7 +161,7 @@ describe("search", () => {
     expect(results[0]).toEqual({
       name: "Alice Smith",
       slug: "alice-smith",
-      profileId: "ACoAABjennifer",
+      profileId: "ACoAABalice",
       convId: "2-alice",
       confidence: 100,
     });
