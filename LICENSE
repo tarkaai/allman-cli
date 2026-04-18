@@ -1,31 +1,21 @@
-Copyright (c) 2025-present Tarka Ventures, Inc. All rights reserved.
+MIT License
 
-ALLMAN SOFTWARE LICENSE AGREEMENT
+Copyright (c) 2026 Tarka Ventures, Inc.
 
-This software and associated documentation files (the "Software") are the
-proprietary property of Tarka Ventures, Inc. ("Tarka").
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
 
-Permission is hereby granted to individuals who have received an authorized
-copy of this Software to use it solely for personal, non-commercial purposes,
-subject to the following conditions:
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
 
-1. RESTRICTIONS. You may not:
-   a. Copy, modify, merge, publish, distribute, sublicense, or sell copies of
-      the Software;
-   b. Reverse engineer, decompile, or disassemble the Software;
-   c. Use the Software to build a competing product or service;
-   d. Remove or alter any proprietary notices in the Software.
-
-2. USER RESPONSIBILITY. The Software accesses third-party services (including
-   LinkedIn) using credentials you provide. You are solely responsible for
-   your compliance with the terms of service of any third-party platform you
-   access through the Software. Tarka does not access, store, or transmit your
-   credentials or data to any server — all data remains on your local machine.
-
-3. NO WARRANTY. THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND,
-   EXPRESS OR IMPLIED. IN NO EVENT SHALL TARKA BE LIABLE FOR ANY CLAIM, DAMAGES,
-   OR OTHER LIABILITY ARISING FROM THE USE OF THE SOFTWARE.
-
-4. TERMINATION. This license is effective until terminated. Tarka may terminate
-   this license at any time. Upon termination, you must destroy all copies of
-   the Software in your possession.
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
