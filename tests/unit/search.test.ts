@@ -100,13 +100,13 @@ describe("search", () => {
   });
 
   it("95: exact name match (case-insensitive)", async () => {
-    const results = await search("alice moore", store);
+    const results = await search("alice smith", store);
     expect(results[0]?.confidence).toBe(95);
     expect(results[0]?.convId).toBe("2-alice");
   });
 
   it("80: name starts with query", async () => {
-    const results = await search("jennif", store);
+    const results = await search("alic", store);
     expect(results[0]?.confidence).toBe(80);
     expect(results[0]?.convId).toBe("2-alice");
   });
@@ -118,19 +118,19 @@ describe("search", () => {
   });
 
   it("60: name contains query substring", async () => {
-    const results = await search("nnifer", store);
+    const results = await search("lice", store);
     expect(results[0]?.confidence).toBe(60);
     expect(results[0]?.convId).toBe("2-alice");
   });
 
   it("60: slug contains query substring", async () => {
-    const results = await search("smith", store);
+    const results = await search("jones", store);
     expect(results[0]?.confidence).toBe(60);
-    expect(results[0]?.convId).toBe("2-john");
+    expect(results[0]?.convId).toBe("2-jenny");
   });
 
   it("40: any query word in name", async () => {
-    const results = await search("moore xyz", store);
+    const results = await search("alice xyz", store);
     expect(results[0]?.confidence).toBe(40);
     expect(results[0]?.convId).toBe("2-alice");
   });
@@ -141,12 +141,12 @@ describe("search", () => {
   });
 
   it("respects limit", async () => {
-    const results = await search("jen", store, { limit: 1 });
+    const results = await search("smi", store, { limit: 1 });
     expect(results).toHaveLength(1);
   });
 
   it("sorts by confidence descending", async () => {
-    const results = await search("jen", store);
+    const results = await search("smi", store);
     expect(results.length).toBeGreaterThan(1);
     for (let i = 1; i < results.length; i++) {
       const prev = results[i - 1];
