@@ -7,9 +7,9 @@
 
 import type { Store } from "../../store/index.js";
 import type { AccountRecord } from "../../store/types.js";
+import { buildRateLimiter } from "../../utils/rate-limiter.js";
 import { buildApiClient, type LinkedInApiClient } from "./client.js";
 import { loadCookieJar, serializeCookieJar } from "./cookies.js";
-import { buildRateLimiter } from "../../utils/rate-limiter.js";
 
 export interface SessionResult {
   apiClient: LinkedInApiClient;
@@ -24,19 +24,16 @@ export interface SessionResult {
  *
  * Throws if account is not authenticated or has no URN.
  */
-export async function loadSession(
-  store: Store,
-  accountOption?: string
-): Promise<SessionResult> {
+export async function loadSession(store: Store, accountOption?: string): Promise<SessionResult> {
   const profileId = await store.accounts.getDefault(accountOption);
   const accountRecord = await store.accounts.read(profileId);
 
   if (!accountRecord || accountRecord.status !== "authenticated") {
-    throw new Error("Account not authenticated. Run `lilac login`.");
+    throw new Error("Account not authenticated. Run `allman login`.");
   }
 
   if (!accountRecord.urn) {
-    throw new Error("Account has no profile URN. Re-run `lilac login`.");
+    throw new Error("Account has no profile URN. Re-run `allman login`.");
   }
 
   const accountConfig = await store.accounts.readConfig(profileId);

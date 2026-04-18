@@ -8,11 +8,18 @@
  *   {root}/{slug} -> {profileId}       — symlink: friendly name → profile ID
  */
 
-import { readFile, writeFile, readdir } from "fs/promises";
-import { join } from "path";
+import { readdir, readFile, writeFile } from "node:fs/promises";
+import { join } from "node:path";
 import { ensureDir, forceAlias, resolveAlias } from "./alias.js";
 import type { StoreGit } from "./git.js";
-import type { AccountAuth, AccountCookies, AccountRecord, AccountConfig, AccountRateState, AccountInboxState } from "./types.js";
+import type {
+  AccountAuth,
+  AccountConfig,
+  AccountCookies,
+  AccountInboxState,
+  AccountRateState,
+  AccountRecord,
+} from "./types.js";
 
 const AUTH_FILE = "AUTH.json";
 const COOKIES_FILE = "COOKIES.json";
@@ -70,7 +77,9 @@ export class AccountStore {
       try {
         await readFile(join(this.dir(aliasOrId), AUTH_FILE), "utf8");
         return aliasOrId;
-      } catch { /* not found */ }
+      } catch {
+        /* not found */
+      }
     }
     // Try symlink
     return resolveAlias(this.root, aliasOrId);
@@ -119,14 +128,22 @@ export class AccountStore {
   /** Write AUTH.json (profile info, status). */
   async writeAuth(profileId: string, auth: AccountAuth, commitMessage?: string): Promise<void> {
     await ensureDir(this.root, profileId);
-    await writeFile(join(this.dir(profileId), AUTH_FILE), JSON.stringify(auth, null, 2) + "\n", "utf8");
+    await writeFile(
+      join(this.dir(profileId), AUTH_FILE),
+      `${JSON.stringify(auth, null, 2)}\n`,
+      "utf8"
+    );
     this.git.scheduleCommit(commitMessage ?? `account: update ${profileId.slice(0, 12)}`);
   }
 
   /** Write COOKIES.json (cookie jar). No git commit — cookies are gitignored. */
   async writeCookies(profileId: string, cookies: AccountCookies): Promise<void> {
     await ensureDir(this.root, profileId);
-    await writeFile(join(this.dir(profileId), COOKIES_FILE), JSON.stringify(cookies, null, 2) + "\n", "utf8");
+    await writeFile(
+      join(this.dir(profileId), COOKIES_FILE),
+      `${JSON.stringify(cookies, null, 2)}\n`,
+      "utf8"
+    );
   }
 
   /** Write both AUTH + COOKIES (convenience for login). */
@@ -159,7 +176,11 @@ export class AccountStore {
 
   async writeConfig(profileId: string, config: AccountConfig): Promise<void> {
     await ensureDir(this.root, profileId);
-    await writeFile(join(this.dir(profileId), CONFIG_FILE), JSON.stringify(config, null, 2) + "\n", "utf8");
+    await writeFile(
+      join(this.dir(profileId), CONFIG_FILE),
+      `${JSON.stringify(config, null, 2)}\n`,
+      "utf8"
+    );
     this.git.scheduleCommit(`account: update config for ${profileId.slice(0, 12)}`);
   }
 
@@ -174,7 +195,11 @@ export class AccountStore {
 
   async writeRateState(profileId: string, state: AccountRateState): Promise<void> {
     await ensureDir(this.root, profileId);
-    await writeFile(join(this.dir(profileId), RATE_STATE_FILE), JSON.stringify(state) + "\n", "utf8");
+    await writeFile(
+      join(this.dir(profileId), RATE_STATE_FILE),
+      `${JSON.stringify(state)}\n`,
+      "utf8"
+    );
   }
 
   async readInboxState(profileId: string): Promise<AccountInboxState | null> {
@@ -188,33 +213,36 @@ export class AccountStore {
 
   async writeInboxState(profileId: string, state: AccountInboxState): Promise<void> {
     await ensureDir(this.root, profileId);
-    await writeFile(join(this.dir(profileId), INBOX_STATE_FILE), JSON.stringify(state) + "\n", "utf8");
+    await writeFile(
+      join(this.dir(profileId), INBOX_STATE_FILE),
+      `${JSON.stringify(state)}\n`,
+      "utf8"
+    );
   }
 
   /**
    * Resolve the account to use. Returns the profile ID (not a slug/alias).
    */
   async getDefault(aliasOrId?: string): Promise<string> {
-    const input = aliasOrId ?? process.env["LILAC_ACCOUNT"];
+    const input = aliasOrId ?? process.env.ALLMAN_ACCOUNT;
 
     if (input) {
       const resolved = await this.resolveId(input);
       if (!resolved) {
-        throw new Error(
-          `Account "${input}" not found. Run \`lilac login\` to authenticate.`
-        );
+        throw new Error(`Account "${input}" not found. Run \`allman login\` to authenticate.`);
       }
       return resolved;
     }
 
     const accounts = await this.list();
-    if (accounts.length === 0) {
-      throw new Error("No accounts found. Run `lilac login` to authenticate.");
+    const [first] = accounts;
+    if (!first) {
+      throw new Error("No accounts found. Run `allman login` to authenticate.");
     }
-    if (accounts.length === 1) return accounts[0]!;
+    if (accounts.length === 1) return first;
 
     throw new Error(
-      `Multiple accounts found. Specify one with --account or LILAC_ACCOUNT.\nAccounts: ${accounts.join(", ")}`
+      `Multiple accounts found. Specify one with --account or ALLMAN_ACCOUNT.\nAccounts: ${accounts.join(", ")}`
     );
   }
 }

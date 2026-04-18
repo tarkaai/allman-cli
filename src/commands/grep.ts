@@ -1,15 +1,15 @@
 /**
- * lilac grep — full-text search across all stored messages.
+ * allman grep — full-text search across all stored messages.
  */
 
-import { createReadStream } from "fs";
-import { readdir } from "fs/promises";
-import { join } from "path";
-import { createInterface } from "readline";
-import { Store, resolveStorePath } from "../store/index.js";
+import { createReadStream } from "node:fs";
+import { readdir } from "node:fs/promises";
+import { join } from "node:path";
+import { createInterface } from "node:readline";
+import { resolveStorePath, Store } from "../store/index.js";
+import type { StoredMessage } from "../store/types.js";
 import { printData, relativeTime } from "../utils/output.js";
 import { parseSince } from "../utils/time.js";
-import type { StoredMessage } from "../store/types.js";
 
 export interface GrepOptions {
   account?: string;
@@ -91,10 +91,11 @@ export async function grepCommand(query: string, options: GrepOptions): Promise<
 
   for (const { name, message: m } of matches) {
     const dir = m.isFromMe ? "→" : "←";
-    const sender = m.isFromMe ? "You" : (m.fromName || name);
+    const sender = m.isFromMe ? "You" : m.fromName || name;
     const time = relativeTime(m.timestamp);
-    const body = m.body.length > 200 ? m.body.slice(0, 200) + "…" : m.body;
-    process.stdout.write(`${name.padEnd(25)} ${dir} ${sender.padEnd(18)} ${time.padEnd(12)} ${body}\n`);
+    const body = m.body.length > 200 ? `${m.body.slice(0, 200)}…` : m.body;
+    process.stdout.write(
+      `${name.padEnd(25)} ${dir} ${sender.padEnd(18)} ${time.padEnd(12)} ${body}\n`
+    );
   }
 }
-

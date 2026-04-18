@@ -8,7 +8,7 @@
  * Unreact uses action=unreactWithEmoji with the same body shape.
  *
  * Run:
- *   LILAC_STORE=$HOME/.lilac \
+ *   ALLMAN_STORE=$HOME/.allman \
  *     bun run scripts/test-react.ts <messageUrn> <emoji> [--unreact]
  */
 

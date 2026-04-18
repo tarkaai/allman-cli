@@ -1,13 +1,13 @@
 /**
- * Shared symlink utility for the lilac store.
+ * Shared symlink utility for the allman store.
  *
  * All code paths that create symlinks (sync, listen, login) go through here.
  * Ensures consistency: if a symlink already points to the correct target, no-op.
  * If it points elsewhere, that's a hard error (mapping conflict).
  */
 
-import { mkdir, symlink, readlink, unlink, access } from "fs/promises";
-import { join } from "path";
+import { access, mkdir, readlink, symlink, unlink } from "node:fs/promises";
+import { join } from "node:path";
 
 /**
  * Ensure a directory exists for `id` inside `parentDir`.
@@ -26,11 +26,7 @@ export async function ensureDir(parentDir: string, id: string): Promise<string> 
  * - If alias points to different target → throws (mapping conflict)
  * - If alias doesn't exist → creates it
  */
-export async function ensureAlias(
-  parentDir: string,
-  alias: string,
-  target: string
-): Promise<void> {
+export async function ensureAlias(parentDir: string, alias: string, target: string): Promise<void> {
   const linkPath = join(parentDir, alias);
 
   try {
@@ -56,11 +52,7 @@ export async function ensureAlias(
  * Create or update a symlink, overwriting if the target has changed.
  * Use this only when the target is expected to change (e.g., slug updated after resolution).
  */
-export async function forceAlias(
-  parentDir: string,
-  alias: string,
-  target: string
-): Promise<void> {
+export async function forceAlias(parentDir: string, alias: string, target: string): Promise<void> {
   const linkPath = join(parentDir, alias);
   try {
     const existing = await readlink(linkPath);
@@ -76,10 +68,7 @@ export async function forceAlias(
  * Resolve an alias (symlink) or direct ID to the actual target.
  * Returns null if the alias doesn't exist and isn't a direct directory.
  */
-export async function resolveAlias(
-  parentDir: string,
-  aliasOrId: string
-): Promise<string | null> {
+export async function resolveAlias(parentDir: string, aliasOrId: string): Promise<string | null> {
   const path = join(parentDir, aliasOrId);
   try {
     // Try symlink first

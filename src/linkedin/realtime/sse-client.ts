@@ -4,7 +4,7 @@
  * Connects to https://www.linkedin.com/realtime/connect?rc=1
  * and streams events as NDJSON to the caller via an async generator.
  *
- * Event topics handled (from mautrix constants.go + lilac/api stream-handler.ts):
+ * Event topics handled (from mautrix constants.go + allman/api stream-handler.ts):
  *   messagesTopic           — new message
  *   typingIndicatorsTopic   — typing indicator
  *   readReceiptsTopic / messageSeenReceiptsTopic — read receipt
@@ -16,15 +16,15 @@
  * Reconnection: exponential backoff 1s → 2s → 4s → 8s … max 60s.
  * Sends a heartbeat POST every 60s to keep the connection alive.
  *
- * Source: lilac/api/src/services/realtime/stream-handler.ts
+ * Source: allman/api/src/services/realtime/stream-handler.ts
  *         monorepo/lib/services/.../linkedin-api-services.ts
  */
 
+import { createInterface } from "node:readline";
 import axios from "axios";
-import { createInterface } from "readline";
+import * as output from "../../utils/output.js";
 import type { LinkedInApiClient } from "../api/client.js";
 import { buildCookieHeader, getCsrfToken } from "../api/cookies.js";
-import * as output from "../../utils/output.js";
 
 const SSE_URL = "https://www.linkedin.com/realtime/connect";
 const HEARTBEAT_URL =
@@ -105,7 +105,7 @@ export class SseClient {
 
     while (maxAttempts === 0 || attempts < maxAttempts) {
       this.abortController = new AbortController();
-      const backoffMs = Math.min(initialBackoff * Math.pow(2, attempts), 60_000);
+      const backoffMs = Math.min(initialBackoff * 2 ** attempts, 60_000);
 
       if (attempts > 0) {
         output.debug(`SSE reconnecting in ${backoffMs}ms (attempt ${attempts + 1})`);
@@ -182,9 +182,7 @@ export class SseClient {
     });
 
     if (response.status === 401 || response.status === 302) {
-      throw new Error(
-        "LinkedIn session expired. Run `lilac login` to re-authenticate."
-      );
+      throw new Error("LinkedIn session expired. Run `allman login` to re-authenticate.");
     }
 
     output.debug(`SSE: connected (HTTP ${response.status})`);
@@ -217,9 +215,11 @@ export class SseClient {
     const d = data as Record<string, unknown>;
 
     // Connection established: {"com.linkedin.realtimefrontend.ClientConnection": {id, personalTopics, ...}}
-    const clientConn = d["com.linkedin.realtimefrontend.ClientConnection"] as Record<string, unknown> | undefined;
+    const clientConn = d["com.linkedin.realtimefrontend.ClientConnection"] as
+      | Record<string, unknown>
+      | undefined;
     if (clientConn) {
-      const id = typeof clientConn["id"] === "string" ? clientConn["id"] : null;
+      const id = typeof clientConn.id === "string" ? clientConn.id : null;
       if (id) {
         this.connectionId = id;
         this.startHeartbeat(id);
@@ -233,19 +233,21 @@ export class SseClient {
     }
 
     // Decorated event: {"com.linkedin.realtimefrontend.DecoratedEvent": {topic, payload}}
-    const decorated = d["com.linkedin.realtimefrontend.DecoratedEvent"] as Record<string, unknown> | undefined;
+    const decorated = d["com.linkedin.realtimefrontend.DecoratedEvent"] as
+      | Record<string, unknown>
+      | undefined;
     if (!decorated) {
       output.debug(`SSE: unknown event shape, top keys: ${Object.keys(d).join(", ")}`);
       return { type: "raw", raw: data };
     }
 
-    const topic = typeof decorated["topic"] === "string" ? decorated["topic"] : null;
+    const topic = typeof decorated.topic === "string" ? decorated.topic : null;
     if (!topic) return null;
 
     const topicMatch = topic.match(TOPIC_REGEX);
     const topicName = topicMatch ? topicMatch[1] : null;
 
-    const payload = (decorated["payload"] ?? decorated) as Record<string, unknown>;
+    const payload = (decorated.payload ?? decorated) as Record<string, unknown>;
 
     if (topicName === "messagesTopic") {
       return this.parseMessageEvent(payload);
@@ -255,10 +257,7 @@ export class SseClient {
       return this.parseTypingEvent(payload);
     }
 
-    if (
-      topicName === "readReceiptsTopic" ||
-      topicName === "messageSeenReceiptsTopic"
-    ) {
+    if (topicName === "readReceiptsTopic" || topicName === "messageSeenReceiptsTopic") {
       return this.parseReadReceiptEvent(payload);
     }
 
@@ -273,9 +272,9 @@ export class SseClient {
 
   private parseMessageEvent(payload: Record<string, unknown>): SseEvent | null {
     // Navigate the nested event content structure
-    const event = (payload["event"] as Record<string, unknown>) ?? payload;
+    const event = (payload.event as Record<string, unknown>) ?? payload;
     const eventContent =
-      (event["eventContent"] as Record<string, unknown>) ??
+      (event.eventContent as Record<string, unknown>) ??
       (event["com.linkedin.voyager.messaging.event.MessageEvent"] as Record<string, unknown>);
 
     if (!eventContent) {
@@ -285,38 +284,35 @@ export class SseClient {
 
     // Body can be nested under the MessageEvent type key, or directly on eventContent
     const messageEvent =
-      (eventContent["com.linkedin.voyager.messaging.event.MessageEvent"] as Record<string, unknown> | undefined) ??
-      eventContent;
+      (eventContent["com.linkedin.voyager.messaging.event.MessageEvent"] as
+        | Record<string, unknown>
+        | undefined) ?? eventContent;
 
-    const body =
-      (
-        (messageEvent["attributedBody"] as Record<string, unknown> | undefined) ??
-        (messageEvent["body"] as Record<string, unknown> | undefined)
-      )?.["text"] as string | undefined;
+    const body = (
+      (messageEvent.attributedBody as Record<string, unknown> | undefined) ??
+      (messageEvent.body as Record<string, unknown> | undefined)
+    )?.text as string | undefined;
 
-    const fromMember =
-      (event["from"] as Record<string, unknown> | undefined)?.[
-        "com.linkedin.voyager.messaging.MessagingMember"
-      ] as Record<string, unknown> | undefined;
+    const fromMember = (event.from as Record<string, unknown> | undefined)?.[
+      "com.linkedin.voyager.messaging.MessagingMember"
+    ] as Record<string, unknown> | undefined;
 
     // fromUrn: normalize fs_miniProfile → fsd_profile
-    const rawFromUrn =
-      (fromMember?.["miniProfile"] as Record<string, unknown> | undefined)?.[
-        "entityUrn"
-      ] as string | undefined;
+    const rawFromUrn = (fromMember?.miniProfile as Record<string, unknown> | undefined)
+      ?.entityUrn as string | undefined;
     const fromUrn = rawFromUrn?.replace("urn:li:fs_miniProfile:", "urn:li:fsd_profile:");
 
     // Prefer backendUrn (urn:li:messagingMessage:...) over entityUrn (urn:li:fs_event:...)
     // so that the stored URN matches what the messages API returns for dedup.
-    const entityUrn = event["entityUrn"] as string | undefined;
-    const backendUrn = event["backendUrn"] as string | undefined;
+    const entityUrn = event.entityUrn as string | undefined;
+    const backendUrn = event.backendUrn as string | undefined;
     const messageUrn = backendUrn ?? entityUrn;
 
     // conversationUrn: check event/payload fields first, then extract from entityUrn
     // entityUrn format: urn:li:fs_event:(CONV_BARE_ID,MSG_ID)
     let conversationUrn =
-      (event["conversationUrn"] as string | undefined) ??
-      (payload["conversationUrn"] as string | undefined);
+      (event.conversationUrn as string | undefined) ??
+      (payload.conversationUrn as string | undefined);
 
     if (!conversationUrn && entityUrn) {
       const convMatch = entityUrn.match(/urn:li:fs_event:\(([^,]+),/);
@@ -326,15 +322,14 @@ export class SseClient {
     }
 
     const timestamp =
-      (event["createdAt"] as number | undefined) ??
-      (event["deliveredAt"] as number | undefined) ??
+      (event.createdAt as number | undefined) ??
+      (event.deliveredAt as number | undefined) ??
       Date.now();
 
-    const originToken = (event["originToken"] as string | undefined) ?? null;
+    const originToken = (event.originToken as string | undefined) ?? null;
 
     // Determine direction: originToken present means it's an echo of our own send
-    const isEcho =
-      originToken !== null && originToken !== undefined && originToken !== "";
+    const isEcho = originToken !== null && originToken !== undefined && originToken !== "";
 
     return {
       type: isEcho ? "message.sent_echo" : "message.received",
@@ -350,9 +345,9 @@ export class SseClient {
   private parseTypingEvent(payload: Record<string, unknown>): SseEvent {
     return {
       type: "typing",
-      conversationUrn: (payload["conversationUrn"] as string) ?? undefined,
-      fromUrn: (payload["fromEntityUrn"] as string) ?? undefined,
-      durationMs: (payload["durationMs"] as number) ?? undefined,
+      conversationUrn: (payload.conversationUrn as string) ?? undefined,
+      fromUrn: (payload.fromEntityUrn as string) ?? undefined,
+      durationMs: (payload.durationMs as number) ?? undefined,
       timestamp: Date.now(),
       raw: payload,
     };
@@ -361,26 +356,24 @@ export class SseClient {
   private parseReadReceiptEvent(payload: Record<string, unknown>): SseEvent {
     return {
       type: "read_receipt",
-      conversationUrn: (payload["conversationUrn"] as string) ?? undefined,
-      fromUrn: (payload["fromEntityUrn"] as string) ?? undefined,
-      timestamp: (payload["seenAt"] as number) ?? Date.now(),
+      conversationUrn: (payload.conversationUrn as string) ?? undefined,
+      fromUrn: (payload.fromEntityUrn as string) ?? undefined,
+      timestamp: (payload.seenAt as number) ?? Date.now(),
       raw: payload,
     };
   }
 
   private parseReactionEvent(payload: Record<string, unknown>): SseEvent {
-    const summaries = payload["reactionSummaries"] as
-      | Array<Record<string, unknown>>
-      | undefined;
+    const summaries = payload.reactionSummaries as Array<Record<string, unknown>> | undefined;
     return {
       type: "reaction",
-      messageUrn: (payload["entityUrn"] as string) ?? undefined,
-      conversationUrn: (payload["conversationUrn"] as string) ?? undefined,
+      messageUrn: (payload.entityUrn as string) ?? undefined,
+      conversationUrn: (payload.conversationUrn as string) ?? undefined,
       timestamp: Date.now(),
       reactions: (summaries ?? []).map((r) => ({
-        emoji: (r["emoji"] as string) ?? "",
-        count: (r["count"] as number) ?? 0,
-        hasUserReacted: (r["hasUserReacted"] as boolean) ?? false,
+        emoji: (r.emoji as string) ?? "",
+        count: (r.count as number) ?? 0,
+        hasUserReacted: (r.hasUserReacted as boolean) ?? false,
       })),
       raw: payload,
     };

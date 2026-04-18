@@ -1,7 +1,7 @@
-import { describe, it, expect, beforeEach, afterEach } from "vitest";
-import { mkdtemp, rm, readlink } from "fs/promises";
-import { join } from "path";
-import { tmpdir } from "os";
+import { mkdtemp, readlink, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { Store } from "@/store/index.js";
 import type { AccountRecord, ConversationRecord, StoredMessage } from "@/store/types.js";
 
@@ -15,7 +15,7 @@ let tempDir: string;
 let store: Store;
 
 beforeEach(async () => {
-  tempDir = await mkdtemp(join(tmpdir(), "lilac-test-"));
+  tempDir = await mkdtemp(join(tmpdir(), "allman-test-"));
   store = new Store({ path: tempDir, gitDebounceMs: 0 });
   await store.init();
 });
@@ -273,7 +273,7 @@ describe("ConversationStore", () => {
 
     const all = await conversations.readMessages(CONV_ID);
     expect(all.length).toBe(1);
-    expect(all[0].body).toBe("Hello!");
+    expect(all[0]?.body).toBe("Hello!");
   });
 
   it("concurrent appendMessages calls don't create duplicates", async () => {
@@ -348,8 +348,8 @@ describe("ConversationStore", () => {
     // But the stored data should reflect the update
     const all = await conversations.readMessages(CONV_ID);
     expect(all.length).toBe(1);
-    expect(all[0].reactions).toEqual([{ emoji: "👍", count: 1, hasUserReacted: true }]);
-    expect(all[0].attachments[0].type).toBe("post_share");
+    expect(all[0]?.reactions).toEqual([{ emoji: "👍", count: 1, hasUserReacted: true }]);
+    expect(all[0]?.attachments[0]?.type).toBe("post_share");
   });
 
   it("readMessages returns messages within time range", async () => {

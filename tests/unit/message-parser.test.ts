@@ -1,4 +1,4 @@
-import { describe, it, expect } from "vitest";
+import { describe, expect, it } from "vitest";
 import { parseAttachments, parseMessageRaw } from "@/linkedin/api/endpoints/messages.js";
 
 // Helper for tests that don't need the included[] lookup (most attachment
@@ -25,7 +25,8 @@ describe("parseAttachments: hostUrnData (shared post)", () => {
     forwardedMessageContent: null,
     hostUrnData: {
       type: "FEED_UPDATE",
-      hostUrn: "urn:li:fsd_update:(urn:li:activity:7450188970220638208,MESSAGING_RESHARE,EMPTY,DEFAULT,false)",
+      hostUrn:
+        "urn:li:fsd_update:(urn:li:activity:7450188970220638208,MESSAGING_RESHARE,EMPTY,DEFAULT,false)",
     },
     unavailableContent: null,
   };

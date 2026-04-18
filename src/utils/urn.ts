@@ -28,7 +28,7 @@ export interface ParsedUrn {
 /** Parse a LinkedIn URN string into its type and ID components. */
 export function parseUrn(urn: string): ParsedUrn {
   const match = urn.match(/^urn:li:([^:]+):(.+)$/);
-  if (!match || !match[1] || !match[2]) {
+  if (!match?.[1] || !match[2]) {
     throw new Error(`Invalid LinkedIn URN: ${urn}`);
   }
   return { type: match[1], id: match[2] };

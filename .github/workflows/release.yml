@@ -32,20 +32,20 @@ jobs:
           bun build --compile --minify \
             --target=${{ matrix.target.bun }} \
             src/index.ts \
-            --outfile dist/lilac-linux-${{ matrix.target.arch }} \
+            --outfile dist/allman-linux-${{ matrix.target.arch }} \
             --external chromium-bidi --external electron
 
       - name: Checksum
         run: |
           cd dist
-          sha256sum lilac-linux-${{ matrix.target.arch }} > lilac-linux-${{ matrix.target.arch }}.sha256
+          sha256sum allman-linux-${{ matrix.target.arch }} > allman-linux-${{ matrix.target.arch }}.sha256
 
       - uses: actions/upload-artifact@v4
         with:
-          name: lilac-linux-${{ matrix.target.arch }}
+          name: allman-linux-${{ matrix.target.arch }}
           path: |
-            dist/lilac-linux-${{ matrix.target.arch }}
-            dist/lilac-linux-${{ matrix.target.arch }}.sha256
+            dist/allman-linux-${{ matrix.target.arch }}
+            dist/allman-linux-${{ matrix.target.arch }}.sha256
           if-no-files-found: error
 
   release:

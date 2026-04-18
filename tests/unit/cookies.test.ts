@@ -1,14 +1,14 @@
-import { describe, it, expect } from "vitest";
-import { CookieJar, Cookie } from "tough-cookie";
+import { Cookie, CookieJar } from "tough-cookie";
+import { describe, expect, it } from "vitest";
 import {
-  loadCookieJar,
-  serializeCookieJar,
   buildCookieHeader,
-  getCsrfToken,
-  mergeCookies,
   cookiesFromPlaywright,
+  getCsrfToken,
   isAuthenticated,
+  loadCookieJar,
+  mergeCookies,
   newCookieJar,
+  serializeCookieJar,
 } from "@/linkedin/api/cookies.js";
 import type { AccountRecord } from "@/store/types.js";
 
@@ -82,7 +82,12 @@ describe("buildCookieHeader", () => {
       "https://linkedin.com"
     );
     await jar.setCookie(
-      new Cookie({ key: "JSESSIONID", value: '"SESSION1"', domain: ".www.linkedin.com", path: "/" }),
+      new Cookie({
+        key: "JSESSIONID",
+        value: '"SESSION1"',
+        domain: ".www.linkedin.com",
+        path: "/",
+      }),
       "https://www.linkedin.com"
     );
     const header = await buildCookieHeader(jar);
@@ -101,7 +106,7 @@ describe("mergeCookies", () => {
   it("adds new cookies from Set-Cookie headers", async () => {
     const jar = newCookieJar();
     await mergeCookies(jar, [
-      "JSESSIONID=\"newtoken\"; Path=/; Domain=.www.linkedin.com; Secure; HttpOnly",
+      'JSESSIONID="newtoken"; Path=/; Domain=.www.linkedin.com; Secure; HttpOnly',
     ]);
     const token = await getCsrfToken(jar);
     expect(token).toBe("newtoken");

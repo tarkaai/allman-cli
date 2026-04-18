@@ -1,5 +1,5 @@
 /**
- * Store — the local file-backed store for lilac-cli.
+ * Store — the local file-backed store for allman-cli.
  *
  * Directory layout:
  *   {root}/
@@ -19,14 +19,14 @@
  *   └── {slug} -> {profileId}             ← account symlink
  */
 
-import { mkdir, access } from "fs/promises";
-import { join, resolve } from "path";
-import { StoreGit, ensureGitignore } from "./git.js";
+import { access, mkdir } from "node:fs/promises";
+import { join, resolve } from "node:path";
 import { AccountStore } from "./accounts.js";
 import { ConversationStore } from "./conversations.js";
+import { ensureGitignore, StoreGit } from "./git.js";
 
 export interface StoreOptions {
-  /** Absolute path to the store root. Defaults to ./.lilac */
+  /** Absolute path to the store root. Defaults to ./.allman */
   path?: string;
   /** Git commit debounce in ms. Default: 5000 */
   gitDebounceMs?: number;
@@ -38,7 +38,7 @@ export class Store {
   readonly accounts: AccountStore;
 
   constructor(options: StoreOptions = {}) {
-    this.root = resolve(options.path ?? ".lilac");
+    this.root = resolve(options.path ?? ".allman");
     this.git = new StoreGit(this.root, options.gitDebounceMs);
     this.accounts = new AccountStore(this.root, this.git);
   }
@@ -68,11 +68,11 @@ export class Store {
 /**
  * Resolve the store path from (in priority order):
  *   1. --store CLI flag value
- *   2. LILAC_STORE environment variable
- *   3. Default: ./.lilac
+ *   2. ALLMAN_STORE environment variable
+ *   3. Default: ./.allman
  */
 export function resolveStorePath(flagValue?: string): string {
-  return resolve(flagValue ?? process.env["LILAC_STORE"] ?? ".lilac");
+  return resolve(flagValue ?? process.env.ALLMAN_STORE ?? ".allman");
 }
 
 async function ensureStoreDir(dirPath: string): Promise<void> {

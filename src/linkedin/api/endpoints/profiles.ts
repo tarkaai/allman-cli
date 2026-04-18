@@ -74,16 +74,15 @@ export async function getProfileDataBySlug(
       url: `${GRAPHQL_URL}?variables=${variables}&queryId=${PROFILE_QUERY_ID}`,
     });
 
-    const profileData =
-      response?.data?.data?.identityDashProfilesByMemberIdentity;
+    const profileData = response?.data?.data?.identityDashProfilesByMemberIdentity;
 
     if (!profileData) return null;
 
     // Try direct elements first (non-normalized response)
     const elements = profileData.elements;
-    if (elements && elements.length > 0 && elements[0]?.entityUrn) {
-      const el = elements[0];
-      const urn = extractProfileUrn(el.entityUrn!);
+    const el = elements?.[0];
+    if (el?.entityUrn) {
+      const urn = extractProfileUrn(el.entityUrn);
       if (!urn) return null;
       return {
         urn,
@@ -105,9 +104,9 @@ export async function getProfileDataBySlug(
       const item = included.find((i) => i.entityUrn && extractProfileUrn(i.entityUrn) === urn);
       return {
         urn,
-        firstName: (item?.["firstName"] as { text?: string } | undefined)?.text ?? null,
-        lastName: (item?.["lastName"] as { text?: string } | undefined)?.text ?? null,
-        headline: (item?.["headline"] as { text?: string } | undefined)?.text ?? null,
+        firstName: (item?.firstName as { text?: string } | undefined)?.text ?? null,
+        lastName: (item?.lastName as { text?: string } | undefined)?.text ?? null,
+        headline: (item?.headline as { text?: string } | undefined)?.text ?? null,
       };
     }
 
@@ -129,10 +128,8 @@ export async function getProfileUrnBySlug(
   return data?.urn ?? null;
 }
 
-const PROFILE_REST_URL =
-  "https://www.linkedin.com/voyager/api/identity/dash/profiles";
-const PROFILE_DECORATION =
-  "com.linkedin.voyager.dash.deco.identity.profile.WebTopCardCore-16";
+const PROFILE_REST_URL = "https://www.linkedin.com/voyager/api/identity/dash/profiles";
+const PROFILE_DECORATION = "com.linkedin.voyager.dash.deco.identity.profile.WebTopCardCore-16";
 
 /**
  * Look up a LinkedIn profile's public slug (publicIdentifier) from a profile ID.
@@ -151,10 +148,10 @@ export async function getProfileSlugById(
     });
 
     // publicIdentifier appears in the included array
-    const included = response?.["included"] as Array<Record<string, unknown>> | undefined;
+    const included = response?.included as Array<Record<string, unknown>> | undefined;
     if (included) {
       for (const item of included) {
-        const pubId = item["publicIdentifier"];
+        const pubId = item.publicIdentifier;
         if (typeof pubId === "string" && pubId.length > 0) {
           return pubId.toLowerCase();
         }
@@ -170,6 +167,6 @@ export async function getProfileSlugById(
 /** Extract urn:li:fsd_profile:{id} from a string that may be the full URN or contain it. */
 function extractProfileUrn(value: string): string | null {
   const match = value.match(/urn:li:fsd_profile:([^,)]+)/);
-  if (!match || !match[1]) return null;
+  if (!match?.[1]) return null;
   return `urn:li:fsd_profile:${match[1]}`;
 }

@@ -4,7 +4,7 @@
  * No network required.
  */
 
-import { describe, it, expect } from "vitest";
+import { describe, expect, it } from "vitest";
 
 /**
  * Minimal reproduction of the SSE event parsing logic from SseClient.
@@ -20,8 +20,7 @@ function parseTopic(topic: string): string | null {
 
 describe("SSE topic parsing", () => {
   it("extracts messagesTopic from a LinkedIn topic string", () => {
-    const topic =
-      "urn:li-realtime:messagesTopic:urn:li-realtime:messagesTopic:user123";
+    const topic = "urn:li-realtime:messagesTopic:urn:li-realtime:messagesTopic:user123";
     expect(parseTopic(topic)).toBe("messagesTopic");
   });
 
@@ -62,7 +61,8 @@ describe("SSE event shape detection", () => {
 
   it("determines message is echo (has originToken)", () => {
     const event = { originToken: "some-uuid-here" };
-    const isEcho = event.originToken !== null && event.originToken !== undefined && event.originToken !== "";
+    const isEcho =
+      event.originToken !== null && event.originToken !== undefined && event.originToken !== "";
     expect(isEcho).toBe(true);
   });
 });
@@ -72,7 +72,8 @@ describe("SSE data line parsing", () => {
     const line = 'data: {"id":"conn123"}';
     const jsonStr = line.startsWith("data:") ? line.slice(5).trim() : null;
     expect(jsonStr).toBe('{"id":"conn123"}');
-    const parsed = JSON.parse(jsonStr!);
+    if (!jsonStr) throw new Error("unreachable");
+    const parsed = JSON.parse(jsonStr);
     expect(parsed).toEqual({ id: "conn123" });
   });
 

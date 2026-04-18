@@ -1,4 +1,4 @@
-import { Store, resolveStorePath } from "../store/index.js";
+import { resolveStorePath, Store } from "../store/index.js";
 import { info, success } from "../utils/output.js";
 
 export interface StoreCmdOptions {
@@ -7,7 +7,7 @@ export interface StoreCmdOptions {
 
 export async function storePathCommand(options: StoreCmdOptions): Promise<void> {
   const storePath = resolveStorePath(options.store);
-  process.stdout.write(storePath + "\n");
+  process.stdout.write(`${storePath}\n`);
 }
 
 export async function storeCommitCommand(

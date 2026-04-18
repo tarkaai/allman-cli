@@ -1,13 +1,13 @@
-import { describe, it, expect } from "vitest";
+import { describe, expect, it } from "vitest";
 import {
+  buildSendConversationUrn,
+  byteArrayToString,
+  encodeUrn,
+  isUrn,
   parseUrn,
   profileUrn,
   profileUrnId,
-  buildSendConversationUrn,
-  encodeUrn,
-  isUrn,
   uuidToByteArray,
-  byteArrayToString,
 } from "@/utils/urn.js";
 
 describe("parseUrn", () => {

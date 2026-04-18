@@ -3,13 +3,13 @@
  *
  * All user-visible output goes through these helpers so that:
  *   - `--json` mode is consistently handled
- *   - NDJSON events (for `lilac listen`) go to stdout
+ *   - NDJSON events (for `allman listen`) go to stdout
  *   - Logs, warnings, and errors always go to stderr
  *
  * This separation is critical: AI agents parse stdout; logs must not pollute it.
  */
 
-import { inspect } from "util";
+import { inspect } from "node:util";
 
 let _jsonMode = false;
 let _debugMode = false;
@@ -29,15 +29,15 @@ export function isJsonMode(): boolean {
 /** Print structured data to stdout — either as pretty table or JSON. */
 export function printData(data: unknown): void {
   if (_jsonMode) {
-    process.stdout.write(JSON.stringify(data) + "\n");
+    process.stdout.write(`${JSON.stringify(data)}\n`);
   } else {
-    process.stdout.write(formatHuman(data) + "\n");
+    process.stdout.write(`${formatHuman(data)}\n`);
   }
 }
 
-/** Emit a single NDJSON event to stdout (used by `lilac listen`). */
+/** Emit a single NDJSON event to stdout (used by `allman listen`). */
 export function emitEvent(event: Record<string, unknown>): void {
-  process.stdout.write(JSON.stringify(event) + "\n");
+  process.stdout.write(`${JSON.stringify(event)}\n`);
 }
 
 /** Print an informational message to stderr. */

@@ -3,11 +3,11 @@
  *
  * Commits are debounced: multiple writes within `debounceMs` (default 5s)
  * are batched into a single commit. This keeps the git history clean while
- * still providing near-realtime versioning during `lilac listen`.
+ * still providing near-realtime versioning during `allman listen`.
  */
 
+import { join } from "node:path";
 import simpleGit, { type SimpleGit } from "simple-git";
-import { join } from "path";
 import * as output from "../utils/output.js";
 
 export class StoreGit {
@@ -87,7 +87,7 @@ export class StoreGit {
 
 /** Create a .gitignore in the store root if one doesn't exist. */
 export async function ensureGitignore(storePath: string): Promise<void> {
-  const { writeFile, access } = await import("fs/promises");
+  const { writeFile, access } = await import("node:fs/promises");
   const gitignorePath = join(storePath, ".gitignore");
   try {
     await access(gitignorePath);
@@ -95,7 +95,7 @@ export async function ensureGitignore(storePath: string): Promise<void> {
     await writeFile(
       gitignorePath,
       [
-        "# lilac-cli store gitignore",
+        "# allman-cli store gitignore",
         "*.lock",
         "COOKIES.json",
         "INBOX.jsonl",

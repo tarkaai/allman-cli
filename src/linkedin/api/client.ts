@@ -10,31 +10,31 @@
  *
  * Reference:
  *   monorepo/lib/services/.../linkedin-api-services.ts
- *   lilac/api/src/services/api/linkedin-api-client.ts
+ *   allman/api/src/services/api/linkedin-api-client.ts
  */
 
+import { mkdir, writeFile } from "node:fs/promises";
+import { join } from "node:path";
 import axios, { type AxiosRequestConfig, type AxiosResponse } from "axios";
+import type { CookieJar } from "tough-cookie";
 import type tunnel from "tunnel";
-import { CookieJar } from "tough-cookie";
-import { mkdir, writeFile } from "fs/promises";
-import { join } from "path";
+import type { AccountRecord, ProxyConfig } from "../../store/types.js";
+import * as output from "../../utils/output.js";
+import type { RateLimiter } from "../../utils/rate-limiter.js";
 import {
   buildCookieHeader,
   getCsrfToken,
-  mergeCookies,
   loadCookieJar,
+  mergeCookies,
   newCookieJar,
 } from "./cookies.js";
-import type { AccountRecord, ProxyConfig } from "../../store/types.js";
-import { RateLimiter } from "../../utils/rate-limiter.js";
-import * as output from "../../utils/output.js";
 
 // ---------------------------------------------------------------------------
-// VCR recording (enabled when LILAC_VCR=record)
+// VCR recording (enabled when ALLMAN_VCR=record)
 // ---------------------------------------------------------------------------
 
-const IS_RECORD_MODE = process.env["LILAC_VCR"] === "record";
-const VCR_DIR = process.env["LILAC_VCR_DIR"] ?? join(process.cwd(), "tests", "fixtures");
+const IS_RECORD_MODE = process.env.ALLMAN_VCR === "record";
+const VCR_DIR = process.env.ALLMAN_VCR_DIR ?? join(process.cwd(), "tests", "fixtures");
 
 function vcrKey(method: string, url: string, params?: Record<string, string>): string {
   const urlObj = new URL(url.startsWith("http") ? url : `https://www.linkedin.com${url}`);
@@ -42,10 +42,8 @@ function vcrKey(method: string, url: string, params?: Record<string, string>): s
     .replace(/^\//, "")
     .replace(/\//g, "_")
     .replace(/[^a-zA-Z0-9_-]/g, "");
-  const queryId = params?.["queryId"] ?? urlObj.searchParams.get("queryId");
-  const querySlug = queryId
-    ? `_${queryId.replace(/\./g, "_").replace(/[^a-zA-Z0-9_]/g, "")}`
-    : "";
+  const queryId = params?.queryId ?? urlObj.searchParams.get("queryId");
+  const querySlug = queryId ? `_${queryId.replace(/\./g, "_").replace(/[^a-zA-Z0-9_]/g, "")}` : "";
   return `${method.toUpperCase()}_${pathSlug}${querySlug}`;
 }
 
@@ -70,7 +68,7 @@ async function recordFixture(
   };
   await mkdir(VCR_DIR, { recursive: true });
   const path = join(VCR_DIR, `${key}.json`);
-  await writeFile(path, JSON.stringify(fixture, null, 2) + "\n", "utf8");
+  await writeFile(path, `${JSON.stringify(fixture, null, 2)}\n`, "utf8");
   output.debug(`[VCR] Saved fixture: ${key}.json`);
 }
 
@@ -94,12 +92,9 @@ const LI_TRACK = JSON.stringify({
 });
 
 const LI_RECIPE_MAP = JSON.stringify({
-  inAppAlertsTopic:
-    "com.linkedin.voyager.dash.deco.identity.notifications.InAppAlert-51",
-  professionalEventsTopic:
-    "com.linkedin.voyager.dash.deco.events.ProfessionalEventDetailPage-53",
-  topCardLiveVideoTopic:
-    "com.linkedin.voyager.dash.deco.video.TopCardLiveVideo-9",
+  inAppAlertsTopic: "com.linkedin.voyager.dash.deco.identity.notifications.InAppAlert-51",
+  professionalEventsTopic: "com.linkedin.voyager.dash.deco.events.ProfessionalEventDetailPage-53",
+  topCardLiveVideoTopic: "com.linkedin.voyager.dash.deco.video.TopCardLiveVideo-9",
 });
 
 const FALLBACK_HEADERS = {
@@ -109,8 +104,7 @@ const FALLBACK_HEADERS = {
   "x-li-track": LI_TRACK,
   "x-li-recipe-accept": "application/vnd.linkedin.normalized+json+2.1",
   "x-li-recipe-map": LI_RECIPE_MAP,
-  "x-li-page-instance":
-    "urn:li:page:feed_index_index;bcfe9fd6-239a-49e9-af15-44b7e5895eaa",
+  "x-li-page-instance": "urn:li:page:feed_index_index;bcfe9fd6-239a-49e9-af15-44b7e5895eaa",
   authority: "www.linkedin.com",
   referer: "https://www.linkedin.com/feed/",
   accept: "application/vnd.linkedin.normalized+json+2.1",
@@ -274,10 +268,7 @@ export class LinkedInApiClient {
       if (axiosErr.response) {
         response = axiosErr.response;
       } else {
-        throw new LinkedInError(
-          `Network error: ${axiosErr.message ?? "unknown"}`,
-          "NETWORK_ERROR"
-        );
+        throw new LinkedInError(`Network error: ${axiosErr.message ?? "unknown"}`, "NETWORK_ERROR");
       }
     }
 
@@ -311,7 +302,7 @@ export class LinkedInApiClient {
 
     if (status === 401 || status === 302) {
       throw new LinkedInError(
-        "LinkedIn session expired. Run `lilac login` to re-authenticate.",
+        "LinkedIn session expired. Run `allman login` to re-authenticate.",
         "UNAUTHENTICATED",
         status
       );
@@ -352,11 +343,7 @@ export class LinkedInApiClient {
       );
     }
 
-    throw new LinkedInError(
-      `LinkedIn API error: HTTP ${status}`,
-      "UNKNOWN",
-      status
-    );
+    throw new LinkedInError(`LinkedIn API error: HTTP ${status}`, "UNKNOWN", status);
   }
 
   private extractSetCookieHeaders(response: AxiosResponse): string[] {

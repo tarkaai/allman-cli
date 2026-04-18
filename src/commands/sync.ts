@@ -1,12 +1,12 @@
 /**
- * lilac sync — pull conversation history into the local file store.
+ * allman sync — pull conversation history into the local file store.
  *
  * Usage:
- *   lilac sync                                  # incremental: since lastSyncAt
- *   lilac sync --since 1mo                      # absolute floor
- *   lilac sync --from 2024-01-01 --to 2024-02-01  # date window
- *   lilac sync --limit 10                       # max conversations to walk
- *   lilac sync <conv> --limit 1000              # max messages on a single conv
+ *   allman sync                                  # incremental: since lastSyncAt
+ *   allman sync --since 1mo                      # absolute floor
+ *   allman sync --from 2024-01-01 --to 2024-02-01  # date window
+ *   allman sync --limit 10                       # max conversations to walk
+ *   allman sync <conv> --limit 1000              # max messages on a single conv
  *
  * Direction semantics:
  *   - Inbox sync walks newest → oldest, stops at the older boundary (--from).
@@ -18,18 +18,18 @@
  * sync.complete. Final summary is the last event.
  */
 
-import { Store, resolveStorePath } from "../store/index.js";
-import { loadSession } from "../linkedin/api/session.js";
+import type { LinkedInApiClient } from "../linkedin/api/client.js";
 import { listConversations } from "../linkedin/api/endpoints/conversations.js";
 import { fetchMessages, type MessageData } from "../linkedin/api/endpoints/messages.js";
 import { getProfileSlugById } from "../linkedin/api/endpoints/profiles.js";
-import * as output from "../utils/output.js";
-import { parseSince } from "../utils/time.js";
-import { getDownloadRateLimiter, type DownloadRateLimiter } from "../utils/rate-limiter.js";
-import type { ConversationRecord, StoredMessage } from "../store/types.js";
+import { loadSession } from "../linkedin/api/session.js";
 import type { ConversationStore } from "../store/conversations.js";
+import { resolveStorePath, Store } from "../store/index.js";
+import type { ConversationRecord, StoredMessage } from "../store/types.js";
+import * as output from "../utils/output.js";
+import { type DownloadRateLimiter, getDownloadRateLimiter } from "../utils/rate-limiter.js";
+import { parseSince } from "../utils/time.js";
 import { extractBareConvId } from "../utils/urn.js";
-import type { LinkedInApiClient } from "../linkedin/api/client.js";
 
 const DEFAULT_MESSAGES_PER_CONVERSATION = 1000;
 const MESSAGES_PER_PAGE = 20;
@@ -72,7 +72,7 @@ export async function syncCommand(options: SyncOptions): Promise<void> {
   const store = new Store({ path: storePath });
   await store.init();
 
-  let session;
+  let session: Awaited<ReturnType<typeof loadSession>>;
   try {
     session = await loadSession(store, options.account);
   } catch (err) {
@@ -121,7 +121,7 @@ export async function syncCommand(options: SyncOptions): Promise<void> {
     const convId = await conversations.resolve(options.conversation);
     if (!convId) {
       output.error(
-        `Conversation "${options.conversation}" not found in store. Run \`lilac sync\` first.`,
+        `Conversation "${options.conversation}" not found in store. Run \`allman sync\` first.`,
         1
       );
       return;
@@ -176,9 +176,7 @@ export async function syncCommand(options: SyncOptions): Promise<void> {
         messagesSynced: messagesWritten,
       });
     } else {
-      output.success(
-        `Sync complete: ${messagesWritten} messages for ${record.name ?? convId}`
-      );
+      output.success(`Sync complete: ${messagesWritten} messages for ${record.name ?? convId}`);
     }
     return;
   }
@@ -204,7 +202,7 @@ export async function syncCommand(options: SyncOptions): Promise<void> {
 
   let totalConversations = 0;
   let totalMessages = 0;
-  let nextCursor: string | null | undefined = undefined;
+  let nextCursor: string | null | undefined;
   // Start pagination from the newer boundary so `--to` actually clamps the
   // top of the window.
   let lastUpdatedBefore = toMs;
@@ -361,9 +359,7 @@ export async function syncCommand(options: SyncOptions): Promise<void> {
       messagesSynced: totalMessages,
     });
   } else {
-    output.success(
-      `Sync complete: ${totalConversations} conversations, ${totalMessages} messages`
-    );
+    output.success(`Sync complete: ${totalConversations} conversations, ${totalMessages} messages`);
   }
 }
 
@@ -386,7 +382,7 @@ async function resolveSlugWithBackoff(
   } catch (err: unknown) {
     const status = extractHttpStatus(err);
     if (status === 401) {
-      throw new Error("Authentication expired during slug lookup. Re-run `lilac login`.");
+      throw new Error("Authentication expired during slug lookup. Re-run `allman login`.");
     }
     if (status === 429 || (status !== null && status >= 500)) {
       backoff.delayMs = Math.min(backoff.delayMs * 2, BACKOFF_MAX_MS);
@@ -446,7 +442,7 @@ async function syncConversationMessages(
   slug: string | null
 ): Promise<number> {
   const existing = await conversations.read(convId);
-  const knownNewestAt = forceResync ? null : existing?.syncState.newestMessageAt ?? null;
+  const knownNewestAt = forceResync ? null : (existing?.syncState.newestMessageAt ?? null);
   output.debug(
     `syncConvMessages: knownNewestAt=${knownNewestAt}, fromMs=${fromMs}, toMs=${toMs}, force=${forceResync}`
   );
@@ -474,7 +470,9 @@ async function syncConversationMessages(
         anchorTimestamp,
         MESSAGES_PER_PAGE
       );
-      output.debug(`fetchMessages returned ${raw.messages.length} messages, hasMore=${raw.hasMore}`);
+      output.debug(
+        `fetchMessages returned ${raw.messages.length} messages, hasMore=${raw.hasMore}`
+      );
       result = {
         messages: raw.messages.map((m) => toStoredMessage(m, myProfileUrn)),
         hasMore: raw.hasMore,
@@ -524,8 +522,10 @@ async function syncConversationMessages(
       }
       allMessages.push(msg);
       fetched++;
-      if (oldestFetchedAt === null || msg.timestamp < oldestFetchedAt) oldestFetchedAt = msg.timestamp;
-      if (newestFetchedAt === null || msg.timestamp > newestFetchedAt) newestFetchedAt = msg.timestamp;
+      if (oldestFetchedAt === null || msg.timestamp < oldestFetchedAt)
+        oldestFetchedAt = msg.timestamp;
+      if (newestFetchedAt === null || msg.timestamp > newestFetchedAt)
+        newestFetchedAt = msg.timestamp;
     }
 
     output.debug(
@@ -569,10 +569,7 @@ async function syncConversationMessages(
       oldestFetchedAt ?? Number.POSITIVE_INFINITY,
       existing?.syncState.oldestMessageAt ?? Number.POSITIVE_INFINITY
     );
-    const mergedNewest = Math.max(
-      newestFetchedAt ?? 0,
-      existing?.syncState.newestMessageAt ?? 0
-    );
+    const mergedNewest = Math.max(newestFetchedAt ?? 0, existing?.syncState.newestMessageAt ?? 0);
     await conversations.updateSyncState(convId, {
       oldestMessageAt: Number.isFinite(mergedOldest) ? mergedOldest : null,
       newestMessageAt: mergedNewest > 0 ? mergedNewest : null,
@@ -593,17 +590,15 @@ async function syncConversationMessages(
   return allMessages.length;
 }
 
-
-function toStoredMessage(
-  m: MessageData,
-  myProfileUrn: string
-): StoredMessage {
+function toStoredMessage(m: MessageData, myProfileUrn: string): StoredMessage {
   return {
     urn: m.urn,
     timestamp: m.deliveredAt,
     fromUrn: m.fromUrn,
     fromName: m.fromName ?? "",
-    isFromMe: m.fromUrn === myProfileUrn || m.fromUrn.includes(myProfileUrn.replace("urn:li:fsd_profile:", "")),
+    isFromMe:
+      m.fromUrn === myProfileUrn ||
+      m.fromUrn.includes(myProfileUrn.replace("urn:li:fsd_profile:", "")),
     body: m.body,
     reactions: m.reactions,
     attachments: m.attachments.map((a) => ({

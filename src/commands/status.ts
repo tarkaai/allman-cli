@@ -1,6 +1,6 @@
-import { Store, resolveStorePath } from "../store/index.js";
-import { loadCookieJar, isAuthenticated } from "../linkedin/api/cookies.js";
-import { printData, info } from "../utils/output.js";
+import { isAuthenticated, loadCookieJar } from "../linkedin/api/cookies.js";
+import { resolveStorePath, Store } from "../store/index.js";
+import { info, printData } from "../utils/output.js";
 
 export interface StatusOptions {
   account?: string;
@@ -14,11 +14,11 @@ export async function statusCommand(options: StatusOptions): Promise<void> {
   await store.init();
 
   const profileIds = options.account
-    ? [await store.accounts.resolveId(options.account) ?? options.account]
+    ? [(await store.accounts.resolveId(options.account)) ?? options.account]
     : await store.accounts.list();
 
   if (profileIds.length === 0) {
-    info("No accounts found. Run `lilac login` to get started.");
+    info("No accounts found. Run `allman login` to get started.");
     return;
   }
 
@@ -58,7 +58,8 @@ export async function statusCommand(options: StatusOptions): Promise<void> {
     process.stdout.write(`  ID:      ${s.profileId}\n`);
     process.stdout.write(`  Status:  ${s.status}\n`);
     process.stdout.write(`  Cookies: ${cookieStatus}\n`);
-    if (s.lastSyncAt) process.stdout.write(`  Synced:  ${new Date(s.lastSyncAt).toLocaleString()}\n`);
+    if (s.lastSyncAt)
+      process.stdout.write(`  Synced:  ${new Date(s.lastSyncAt).toLocaleString()}\n`);
     if (s.proxy) process.stdout.write(`  Proxy:   ${s.proxy}\n`);
     process.stdout.write(`  Store:   ${s.storePath}\n\n`);
   }

@@ -1,15 +1,15 @@
 /**
- * lilac inbox — show new messages since last check (watermark-based).
+ * allman inbox — show new messages since last check (watermark-based).
  *
  * Watermark stored in inbox-state.json (gitignored).
  * Covers both SSE-received and synced messages.
  */
 
-import { Store, resolveStorePath } from "../store/index.js";
-import { printData, relativeTime, info } from "../utils/output.js";
+import { resolveStorePath, Store } from "../store/index.js";
+import type { StoredMessage } from "../store/types.js";
+import { info, printData, relativeTime } from "../utils/output.js";
 import { parseSince } from "../utils/time.js";
 import { syncCommand } from "./sync.js";
-import type { StoredMessage } from "../store/types.js";
 
 export interface InboxOptions {
   account?: string;
@@ -68,8 +68,8 @@ export async function inboxCommand(options: InboxOptions): Promise<void> {
 
   // Sort by newest message timestamp, most recent first
   results.sort((a, b) => {
-    const aLast = a.messages.at(-1)!.timestamp;
-    const bLast = b.messages.at(-1)!.timestamp;
+    const aLast = a.messages.at(-1)?.timestamp ?? 0;
+    const bLast = b.messages.at(-1)?.timestamp ?? 0;
     return bLast - aLast;
   });
 
@@ -85,9 +85,9 @@ export async function inboxCommand(options: InboxOptions): Promise<void> {
       process.stdout.write(`\n${name}\n`);
       for (const m of messages) {
         const dir = m.isFromMe ? "→" : "←";
-        const sender = m.isFromMe ? "You" : (m.fromName || name);
+        const sender = m.isFromMe ? "You" : m.fromName || name;
         const time = relativeTime(m.timestamp);
-        const body = m.body.length > 120 ? m.body.slice(0, 120) + "…" : m.body;
+        const body = m.body.length > 120 ? `${m.body.slice(0, 120)}…` : m.body;
         process.stdout.write(`  ${dir} ${sender.padEnd(20)} ${time.padEnd(12)} ${body}\n`);
       }
     }
@@ -99,4 +99,3 @@ export async function inboxCommand(options: InboxOptions): Promise<void> {
     await store.accounts.writeInboxState(profileId, { lastSeenAt: now });
   }
 }
-

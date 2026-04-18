@@ -21,15 +21,15 @@
  * Timeout: 5 minutes (configurable via LOGIN_TIMEOUT_MS env var).
  */
 
-import { chromium, type BrowserContext, type Page } from "playwright";
-import { cookiesFromPlaywright, isAuthenticated, type PlaywrightCookie } from "../api/cookies.js";
+import { type BrowserContext, chromium, type Page } from "playwright";
 import * as output from "../../utils/output.js";
+import { cookiesFromPlaywright, isAuthenticated, type PlaywrightCookie } from "../api/cookies.js";
 
 const LOGIN_URL = "https://www.linkedin.com/login";
 const FEED_URL_PATTERN = /linkedin\.com\/(feed|in\/|messaging)/;
 const PROFILE_URN_REGEX = /urn:li:fsd_profile:([^,)"]+)/;
 
-const LOGIN_TIMEOUT_MS = parseInt(process.env["LOGIN_TIMEOUT_MS"] ?? "300000"); // 5 minutes
+const LOGIN_TIMEOUT_MS = parseInt(process.env.LOGIN_TIMEOUT_MS ?? "300000", 10); // 5 minutes
 
 export interface AuthResult {
   success: boolean;
@@ -54,8 +54,7 @@ export interface AuthOptions {
  * Opens a headed Chromium window and waits for the user to authenticate.
  */
 export async function runLogin(options: AuthOptions = {}): Promise<AuthResult> {
-  const executablePath =
-    options.executablePath ?? process.env["PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH"];
+  const executablePath = options.executablePath ?? process.env.PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH;
 
   output.info("Opening LinkedIn in browser — please complete login in the browser window.");
   output.info(`Waiting up to ${Math.round(LOGIN_TIMEOUT_MS / 60000)} minutes...`);
@@ -63,11 +62,7 @@ export async function runLogin(options: AuthOptions = {}): Promise<AuthResult> {
   const browser = await chromium.launch({
     headless: false,
     ...(executablePath ? { executablePath } : {}),
-    args: [
-      "--no-sandbox",
-      "--disable-blink-features=AutomationControlled",
-      "--disable-infobars",
-    ],
+    args: ["--no-sandbox", "--disable-blink-features=AutomationControlled", "--disable-infobars"],
   });
 
   const context = await browser.newContext({
@@ -81,7 +76,9 @@ export async function runLogin(options: AuthOptions = {}): Promise<AuthResult> {
     try {
       const cookieData = options.existingCookieJar as { cookies?: PlaywrightCookie[] };
       if (cookieData.cookies && Array.isArray(cookieData.cookies)) {
-        const playwrightCookies = cookieData.cookies.map((c) => toughCookieToPlaywright(c as unknown as Record<string, unknown>)).filter(Boolean) as Array<{
+        const playwrightCookies = cookieData.cookies
+          .map((c) => toughCookieToPlaywright(c as unknown as Record<string, unknown>))
+          .filter(Boolean) as Array<{
           name: string;
           value: string;
           domain: string;
@@ -112,9 +109,9 @@ export async function runLogin(options: AuthOptions = {}): Promise<AuthResult> {
     if (!profileUrn && response.url().includes("voyagerIdentityDashProfiles")) {
       try {
         if (response.request().method() === "OPTIONS" || response.status() !== 200) return;
-        const body = await response.json() as unknown;
+        const body = (await response.json()) as unknown;
         const urnMatch = JSON.stringify(body).match(PROFILE_URN_REGEX);
-        if (urnMatch && urnMatch[1]) {
+        if (urnMatch?.[1]) {
           profileUrn = `urn:li:fsd_profile:${urnMatch[1]}`;
           interceptedProfileData = extractProfileFromApiResponse(body);
           output.debug(`Captured profile URN from response: ${profileUrn}`);
@@ -191,12 +188,9 @@ export async function runLogin(options: AuthOptions = {}): Promise<AuthResult> {
 
   // Extract profile data from page DOM if not captured via interception
   const domProfile = (await extractProfileFromDom(page)) as DomProfileData;
-  // TypeScript spuriously infers interceptedProfileData as never here due to control flow
-  // eslint-disable-next-line @typescript-eslint/ban-ts-comment
-  // @ts-ignore
   const name = (interceptedProfileData as ProfileApiData | null)?.name ?? domProfile.name;
-  // @ts-ignore
-  const headline = (interceptedProfileData as ProfileApiData | null)?.headline ?? domProfile.headline;
+  const headline =
+    (interceptedProfileData as ProfileApiData | null)?.headline ?? domProfile.headline;
   const profileUrl = domProfile.profileUrl;
   const imageUrl = domProfile.imageUrl;
 
@@ -241,10 +235,7 @@ function extractProfileFromApiResponse(body: unknown): ProfileApiData {
     const firstMatch = str.match(/"firstName":"([^"]+)"/);
     const lastMatch = str.match(/"lastName":"([^"]+)"/);
     const headlineMatch = str.match(/"headline":"([^"]+)"/);
-    const name =
-      firstMatch && lastMatch
-        ? `${firstMatch[1]} ${lastMatch[1]}`.trim()
-        : null;
+    const name = firstMatch && lastMatch ? `${firstMatch[1]} ${lastMatch[1]}`.trim() : null;
     return { name, headline: headlineMatch ? (headlineMatch[1] ?? null) : null };
   } catch {
     return { name: null, headline: null };
@@ -270,7 +261,7 @@ async function extractProfileUrnFromPage(
     // Return the profile slug from the redirected URL as a fallback identifier
     const url = page.url();
     const urlMatch = url.match(/linkedin\.com\/in\/([^/?]+)/);
-    if (urlMatch && urlMatch[1]) {
+    if (urlMatch?.[1]) {
       output.debug(`Profile slug from redirect: ${urlMatch[1]}`);
       return urlMatch[1]; // Return slug, not a full URN — caller handles lookup
     }
@@ -285,10 +276,15 @@ async function extractProfileFromDom(page: Page): Promise<DomProfileData> {
   try {
     // page.evaluate runs in browser context — cast to bypass Node TS lib restrictions
     return await (page.evaluate as (fn: () => DomProfileData) => Promise<DomProfileData>)(() => {
-      /* eslint-disable @typescript-eslint/no-explicit-any */
-      const doc = (globalThis as any).document as { querySelector: (s: string) => { textContent?: string; src?: string } | null };
+      // biome-ignore lint/suspicious/noExplicitAny: browser globals not typed in Node lib
+      const doc = (globalThis as any).document as {
+        querySelector: (s: string) => { textContent?: string; src?: string } | null;
+      };
+      // biome-ignore lint/suspicious/noExplicitAny: browser globals not typed in Node lib
       const win = (globalThis as any).window as { location: { href: string } };
-      const nameEl = doc.querySelector(".artdeco-entity-lockup__title, .profile-nav-item__title, .t-24.t-bold");
+      const nameEl = doc.querySelector(
+        ".artdeco-entity-lockup__title, .profile-nav-item__title, .t-24.t-bold"
+      );
       const headlineEl = doc.querySelector(".profile-nav-item__text, .t-14.t-normal");
       const imageEl = doc.querySelector("img.global-nav__me-photo, img.profile-picture");
       const currentUrl = win.location.href;
@@ -306,19 +302,17 @@ async function extractProfileFromDom(page: Page): Promise<DomProfileData> {
 }
 
 /** Convert a tough-cookie JSON object to Playwright's cookie format. */
-function toughCookieToPlaywright(
-  c: Record<string, unknown>
-): object | null {
-  const domain = (c["domain"] as string | undefined) ?? "";
+function toughCookieToPlaywright(c: Record<string, unknown>): object | null {
+  const domain = (c.domain as string | undefined) ?? "";
   if (!domain.includes("linkedin.com")) return null;
 
-  const expiresRaw = c["expires"];
+  const expiresRaw = c.expires;
   let expires: number | undefined;
   if (expiresRaw && expiresRaw !== "Infinity") {
     expires = Math.floor(new Date(expiresRaw as string).getTime() / 1000);
   }
 
-  const sameSiteRaw = (c["sameSite"] as string | undefined)?.toLowerCase();
+  const sameSiteRaw = (c.sameSite as string | undefined)?.toLowerCase();
   const sameSite =
     sameSiteRaw === "strict"
       ? "Strict"
@@ -329,13 +323,13 @@ function toughCookieToPlaywright(
           : undefined;
 
   return {
-    name: (c["key"] as string) ?? "",
-    value: (c["value"] as string) ?? "",
+    name: (c.key as string) ?? "",
+    value: (c.value as string) ?? "",
     domain: domain.startsWith(".") ? domain : `.${domain}`,
-    path: (c["path"] as string | undefined) ?? "/",
+    path: (c.path as string | undefined) ?? "/",
     ...(expires !== undefined ? { expires } : {}),
-    httpOnly: (c["httpOnly"] as boolean | undefined) ?? false,
-    secure: (c["secure"] as boolean | undefined) ?? false,
+    httpOnly: (c.httpOnly as boolean | undefined) ?? false,
+    secure: (c.secure as boolean | undefined) ?? false,
     ...(sameSite ? { sameSite } : {}),
   };
 }

@@ -1,15 +1,15 @@
-# CLAUDE.md — lilac-cli
+# CLAUDE.md — allman-cli
 
 LinkedIn messenger CLI. File-backed, git-versioned, designed for AI agents and humans.
 
 ## Key references
 
 Before writing any LinkedIn API code, read these files first:
-- `/Users/example/Projects/tarka/lilac/api/src/services/api/linkedin-api-client.ts` — exact headers, cookie handling
-- `/Users/example/Projects/tarka/lilac/api/src/services/session/cookie-set.ts` — cookie merge logic
-- `/Users/example/Projects/tarka/lilac/api/src/services/realtime/stream-handler.ts` — SSE parsing
-- `/Users/example/Projects/tarka/lilac/api/src/services/messaging/message-sender.ts` — send payload format
-- `/Users/example/Projects/tarka/lilac/api/src/services/auth/linkedin-auth.ts` — auth flow
+- `/Users/example/Projects/tarka/allman/api/src/services/api/linkedin-api-client.ts` — exact headers, cookie handling
+- `/Users/example/Projects/tarka/allman/api/src/services/session/cookie-set.ts` — cookie merge logic
+- `/Users/example/Projects/tarka/allman/api/src/services/realtime/stream-handler.ts` — SSE parsing
+- `/Users/example/Projects/tarka/allman/api/src/services/messaging/message-sender.ts` — send payload format
+- `/Users/example/Projects/tarka/allman/api/src/services/auth/linkedin-auth.ts` — auth flow
 
 The monorepo at `/Users/example/Projects/tarka/monorepo` also has LinkedIn API response type definitions.
 
@@ -44,7 +44,7 @@ tests/integration/           Mock network responses
 ## File store layout
 
 ```
-.lilac/
+.allman/
 ├── .git/
 ├── {myProfileId}/
 │   ├── AUTH.json                    # profile info, auth status (committed)
@@ -96,28 +96,28 @@ Lines arrive as `data: {JSON}`. Extract event type from `topic` field via:
 `topic.match(/:(\w+):urn:li-realtime/)` → group 1 is the event type key.
 
 ### stdout vs stderr
-`lilac listen` streams NDJSON to **stdout**. All logs, errors, debug output go to **stderr**.
+`allman listen` streams NDJSON to **stdout**. All logs, errors, debug output go to **stderr**.
 This separation is mandatory — agents parse stdout.
 
 ## Commands
 
 ```
-lilac login [--account <slug>] [--proxy host:port[:user:pass]]
-lilac logout [--account <slug>]
-lilac status [--account <slug>] [--json]
-lilac sync [--account <slug>] [--since 3mo|6mo|1y|YYYY-MM-DD]
-lilac listen [--account <slug>]
-lilac conversations [--account <slug>] [--json] [--limit N]
-lilac messages <contact-slug|url|urn> [--account <slug>] [--json] [--limit N]
-lilac send <contact-slug|url|urn> <text> [--account <slug>] [--json]
-lilac store path|commit|status
+allman login [--account <slug>] [--proxy host:port[:user:pass]]
+allman logout [--account <slug>]
+allman status [--account <slug>] [--json]
+allman sync [--account <slug>] [--since 3mo|6mo|1y|YYYY-MM-DD]
+allman listen [--account <slug>]
+allman conversations [--account <slug>] [--json] [--limit N]
+allman messages <contact-slug|url|urn> [--account <slug>] [--json] [--limit N]
+allman send <contact-slug|url|urn> <text> [--account <slug>] [--json]
+allman store path|commit|status
 ```
 
 ## Environment variables
 
 ```
-LILAC_STORE        Override default store path (default: ./.lilac)
-LILAC_ACCOUNT      Default account slug
+ALLMAN_STORE        Override default store path (default: ./.allman)
+ALLMAN_ACCOUNT      Default account slug
 PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH  Use existing Chromium
 ```
 
@@ -127,7 +127,7 @@ PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH  Use existing Chromium
 bun install
 bun run dev          # runs src/index.ts directly
 bun test             # vitest
-bun run build        # bun build --compile → dist/lilac
+bun run build        # bun build --compile → dist/allman
 ```
 
 Never install packages without using `bun add <package>` (or `bun add -d <package>`

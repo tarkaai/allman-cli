@@ -1,8 +1,8 @@
-import { Store, resolveStorePath } from "../store/index.js";
-import { runLogin } from "../linkedin/auth/playwright-auth.js";
 import { buildApiClient } from "../linkedin/api/client.js";
 import { loadCookieJar } from "../linkedin/api/cookies.js";
 import { getProfileUrnBySlug } from "../linkedin/api/endpoints/profiles.js";
+import { runLogin } from "../linkedin/auth/playwright-auth.js";
+import { resolveStorePath, Store } from "../store/index.js";
 import * as output from "../utils/output.js";
 
 export interface LoginOptions {
@@ -20,30 +20,28 @@ export async function loginCommand(options: LoginOptions): Promise<void> {
   // Parse proxy config if provided
   let proxyConfig: { host: string; port: number; username?: string; password?: string } | undefined;
   if (options.proxy) {
-    const parts = options.proxy.split(":");
-    if (parts.length < 2) {
+    const [host, port, username, password] = options.proxy.split(":");
+    if (!host || !port) {
       output.error(`Invalid proxy format. Expected host:port[:username:password]`, 1);
       return;
     }
     proxyConfig = {
-      host: parts[0]!,
-      port: parseInt(parts[1]!, 10),
-      ...(parts[2] ? { username: parts[2] } : {}),
-      ...(parts[3] ? { password: parts[3] } : {}),
+      host,
+      port: parseInt(port, 10),
+      ...(username ? { username } : {}),
+      ...(password ? { password } : {}),
     };
   }
 
   // Check for existing account to inject cookies (re-auth flow)
   // If --account is provided, try resolving it to an existing profile ID
   let existingCookieJar: object | null = null;
-  let _existingProfileId: string | null = null;
 
   if (options.account) {
     const resolved = await store.accounts.resolveId(options.account);
     if (resolved) {
       const existing = await store.accounts.read(resolved);
       existingCookieJar = existing?.cookieJar ?? null;
-      _existingProfileId = resolved;
       if (existingCookieJar) {
         output.info(`Re-authenticating existing account (${options.account})...`);
       }
@@ -68,8 +66,7 @@ export async function loginCommand(options: LoginOptions): Promise<void> {
   let profileId = result.profileUrn?.replace("urn:li:fsd_profile:", "") ?? null;
 
   // Extract profile slug from the URL (e.g. "jamie-rivera" from linkedin.com/in/jamie-rivera)
-  const profileSlug =
-    result.profileUrl?.match(/linkedin\.com\/in\/([^/?]+)/)?.[1] ?? null;
+  const profileSlug = result.profileUrl?.match(/linkedin\.com\/in\/([^/?]+)/)?.[1] ?? null;
 
   // If we didn't get a URN from the browser, try the API
   if (!profileId && profileSlug) {
@@ -110,20 +107,24 @@ export async function loginCommand(options: LoginOptions): Promise<void> {
   const profileUrn = `urn:li:fsd_profile:${profileId}`;
 
   // Save account record
-  await store.accounts.write(profileId, {
-    urn: profileUrn,
-    profileSlug,
-    name: result.name,
-    headline: result.headline,
-    profileUrl: result.profileUrl,
-    imageUrl: result.imageUrl,
-    userType: null,
-    networkSize: null,
-    status: "authenticated",
-    cookieJar: result.cookieJar,
-    cookiesUpdatedAt: new Date().toISOString(),
-    lastSyncAt: null,
-  }, `login: ${profileId.slice(0, 12)}`);
+  await store.accounts.write(
+    profileId,
+    {
+      urn: profileUrn,
+      profileSlug,
+      name: result.name,
+      headline: result.headline,
+      profileUrl: result.profileUrl,
+      imageUrl: result.imageUrl,
+      userType: null,
+      networkSize: null,
+      status: "authenticated",
+      cookieJar: result.cookieJar,
+      cookiesUpdatedAt: new Date().toISOString(),
+      lastSyncAt: null,
+    },
+    `login: ${profileId.slice(0, 12)}`
+  );
 
   // Save proxy config if provided
   if (proxyConfig) {

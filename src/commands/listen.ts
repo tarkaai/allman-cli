@@ -1,23 +1,23 @@
 /**
- * lilac listen — stream real-time LinkedIn events to stdout as NDJSON.
+ * allman listen — stream real-time LinkedIn events to stdout as NDJSON.
  *
  * stdout: NDJSON events
  * stderr: logs/debug
  */
 
-import { join } from "path";
-import { appendFile } from "fs/promises";
-import { Store, resolveStorePath } from "../store/index.js";
-import { type LinkedInApiClient } from "../linkedin/api/client.js";
-import { loadSession } from "../linkedin/api/session.js";
-import { SseClient, type SseEvent } from "../linkedin/realtime/sse-client.js";
+import { appendFile } from "node:fs/promises";
+import { join } from "node:path";
+import type { LinkedInApiClient } from "../linkedin/api/client.js";
 import { listConversations } from "../linkedin/api/endpoints/conversations.js";
 import { fetchMessages } from "../linkedin/api/endpoints/messages.js";
 import { getProfileSlugById } from "../linkedin/api/endpoints/profiles.js";
-import { emitEvent, info, error, debug } from "../utils/output.js";
-import { extractBareConvId } from "../utils/urn.js";
-import type { ConversationRecord, StoredMessage } from "../store/types.js";
+import { loadSession } from "../linkedin/api/session.js";
+import { SseClient, type SseEvent } from "../linkedin/realtime/sse-client.js";
 import type { ConversationStore } from "../store/index.js";
+import { resolveStorePath, Store } from "../store/index.js";
+import type { ConversationRecord, StoredMessage } from "../store/types.js";
+import { debug, emitEvent, error, info } from "../utils/output.js";
+import { extractBareConvId } from "../utils/urn.js";
 
 export interface ListenOptions {
   account?: string;
@@ -29,7 +29,7 @@ export async function listenCommand(options: ListenOptions): Promise<void> {
   const store = new Store({ path: storePath });
   await store.init();
 
-  let session;
+  let session: Awaited<ReturnType<typeof loadSession>>;
   try {
     session = await loadSession(store, options.account);
   } catch (err) {
@@ -45,8 +45,14 @@ export async function listenCommand(options: ListenOptions): Promise<void> {
 
   const sseClient = new SseClient(apiClient, profileId);
 
-  process.on("SIGINT", () => { sseClient.abort(); process.exit(0); });
-  process.on("SIGTERM", () => { sseClient.abort(); process.exit(0); });
+  process.on("SIGINT", () => {
+    sseClient.abort();
+    process.exit(0);
+  });
+  process.on("SIGTERM", () => {
+    sseClient.abort();
+    process.exit(0);
+  });
 
   for await (const event of sseClient.connect()) {
     await handleEvent(event, profileId, myProfileUrn, store, conversations, accountDir, apiClient);
@@ -66,13 +72,20 @@ async function handleEvent(
 
   switch (event.type) {
     case "connected": {
-      emitEvent({ event: "connected", account: profileId, connectionId: event.connectionId, timestamp });
+      emitEvent({
+        event: "connected",
+        account: profileId,
+        connectionId: event.connectionId,
+        timestamp,
+      });
       return;
     }
 
     case "heartbeat": {
       emitEvent({ event: "heartbeat", account: profileId, timestamp });
-      await store.accounts.update(profileId, { lastSyncAt: new Date(timestamp).toISOString() }).catch(() => {});
+      await store.accounts
+        .update(profileId, { lastSyncAt: new Date(timestamp).toISOString() })
+        .catch(() => {});
       return;
     }
 
@@ -88,7 +101,12 @@ async function handleEvent(
         : null;
 
       if (!convInfo && event.conversationUrn) {
-        await fetchAndUpsertConversation(event.conversationUrn, myProfileUrn, apiClient, conversations);
+        await fetchAndUpsertConversation(
+          event.conversationUrn,
+          myProfileUrn,
+          apiClient,
+          conversations
+        );
         convInfo = event.conversationUrn
           ? await conversations.findByUrn(event.conversationUrn)
           : null;
@@ -110,7 +128,13 @@ async function handleEvent(
       if (event.conversationUrn) {
         try {
           const convUrn = convRecord?.backendUrn ?? event.conversationUrn;
-          const { messages } = await fetchMessages(apiClient, convUrn, myProfileUrn, (event.timestamp ?? timestamp) + 1, 5);
+          const { messages } = await fetchMessages(
+            apiClient,
+            convUrn,
+            myProfileUrn,
+            (event.timestamp ?? timestamp) + 1,
+            5
+          );
           const eventTs = event.timestamp ?? timestamp;
           const match = messages.find((m) => Math.abs(m.deliveredAt - eventTs) < 2000);
           if (match) {
@@ -134,7 +158,9 @@ async function handleEvent(
             }));
             reactions = match.reactions;
           }
-        } catch { /* non-fatal */ }
+        } catch {
+          /* non-fatal */
+        }
       }
 
       emitEvent({
@@ -168,7 +194,9 @@ async function handleEvent(
         await conversations.appendMessages(convId, [storedMsg]).catch((err) => {
           debug(`Failed to persist message: ${String(err)}`);
         });
-        await conversations.updateSyncState(convId, { newestMessageAt: event.timestamp ?? timestamp }).catch(() => {});
+        await conversations
+          .updateSyncState(convId, { newestMessageAt: event.timestamp ?? timestamp })
+          .catch(() => {});
         store.git.scheduleCommit(`listen: new message in ${convId.slice(0, 20)}`);
 
         // Append to INBOX.jsonl for inbound messages. For attachment-only
@@ -183,7 +211,7 @@ async function handleEvent(
             timestamp: event.timestamp ?? timestamp,
           });
           const inboxPath = join(accountDir, "INBOX.jsonl");
-          await appendFile(inboxPath, inboxLine + "\n").catch((err) => {
+          await appendFile(inboxPath, `${inboxLine}\n`).catch((err) => {
             debug(`Failed to append to INBOX.jsonl: ${String(err)}`);
           });
         }
@@ -192,18 +220,37 @@ async function handleEvent(
     }
 
     case "typing": {
-      const convInfo = event.conversationUrn ? await conversations.findByUrn(event.conversationUrn) : null;
-      emitEvent({ event: "typing", account: profileId, timestamp, conversation: { urn: event.conversationUrn, convId: convInfo?.convId ?? null }, from: { urn: event.fromUrn } });
+      const convInfo = event.conversationUrn
+        ? await conversations.findByUrn(event.conversationUrn)
+        : null;
+      emitEvent({
+        event: "typing",
+        account: profileId,
+        timestamp,
+        conversation: { urn: event.conversationUrn, convId: convInfo?.convId ?? null },
+        from: { urn: event.fromUrn },
+      });
       return;
     }
 
     case "read_receipt": {
-      emitEvent({ event: "read_receipt", account: profileId, timestamp: event.timestamp ?? timestamp, conversation: { urn: event.conversationUrn } });
+      emitEvent({
+        event: "read_receipt",
+        account: profileId,
+        timestamp: event.timestamp ?? timestamp,
+        conversation: { urn: event.conversationUrn },
+      });
       return;
     }
 
     case "reaction": {
-      emitEvent({ event: "reaction", account: profileId, timestamp, messageUrn: event.messageUrn, reactions: event.reactions });
+      emitEvent({
+        event: "reaction",
+        account: profileId,
+        timestamp,
+        messageUrn: event.messageUrn,
+        reactions: event.reactions,
+      });
       return;
     }
 
