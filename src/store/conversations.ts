@@ -343,4 +343,39 @@ export class ConversationStore {
     const syncState: SyncState = { ...DEFAULT_SYNC_STATE, ...record.syncState, ...updates };
     await this.upsert(convId, { ...record, syncState });
   }
+
+  /**
+   * Bump RECORD metadata to reflect a newly-received message:
+   *   - `lastActivityAt` → the message timestamp (so the TUI sidebar re-sorts)
+   *   - `lastReadAt` → ditto, only if the message is from the user themselves
+   *   - `unreadCount` → incremented for inbound, left alone for outbound
+   *   - `syncState.newestMessageAt` → max of current and the new timestamp
+   *
+   * Falls back to `updateSyncState` alone if the RECORD doesn't exist yet
+   * (first message in a brand-new conversation via listen, before fetch has
+   * had a chance to materialize the record).
+   */
+  async bumpForIncomingMessage(
+    convId: string,
+    opts: { timestamp: number; isFromMe: boolean }
+  ): Promise<void> {
+    const record = await this.read(convId);
+    if (!record) {
+      await this.updateSyncState(convId, { newestMessageAt: opts.timestamp });
+      return;
+    }
+    const iso = new Date(opts.timestamp).toISOString();
+    const currentNewest = record.syncState?.newestMessageAt ?? 0;
+    await this.upsert(convId, {
+      ...record,
+      lastActivityAt: iso,
+      lastReadAt: opts.isFromMe ? iso : record.lastReadAt,
+      unreadCount: opts.isFromMe ? record.unreadCount : (record.unreadCount ?? 0) + 1,
+      syncState: {
+        ...DEFAULT_SYNC_STATE,
+        ...record.syncState,
+        newestMessageAt: Math.max(currentNewest, opts.timestamp),
+      },
+    });
+  }
 }

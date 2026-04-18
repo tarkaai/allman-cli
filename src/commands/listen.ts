@@ -195,35 +195,18 @@ async function handleEvent(
           debug(`Failed to persist message: ${String(err)}`);
         });
 
-        // Bump the RECORD's activity metadata so the TUI sidebar (sorted by
-        // lastActivityAt) surfaces the conversation at the top right away.
-        // Previously only syncState.newestMessageAt was updated, which the TUI
-        // doesn't sort by — meaning listen-delivered messages were on disk but
-        // invisible in the sidebar until the next manual sync.
-        const msgTs = event.timestamp ?? timestamp;
-        const msgIso = new Date(msgTs).toISOString();
-        try {
-          const current = await conversations.read(convId);
-          if (current) {
-            const nextUnread = isFromMe ? current.unreadCount : (current.unreadCount ?? 0) + 1;
-            await conversations.upsert(convId, {
-              ...current,
-              lastActivityAt: msgIso,
-              lastReadAt: isFromMe ? msgIso : current.lastReadAt,
-              unreadCount: nextUnread,
-              syncState: {
-                ...current.syncState,
-                newestMessageAt: msgTs,
-              },
-            });
-          } else {
-            // No RECORD yet for this convId — fall back to the syncState-only
-            // path so we at least don't lose the newestMessageAt signal.
-            await conversations.updateSyncState(convId, { newestMessageAt: msgTs });
-          }
-        } catch (err) {
-          debug(`Failed to update RECORD metadata: ${String(err)}`);
-        }
+        // Bump the RECORD so the TUI sidebar (sorted by lastActivityAt)
+        // surfaces the conversation at the top. Without this, messages land
+        // in the JSONL but the sidebar never re-sorts and the user can't see
+        // them until the next manual sync rewrites the RECORD.
+        await conversations
+          .bumpForIncomingMessage(convId, {
+            timestamp: event.timestamp ?? timestamp,
+            isFromMe,
+          })
+          .catch((err) => {
+            debug(`Failed to update RECORD metadata: ${String(err)}`);
+          });
         store.git.scheduleCommit(`listen: new message in ${convId.slice(0, 20)}`);
 
         // Append to INBOX.jsonl for inbound messages. For attachment-only
