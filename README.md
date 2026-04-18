@@ -1,4 +1,4 @@
-# lilac
+# allman
 
 LinkedIn messenger from the CLI. File-backed, git-versioned, designed for AI agents and humans.
 
@@ -11,7 +11,7 @@ Messages are stored locally as JSONL files in a git repository. All reads come f
 ### From GitHub Releases (Linux, x64 and arm64)
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/tarkaai/lilac-cli/main/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/tarkaai/allman-cli/main/install.sh | bash
 ```
 
 Pin a version or change the install prefix:
@@ -21,20 +21,20 @@ curl -fsSL .../install.sh | VERSION=v0.1.0 bash
 curl -fsSL .../install.sh | PREFIX=$HOME/.local bash
 ```
 
-Or grab a binary directly from the [releases page](https://github.com/tarkaai/lilac-cli/releases).
+Or grab a binary directly from the [releases page](https://github.com/tarkaai/allman-cli/releases).
 
 ### From source
 
 Requires [Bun](https://bun.sh) (latest, via asdf or direct install).
 
 ```bash
-git clone git@github.com:tarkaai/lilac-cli.git
-cd lilac-cli
+git clone git@github.com:tarkaai/allman-cli.git
+cd allman-cli
 bun install
-bun run build          # produces dist/lilac
+bun run build          # produces dist/allman
 ```
 
-Add `dist/lilac` to your `$PATH`, or run directly with:
+Add `dist/allman` to your `$PATH`, or run directly with:
 
 ```bash
 bun run dev -- <command> [options]
@@ -43,7 +43,7 @@ bun run dev -- <command> [options]
 Playwright's Chromium browser is required for login only:
 
 ```bash
-lilac install-browsers
+allman install-browsers
 # or: bunx playwright install chromium
 ```
 
@@ -52,12 +52,12 @@ lilac install-browsers
 ## Quick start
 
 ```bash
-lilac login                       # opens browser, saves session
-lilac sync                        # pull conversation history (default: since last sync)
-lilac conversations               # list conversations
-lilac messages sarah-chen         # show messages with sarah-chen
-lilac send sarah-chen "Hey!"      # send a message
-lilac listen                      # stream real-time events to stdout as NDJSON
+allman login                       # opens browser, saves session
+allman sync                        # pull conversation history (default: since last sync)
+allman conversations               # list conversations
+allman messages sarah-chen         # show messages with sarah-chen
+allman send sarah-chen "Hey!"      # send a message
+allman listen                      # stream real-time events to stdout as NDJSON
 ```
 
 ---
@@ -70,22 +70,22 @@ All commands accept these flags:
 
 | Flag | Description |
 |------|-------------|
-| `-a, --account <slug>` | Account to use (default: `$LILAC_ACCOUNT`, or the only account if there is one) |
-| `-s, --store <path>` | Store directory (default: `$LILAC_STORE`, or `./.lilac`) |
+| `-a, --account <slug>` | Account to use (default: `$ALLMAN_ACCOUNT`, or the only account if there is one) |
+| `-s, --store <path>` | Store directory (default: `$ALLMAN_STORE`, or `./.allman`) |
 | `--json` | Output as machine-readable JSON (stdout) |
 | `--debug` | Verbose debug output to stderr |
 
 ---
 
-### `lilac login`
+### `allman login`
 
 Authenticate with LinkedIn. Opens a headed Chromium browser. Complete the login in the browser window; cookies are captured automatically.
 
 ```bash
-lilac login
-lilac login --account your-account
-lilac login --proxy host:port
-lilac login --proxy host:port:username:password
+allman login
+allman login --account your-account
+allman login --proxy host:port
+allman login --proxy host:port:username:password
 ```
 
 On success, writes `AUTH.json` and `COOKIES.json` to the store and creates a slug symlink for the account.
@@ -99,51 +99,51 @@ On success, writes `AUTH.json` and `COOKIES.json` to the store and creates a slu
 
 ---
 
-### `lilac logout`
+### `allman logout`
 
 Clear session cookies for an account. Does not delete message history.
 
 ```bash
-lilac logout
-lilac logout --account your-account
+allman logout
+allman logout --account your-account
 ```
 
 ---
 
-### `lilac status`
+### `allman status`
 
 Show authentication status for one or all accounts.
 
 ```bash
-lilac status
-lilac status --account your-account
-lilac status --json
+allman status
+allman status --account your-account
+allman status --json
 ```
 
 Output includes: profile slug, name, auth status, cookie validity, last sync time, proxy, and store path.
 
 ---
 
-### `lilac start`
+### `allman start`
 
 Verify auth (login if needed), sync from the last sync date, then run `listen` indefinitely. Designed as a single entrypoint for daemon use.
 
 ```bash
-lilac start
-lilac start --account your-account
+allman start
+allman start --account your-account
 ```
 
 ---
 
-### `lilac sync`
+### `allman sync`
 
 Pull conversation history from LinkedIn into the local store.
 
 ```bash
-lilac sync                         # sync all conversations since last sync
-lilac sync --since 3mo             # sync all conversations from 3 months ago
-lilac sync --since 2025-01-01      # sync from a specific date
-lilac sync sarah-chen              # sync only this conversation
+allman sync                         # sync all conversations since last sync
+allman sync --since 3mo             # sync all conversations from 3 months ago
+allman sync --since 2025-01-01      # sync from a specific date
+allman sync sarah-chen              # sync only this conversation
 ```
 
 **Behavior:**
@@ -162,16 +162,16 @@ lilac sync sarah-chen              # sync only this conversation
 
 ---
 
-### `lilac listen`
+### `allman listen`
 
 Stream real-time LinkedIn events to **stdout** as NDJSON. All logs go to stderr.
 
 ```bash
-lilac listen
-lilac listen --account your-account
+allman listen
+allman listen --account your-account
 
 # Pipe to a handler
-lilac listen | while read -r event; do
+allman listen | while read -r event; do
   echo "Event: $event"
 done
 ```
@@ -205,14 +205,14 @@ Each event is a JSON object on a single line. Example:
 
 ---
 
-### `lilac conversations` (alias: `convs`)
+### `allman conversations` (alias: `convs`)
 
 List conversations from the local store, sorted by most recent activity.
 
 ```bash
-lilac conversations
-lilac conversations --limit 20
-lilac conversations --json
+allman conversations
+allman conversations --limit 20
+allman conversations --json
 ```
 
 **Options:**
@@ -223,17 +223,17 @@ lilac conversations --json
 
 ---
 
-### `lilac messages <conversation>`  (alias: `msgs`)
+### `allman messages <conversation>`  (alias: `msgs`)
 
 Show messages for a conversation. Auto-syncs if the conversation is not found locally or if the last sync was more than 1 minute ago.
 
 ```bash
-lilac messages sarah-chen
-lilac messages sarah-chen --limit 100
-lilac messages sarah-chen --since 2025-01-01
-lilac messages "https://www.linkedin.com/in/sarah-chen"
-lilac messages "urn:li:messagingThread:2-abc123"
-lilac messages sarah-chen --no-sync   # skip auto-sync
+allman messages sarah-chen
+allman messages sarah-chen --limit 100
+allman messages sarah-chen --since 2025-01-01
+allman messages "https://www.linkedin.com/in/sarah-chen"
+allman messages "urn:li:messagingThread:2-abc123"
+allman messages sarah-chen --no-sync   # skip auto-sync
 ```
 
 The `<conversation>` argument accepts:
@@ -251,14 +251,14 @@ The `<conversation>` argument accepts:
 
 ---
 
-### `lilac send <to> <text>`
+### `allman send <to> <text>`
 
 Send a message to a LinkedIn contact.
 
 ```bash
-lilac send sarah-chen "Hey, how are you?"
-lilac send "https://www.linkedin.com/in/sarah-chen" "Hello!"
-lilac send "urn:li:messagingThread:2-abc123" "Following up"
+allman send sarah-chen "Hey, how are you?"
+allman send "https://www.linkedin.com/in/sarah-chen" "Hello!"
+allman send "urn:li:messagingThread:2-abc123" "Following up"
 ```
 
 The `<to>` argument accepts a slug, profile URL, or conversation URN.
@@ -271,16 +271,16 @@ The `<to>` argument accepts a slug, profile URL, or conversation URN.
 
 ---
 
-### `lilac search <query>`
+### `allman search <query>`
 
 Search contacts and conversations by name, slug, or profile ID. Fuzzy matching with confidence scores.
 
 ```bash
-lilac search "sarah"
-lilac search "ali smi"    # matches "Alice Smith"
-lilac search sarah-chen
-lilac search --limit 5 "dan"
-lilac search --json "sarah"
+allman search "sarah"
+allman search "ali smi"    # matches "Alice Smith"
+allman search sarah-chen
+allman search --limit 5 "dan"
+allman search --json "sarah"
 ```
 
 **Confidence scoring:**
@@ -302,16 +302,16 @@ lilac search --json "sarah"
 
 ---
 
-### `lilac inbox`
+### `allman inbox`
 
 Show new messages since the last time `inbox` was run (watermark-based). Syncs first, then scans all conversations for inbound messages newer than the watermark.
 
 ```bash
-lilac inbox
-lilac inbox --since 1h        # override watermark
-lilac inbox --no-mark         # don't advance the watermark
-lilac inbox --limit 10
-lilac inbox --json
+allman inbox
+allman inbox --since 1h        # override watermark
+allman inbox --no-mark         # don't advance the watermark
+allman inbox --limit 10
+allman inbox --json
 ```
 
 The watermark is stored in `inbox-state.json` (gitignored). On first run, defaults to 24 hours ago.
@@ -328,15 +328,15 @@ Per-conversation read tracking: if you sent a message to a conversation, that co
 
 ---
 
-### `lilac grep <query>`
+### `allman grep <query>`
 
 Full-text search across all locally stored message bodies. Scans JSONL files directly.
 
 ```bash
-lilac grep "project proposal"
-lilac grep "contract" --since 3mo
-lilac grep "meeting" --limit 100
-lilac grep "invoice" --json
+allman grep "project proposal"
+allman grep "contract" --since 3mo
+allman grep "meeting" --limit 100
+allman grep "invoice" --json
 ```
 
 Results are sorted newest-first.
@@ -350,24 +350,24 @@ Results are sorted newest-first.
 
 ---
 
-### `lilac store`
+### `allman store`
 
 Manage the local file store.
 
 ```bash
-lilac store path              # print the store path
-lilac store status            # show account and conversation counts
-lilac store commit "message"  # manually trigger a git commit
+allman store path              # print the store path
+allman store status            # show account and conversation counts
+allman store commit "message"  # manually trigger a git commit
 ```
 
 ---
 
-### `lilac install-browsers`
+### `allman install-browsers`
 
-Install Playwright's Chromium browser (required for `lilac login`).
+Install Playwright's Chromium browser (required for `allman login`).
 
 ```bash
-lilac install-browsers
+allman install-browsers
 ```
 
 ---
@@ -377,7 +377,7 @@ lilac install-browsers
 The store is a git repository. All message history is committed; session-sensitive files are gitignored.
 
 ```
-.lilac/
+.allman/
 ├── .git/
 ├── .gitignore
 ├── {myProfileId}/                    # one directory per logged-in account
@@ -484,7 +484,7 @@ Outbound messages are rate-limited per account. Default: 3000ms minimum between 
 To change the interval:
 
 ```json
-// .lilac/{profileId}/config.json
+// .allman/{profileId}/config.json
 {
   "rateLimit": {
     "minMessageIntervalMs": 5000
@@ -494,23 +494,23 @@ To change the interval:
 
 ### Pre-send abort
 
-Before sending, `lilac send` fetches the 10 most recent messages from LinkedIn. If new inbound messages arrived since your last reply, the send is aborted and the new messages are printed to stderr. This prevents sending without reading context.
+Before sending, `allman send` fetches the 10 most recent messages from LinkedIn. If new inbound messages arrived since your last reply, the send is aborted and the new messages are printed to stderr. This prevents sending without reading context.
 
 ### SSE streaming
 
-`lilac listen` connects to `https://www.linkedin.com/realtime/connect?rc=1` with `Accept: text/event-stream`. The stream delivers `data: {JSON}` lines. Event type is extracted from the `topic` field.
+`allman listen` connects to `https://www.linkedin.com/realtime/connect?rc=1` with `Accept: text/event-stream`. The stream delivers `data: {JSON}` lines. Event type is extracted from the `topic` field.
 
 The stream reconnects automatically on disconnect. A heartbeat POST is sent every 60s to keep the connection alive.
 
 ### stdout vs stderr
 
-`lilac listen` writes NDJSON events to **stdout**. All informational output, warnings, errors, and debug messages go to **stderr**. This separation is intentional — agents and pipes read stdout without log noise.
+`allman listen` writes NDJSON events to **stdout**. All informational output, warnings, errors, and debug messages go to **stderr**. This separation is intentional — agents and pipes read stdout without log noise.
 
 All other commands write human-readable output to stdout, and errors to stderr.
 
 ### Inbox watermark
 
-`lilac inbox` uses a per-account watermark (`inbox-state.json`) to track what has been seen. Each run:
+`allman inbox` uses a per-account watermark (`inbox-state.json`) to track what has been seen. Each run:
 1. Syncs from LinkedIn
 2. Scans all conversations for inbound messages newer than the watermark
 3. Advances the watermark to now (unless `--no-mark`)
@@ -523,8 +523,8 @@ Per-conversation: if you sent a message in a conversation, that conversation's r
 
 | Variable | Description |
 |----------|-------------|
-| `LILAC_STORE` | Override default store path (default: `./.lilac`) |
-| `LILAC_ACCOUNT` | Default account slug (used when `--account` is not specified) |
+| `ALLMAN_STORE` | Override default store path (default: `./.allman`) |
+| `ALLMAN_ACCOUNT` | Default account slug (used when `--account` is not specified) |
 | `PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH` | Use an existing Chromium binary for login |
 
 ---
@@ -578,7 +578,7 @@ Configured per account via `config.json`. Applied to all API calls for that acco
 bun install
 bun run dev -- <command>        # run without building
 bun test                        # vitest (unit + integration)
-bun run build                   # compile to dist/lilac (standalone binary)
+bun run build                   # compile to dist/allman (standalone binary)
 bun run lint                    # biome check
 bun run lint:fix                # biome check --write
 ```

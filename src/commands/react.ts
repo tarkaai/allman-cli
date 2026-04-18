@@ -1,21 +1,21 @@
 /**
- * lilac react — add (or remove) an emoji reaction to a message in a conversation.
+ * allman react — add (or remove) an emoji reaction to a message in a conversation.
  *
  * Usage:
- *   lilac react <target> <emoji>            react to the most recent message
- *   lilac react <target> <emoji> --message <urn>
- *   lilac react <target> <emoji> --unreact  remove your reaction
+ *   allman react <target> <emoji>            react to the most recent message
+ *   allman react <target> <emoji> --message <urn>
+ *   allman react <target> <emoji> --unreact  remove your reaction
  */
 
-import { Store, resolveStorePath } from "../store/index.js";
 import { LinkedInError } from "../linkedin/api/client.js";
-import { loadSession } from "../linkedin/api/session.js";
 import { addReaction, removeReaction } from "../linkedin/api/endpoints/messages.js";
-import { isUrn, extractBareConvId } from "../utils/urn.js";
-import { slugFromUrl } from "../utils/slug.js";
-import * as output from "../utils/output.js";
+import { loadSession } from "../linkedin/api/session.js";
 import type { ConversationStore } from "../store/index.js";
+import { resolveStorePath, Store } from "../store/index.js";
 import type { StoredMessage } from "../store/types.js";
+import * as output from "../utils/output.js";
+import { slugFromUrl } from "../utils/slug.js";
+import { extractBareConvId, isUrn } from "../utils/urn.js";
 
 export interface ReactOptions {
   account?: string;
@@ -36,7 +36,7 @@ export async function reactCommand(
   const store = new Store({ path: storePath });
   await store.init();
 
-  let session;
+  let session: Awaited<ReturnType<typeof loadSession>>;
   try {
     session = await loadSession(store, options.account);
   } catch (err) {
@@ -48,10 +48,7 @@ export async function reactCommand(
 
   const bareConvId = await resolveConversation(target, conversations);
   if (!bareConvId) {
-    output.error(
-      `Conversation "${target}" not found locally. Run \`lilac sync\` first.`,
-      1
-    );
+    output.error(`Conversation "${target}" not found locally. Run \`allman sync\` first.`, 1);
     return;
   }
 
@@ -62,14 +59,15 @@ export async function reactCommand(
     return;
   }
 
-  const picked = options.message
-    ? messages.find((m) => normalizeMsgId(m.urn) === normalizeMsgId(options.message!))
+  const wantedMessage = options.message;
+  const picked = wantedMessage
+    ? messages.find((m) => normalizeMsgId(m.urn) === normalizeMsgId(wantedMessage))
     : messages[messages.length - 1];
 
   if (!picked) {
     output.error(
       options.message
-        ? `Message "${options.message}" not found locally. Try \`lilac sync ${target}\`.`
+        ? `Message "${options.message}" not found locally. Try \`allman sync ${target}\`.`
         : "Could not select a message.",
       1
     );
@@ -162,7 +160,7 @@ function applyReactionChange(
     return [...current, { emoji, count: 1, hasUserReacted: true }];
   }
   // remove
-  if (!existing || !existing.hasUserReacted) return current;
+  if (!existing?.hasUserReacted) return current;
   if (existing.count <= 1) return current.filter((r) => r.emoji !== emoji);
   return current.map((r) =>
     r.emoji === emoji ? { ...r, count: r.count - 1, hasUserReacted: false } : r

@@ -14,20 +14,18 @@
  *
  * Source:
  *   monorepo/lib/services/.../linkedin-api-services.ts
- *   lilac/api/src/services/messaging/message-sender.ts
+ *   allman/api/src/services/messaging/message-sender.ts
  */
 
-import { randomUUID } from "crypto";
+import { randomUUID } from "node:crypto";
+import { byteArrayToString, extractBareConvId, uuidToByteArray } from "../../../utils/urn.js";
 import type { LinkedInApiClient } from "../client.js";
-import { uuidToByteArray, byteArrayToString, extractBareConvId } from "../../../utils/urn.js";
 
-const GRAPHQL_URL =
-  "https://www.linkedin.com/voyager/api/voyagerMessagingGraphQL/graphql";
+const GRAPHQL_URL = "https://www.linkedin.com/voyager/api/voyagerMessagingGraphQL/graphql";
 const MESSAGES_REST_URL =
   "https://www.linkedin.com/voyager/api/voyagerMessagingDashMessengerMessages";
 
-const QUERY_ID_MESSAGES =
-  "messengerMessages.90abe2bc64df3bc3e1323a1479989b49";
+const QUERY_ID_MESSAGES = "messengerMessages.90abe2bc64df3bc3e1323a1479989b49";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -176,8 +174,7 @@ export async function fetchMessages(
   // LinkedIn requires parens encoded as %28/%29 — encodeURIComponent leaves them unencoded
   const encodedConvUrn = `urn%3Ali%3Amsg_conversation%3A%28urn%3Ali%3Afsd_profile%3A${senderProfileId}%2C${encodeURIComponent(bareConvId)}%29`;
 
-  const variables =
-    `(deliveredAt:${anchorTimestamp},conversationUrn:${encodedConvUrn},countBefore:${countBefore},countAfter:0)`;
+  const variables = `(deliveredAt:${anchorTimestamp},conversationUrn:${encodedConvUrn},countBefore:${countBefore},countAfter:0)`;
 
   const response = await client.request<MessagesQueryResponse>({
     method: "GET",
@@ -369,7 +366,7 @@ export async function addReaction(
   client: LinkedInApiClient,
   messageUrn: string,
   senderProfileUrn: string,
-  emoji: string,
+  emoji: string
 ): Promise<void> {
   const senderProfileId = senderProfileUrn.replace("urn:li:fsd_profile:", "");
   const compositeUrn = buildReactionMessageUrn(messageUrn, senderProfileId);
@@ -390,7 +387,7 @@ export async function removeReaction(
   client: LinkedInApiClient,
   messageUrn: string,
   senderProfileUrn: string,
-  emoji: string,
+  emoji: string
 ): Promise<void> {
   const senderProfileId = senderProfileUrn.replace("urn:li:fsd_profile:", "");
   const compositeUrn = buildReactionMessageUrn(messageUrn, senderProfileId);
@@ -417,13 +414,15 @@ function parseSendResponse(response: SendMessageResponse): SendMessageResult | n
   const valueUrn = response?.data?.["*value"];
   if (valueUrn && response.included) {
     const included = buildIncludedMap(response.included);
-    const msg = included.get(valueUrn) as {
-      entityUrn?: string;
-      backendUrn?: string;
-      conversationUrn?: string;
-      backendConversationUrn?: string;
-      deliveredAt?: number;
-    } | undefined;
+    const msg = included.get(valueUrn) as
+      | {
+          entityUrn?: string;
+          backendUrn?: string;
+          conversationUrn?: string;
+          backendConversationUrn?: string;
+          deliveredAt?: number;
+        }
+      | undefined;
     if (msg) {
       return {
         messageUrn: msg.backendUrn ?? msg.entityUrn ?? valueUrn,
@@ -452,10 +451,12 @@ function parseSendResponse(response: SendMessageResponse): SendMessageResult | n
   };
 }
 
-function buildIncludedMap(included: Array<Record<string, unknown>> | undefined): Map<string, Record<string, unknown>> {
+function buildIncludedMap(
+  included: Array<Record<string, unknown>> | undefined
+): Map<string, Record<string, unknown>> {
   const map = new Map<string, Record<string, unknown>>();
   for (const item of included ?? []) {
-    const urn = item["entityUrn"];
+    const urn = item.entityUrn;
     if (typeof urn === "string") map.set(urn, item);
   }
   return map;
@@ -601,21 +602,21 @@ function parseAttachmentByKind(
   if (lk.includes("file") || lk.includes("document") || lk.includes("attachment")) {
     return {
       type: "file",
-      url: str(inner["url"]) ?? str(inner["downloadUrl"]),
-      name: str(inner["name"]),
-      mimeType: str(inner["mediaType"]),
-      size: num(inner["byteSize"]),
+      url: str(inner.url) ?? str(inner.downloadUrl),
+      name: str(inner.name),
+      mimeType: str(inner.mediaType),
+      size: num(inner.byteSize),
       raw,
     };
   }
 
   if (lk.includes("vectorimage") || lk.includes("photo") || lk === "image") {
-    const path = str(inner["fileIdentifyingUrlPathSegment"]);
+    const path = str(inner.fileIdentifyingUrlPathSegment);
     return {
       type: "image",
-      url: path ? buildVectorImageUrl(inner, path) : str(inner["url"]),
-      width: num(inner["width"]),
-      height: num(inner["height"]),
+      url: path ? buildVectorImageUrl(inner, path) : str(inner.url),
+      width: num(inner.width),
+      height: num(inner.height),
       raw,
     };
   }
@@ -623,18 +624,18 @@ function parseAttachmentByKind(
   if (lk.includes("externalmedia") || lk.includes("linkpreview")) {
     // External media covers GIFs, Giphy embeds, and link-preview cards.
     // Distinguish on mediaType when available: image/gif → gif.
-    const media = (inner["media"] as Record<string, unknown>) ?? {};
-    const preview = (inner["previewMedia"] as Record<string, unknown>) ?? {};
-    const mime = str(media["mediaType"]) ?? str(inner["mediaType"]);
+    const media = (inner.media as Record<string, unknown>) ?? {};
+    const preview = (inner.previewMedia as Record<string, unknown>) ?? {};
+    const mime = str(media.mediaType) ?? str(inner.mediaType);
     const isGif = mime === "image/gif" || /gif/i.test(kind);
     return {
       type: isGif ? "gif" : "link_preview",
-      url: str(media["url"]) ?? str(inner["url"]),
-      previewUrl: str(preview["url"]) ?? str(media["url"]),
-      title: str(inner["title"]),
-      description: str(inner["description"]),
-      width: num(media["originalWidth"]) ?? num(inner["width"]),
-      height: num(media["originalHeight"]) ?? num(inner["height"]),
+      url: str(media.url) ?? str(inner.url),
+      previewUrl: str(preview.url) ?? str(media.url),
+      title: str(inner.title),
+      description: str(inner.description),
+      width: num(media.originalWidth) ?? num(inner.width),
+      height: num(media.originalHeight) ?? num(inner.height),
       mimeType: mime,
       raw,
     };
@@ -644,25 +645,25 @@ function parseAttachmentByKind(
     // Video renderContent often references media via URN; the actual URL
     // is embedded in the included[] map under that URN. Grab whatever
     // "url"/"thumbnail" field surfaces.
-    const mediaRef = str(inner["media"]);
+    const mediaRef = str(inner.media);
     let url: string | undefined;
     let previewUrl: string | undefined;
-    let width = num(inner["width"]);
-    let height = num(inner["height"]);
+    let width = num(inner.width);
+    let height = num(inner.height);
     if (mediaRef) {
       const mediaDoc = included.get(mediaRef);
       if (mediaDoc) {
-        url = str(mediaDoc["progressiveStreams"]) ?? str(mediaDoc["url"]);
-        previewUrl = str(mediaDoc["thumbnail"]);
-        width = width ?? num(mediaDoc["width"]);
-        height = height ?? num(mediaDoc["height"]);
+        url = str(mediaDoc.progressiveStreams) ?? str(mediaDoc.url);
+        previewUrl = str(mediaDoc.thumbnail);
+        width = width ?? num(mediaDoc.width);
+        height = height ?? num(mediaDoc.height);
       }
     }
     return {
       type: "video",
-      url: url ?? str(inner["url"]),
+      url: url ?? str(inner.url),
       previewUrl,
-      durationMs: num(inner["duration"]),
+      durationMs: num(inner.duration),
       width,
       height,
       raw,
@@ -672,27 +673,27 @@ function parseAttachmentByKind(
   if (lk === "audio" || lk === "voice" || lk.includes("voicemessage")) {
     return {
       type: lk.includes("voice") ? "voice" : "audio",
-      url: str(inner["url"]),
-      durationMs: num(inner["duration"]),
+      url: str(inner.url),
+      durationMs: num(inner.duration),
       raw,
     };
   }
 
   if (lk.includes("forwardedmessage")) {
-    const sender = (inner["originalSender"] as Record<string, unknown>) ?? {};
+    const sender = (inner.originalSender as Record<string, unknown>) ?? {};
     return {
       type: "forwarded",
-      originalText: str(inner["forwardedBody"]) ?? str(inner["messageBody"]),
+      originalText: str(inner.forwardedBody) ?? str(inner.messageBody),
       authorName: buildSenderName(sender),
       raw,
     };
   }
 
   if (lk.includes("repliedmessage")) {
-    const sender = (inner["originalSender"] as Record<string, unknown>) ?? {};
+    const sender = (inner.originalSender as Record<string, unknown>) ?? {};
     return {
       type: "replied",
-      originalText: str(inner["messageBody"]) ?? str(inner["forwardedBody"]),
+      originalText: str(inner.messageBody) ?? str(inner.forwardedBody),
       authorName: buildSenderName(sender),
       raw,
     };
@@ -701,7 +702,7 @@ function parseAttachmentByKind(
   if (lk.includes("unavailable")) {
     return {
       type: "unavailable",
-      description: str(inner["unavailableReason"]) ?? str(inner["contentType"]),
+      description: str(inner.unavailableReason) ?? str(inner.contentType),
       raw,
     };
   }
@@ -709,8 +710,8 @@ function parseAttachmentByKind(
   if (lk.includes("awaymessage")) {
     return {
       type: "away_message",
-      originalText: str(inner["text"]),
-      description: str(inner["footerText"]),
+      originalText: str(inner.text),
+      description: str(inner.footerText),
       raw,
     };
   }
@@ -720,8 +721,8 @@ function parseAttachmentByKind(
   // the client renders the linked post inline. No inline commentary, author
   // or title is delivered; all we can usefully recover is a permalink.
   if (lk === "hosturndata" || (lk.includes("host") && lk.includes("urn"))) {
-    const hostUrn = str(inner["hostUrn"]);
-    const hostType = str(inner["type"]);
+    const hostUrn = str(inner.hostUrn);
+    const hostType = str(inner.type);
     const activityId = hostUrn ? extractActivityId(hostUrn) : null;
     return {
       type: "post_share",
@@ -742,18 +743,14 @@ function parseAttachmentByKind(
     lk.includes("post") ||
     lk.includes("article")
   ) {
-    const actorName =
-      buildActor(inner["actor"]) ??
-      buildActor(inner["author"]) ??
-      str(inner["authorName"]);
+    const actorName = buildActor(inner.actor) ?? buildActor(inner.author) ?? str(inner.authorName);
     return {
       type: "post_share",
-      title: str(inner["title"]) ?? str(inner["headline"]),
-      description: str(inner["description"]) ?? str(inner["subtitle"]),
-      originalText:
-        str(inner["commentary"]) ?? str(inner["summary"]) ?? str(inner["body"]),
+      title: str(inner.title) ?? str(inner.headline),
+      description: str(inner.description) ?? str(inner.subtitle),
+      originalText: str(inner.commentary) ?? str(inner.summary) ?? str(inner.body),
       authorName: actorName,
-      url: str(inner["permalink"]) ?? str(inner["navigationUrl"]) ?? str(inner["url"]),
+      url: str(inner.permalink) ?? str(inner.navigationUrl) ?? str(inner.url),
       raw,
     };
   }
@@ -770,12 +767,12 @@ function num(v: unknown): number | undefined {
 }
 
 function buildSenderName(sender: Record<string, unknown>): string | undefined {
-  const pt = (sender["participantType"] as Record<string, unknown>) ?? {};
-  const member = (pt["member"] as Record<string, unknown>) ?? {};
-  const first = (member["firstName"] as { text?: string } | undefined)?.text ?? "";
-  const last = (member["lastName"] as { text?: string } | undefined)?.text ?? "";
+  const pt = (sender.participantType as Record<string, unknown>) ?? {};
+  const member = (pt.member as Record<string, unknown>) ?? {};
+  const first = (member.firstName as { text?: string } | undefined)?.text ?? "";
+  const last = (member.lastName as { text?: string } | undefined)?.text ?? "";
   const full = `${first} ${last}`.trim();
-  return full || str(sender["name"]);
+  return full || str(sender.name);
 }
 
 /**
@@ -792,10 +789,8 @@ function buildActor(actor: unknown): string | undefined {
   if (!actor || typeof actor !== "object") return undefined;
   const a = actor as Record<string, unknown>;
   return (
-    str(a["name"]) ??
-    (a["firstName"] && a["lastName"]
-      ? `${String(a["firstName"])} ${String(a["lastName"])}`.trim()
-      : undefined)
+    str(a.name) ??
+    (a.firstName && a.lastName ? `${String(a.firstName)} ${String(a.lastName)}`.trim() : undefined)
   );
 }
 
@@ -806,16 +801,16 @@ function buildActor(actor: unknown): string | undefined {
  * path segment so callers can still fetch it.
  */
 function buildVectorImageUrl(inner: Record<string, unknown>, path: string): string {
-  const rootUrl = str(inner["rootUrl"]);
+  const rootUrl = str(inner.rootUrl);
   if (rootUrl) return `${rootUrl.replace(/\/$/, "")}/${path}`;
   // Artifacts array fallback — some vectorImage payloads nest the path under
   // `artifacts[].fileIdentifyingUrlPathSegment` without a top-level rootUrl.
-  const artifacts = inner["artifacts"];
+  const artifacts = inner.artifacts;
   if (Array.isArray(artifacts)) {
     for (const a of artifacts) {
       const aa = a as Record<string, unknown>;
-      const r = str(aa["rootUrl"]);
-      const p = str(aa["fileIdentifyingUrlPathSegment"]);
+      const r = str(aa.rootUrl);
+      const p = str(aa.fileIdentifyingUrlPathSegment);
       if (r && p) return `${r.replace(/\/$/, "")}/${p}`;
     }
   }

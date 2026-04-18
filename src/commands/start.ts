@@ -1,13 +1,13 @@
 /**
- * lilac start — verify auth, sync from last sync date, then start listening.
+ * allman start — verify auth, sync from last sync date, then start listening.
  */
 
-import { Store, resolveStorePath } from "../store/index.js";
 import { loadSession } from "../linkedin/api/session.js";
+import { resolveStorePath, Store } from "../store/index.js";
+import * as output from "../utils/output.js";
+import { listenCommand } from "./listen.js";
 import { loginCommand } from "./login.js";
 import { syncCommand } from "./sync.js";
-import { listenCommand } from "./listen.js";
-import * as output from "../utils/output.js";
 
 export interface StartOptions {
   account?: string;

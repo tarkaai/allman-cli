@@ -1,14 +1,14 @@
 {
-  "name": "lilac-cli",
+  "name": "allman-cli",
   "version": "0.1.0",
   "description": "LinkedIn messenger from the CLI",
   "type": "module",
   "bin": {
-    "lilac": "./dist/lilac"
+    "allman": "./dist/allman"
   },
   "scripts": {
     "dev": "bun run src/index.ts",
-    "build": "bun build --compile --minify src/index.ts --outfile dist/lilac --external chromium-bidi --external electron",
+    "build": "bun build --compile --minify src/index.ts --outfile dist/allman --external chromium-bidi --external electron",
     "test": "vitest run",
     "test:watch": "vitest",
     "test:coverage": "vitest run --coverage",

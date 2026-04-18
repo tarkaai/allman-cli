@@ -5,12 +5,11 @@
  *   https://www.linkedin.com/in/sarah-chen/ → "sarah-chen"
  *
  * Slugs are used as directory names in the file store:
- *   .lilac/contacts/sarah-chen/RECORD.json
- *   .lilac/conversations/sarah-chen/RECORD.json
+ *   .allman/contacts/sarah-chen/RECORD.json
+ *   .allman/conversations/sarah-chen/RECORD.json
  */
 
-const LINKEDIN_PROFILE_PATTERN =
-  /(?:https?:\/\/)?(?:www\.)?linkedin\.com\/in\/([a-zA-Z0-9_-]+)\/?/;
+const LINKEDIN_PROFILE_PATTERN = /(?:https?:\/\/)?(?:www\.)?linkedin\.com\/in\/([a-zA-Z0-9_-]+)\/?/;
 
 /**
  * Extract the profile slug from a LinkedIn profile URL or return the input
@@ -25,7 +24,7 @@ export function slugFromUrl(input: string): string {
   }
 
   const match = input.match(LINKEDIN_PROFILE_PATTERN);
-  if (!match || !match[1]) {
+  if (!match?.[1]) {
     throw new Error(
       `Could not extract a LinkedIn profile slug from: "${input}". ` +
         `Expected a URL like https://linkedin.com/in/sarah-chen or just "sarah-chen".`

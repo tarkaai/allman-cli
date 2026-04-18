@@ -1,45 +1,41 @@
 #!/usr/bin/env node
 /**
- * lilac — LinkedIn messenger from the CLI
+ * allman — LinkedIn messenger from the CLI
  *
- * Usage: lilac <command> [options]
+ * Usage: allman <command> [options]
  *
  * Global flags (all commands):
- *   --account <slug>   Account to use (default: first found, or $LILAC_ACCOUNT)
- *   --store <path>     Store directory (default: ./.lilac, or $LILAC_STORE)
+ *   --account <slug>   Account to use (default: first found, or $ALLMAN_ACCOUNT)
+ *   --store <path>     Store directory (default: ./.allman, or $ALLMAN_STORE)
  *   --json             Output machine-readable JSON
  *   --debug            Verbose debug output to stderr
  */
 
 import { Command } from "commander";
-import { setJsonMode, setDebugMode } from "./utils/output.js";
+import { conversationsCommand } from "./commands/conversations.js";
+import { grepCommand } from "./commands/grep.js";
+import { inboxCommand } from "./commands/inbox.js";
+import { listenCommand } from "./commands/listen.js";
 import { loginCommand } from "./commands/login.js";
 import { logoutCommand } from "./commands/logout.js";
-import { statusCommand } from "./commands/status.js";
-import { syncCommand } from "./commands/sync.js";
-import { listenCommand } from "./commands/listen.js";
-import { conversationsCommand } from "./commands/conversations.js";
 import { messagesCommand } from "./commands/messages.js";
-import { sendCommand } from "./commands/send.js";
 import { reactCommand } from "./commands/react.js";
 import { searchCommand } from "./commands/search.js";
-import { inboxCommand } from "./commands/inbox.js";
-import { grepCommand } from "./commands/grep.js";
-import {
-  storePathCommand,
-  storeCommitCommand,
-  storeStatusCommand,
-} from "./commands/store-cmd.js";
+import { sendCommand } from "./commands/send.js";
 import { startCommand } from "./commands/start.js";
+import { statusCommand } from "./commands/status.js";
+import { storeCommitCommand, storePathCommand, storeStatusCommand } from "./commands/store-cmd.js";
+import { syncCommand } from "./commands/sync.js";
+import { setDebugMode, setJsonMode } from "./utils/output.js";
 
 const program = new Command();
 
 program
-  .name("lilac")
+  .name("allman")
   .description("LinkedIn messenger from the CLI")
   .version("0.1.0")
-  .option("-a, --account <slug>", "account to use ($LILAC_ACCOUNT)")
-  .option("-s, --store <path>", "store directory ($LILAC_STORE)")
+  .option("-a, --account <slug>", "account to use ($ALLMAN_ACCOUNT)")
+  .option("-s, --store <path>", "store directory ($ALLMAN_STORE)")
   .option("--json", "output as JSON")
   .option("--debug", "enable debug output")
   .hook("preAction", (thisCommand) => {
@@ -136,20 +132,14 @@ program
     "--from <duration>",
     "older boundary — oldest message to fetch (3mo, 6mo, 1y, YYYY-MM-DD)"
   )
-  .option(
-    "--to <duration>",
-    "newer boundary — newest message to fetch (defaults to now)"
-  )
-  .option(
-    "--since <duration>",
-    "[deprecated] alias for --from"
-  )
-  .option(
-    "-n, --limit <n>",
-    "max conversations (inbox sync) or messages (single-conv sync)"
-  )
+  .option("--to <duration>", "newer boundary — newest message to fetch (defaults to now)")
+  .option("--since <duration>", "[deprecated] alias for --from")
+  .option("-n, --limit <n>", "max conversations (inbox sync) or messages (single-conv sync)")
   .option("--json", "output as JSON")
-  .option("--resync", "full re-sync: upsert all fetched messages (fixes stale reactions, parser changes)")
+  .option(
+    "--resync",
+    "full re-sync: upsert all fetched messages (fixes stale reactions, parser changes)"
+  )
   .action(async (conversation: string | undefined, opts, cmd) => {
     const globalOpts = cmd.parent?.opts() ?? {};
     await syncCommand({
@@ -240,8 +230,7 @@ program
 program
   .command("send <to> <text>")
   .description(
-    "Send a message\n" +
-      "  <to> can be: LinkedIn profile URL, profile slug, or conversation URN"
+    "Send a message\n" + "  <to> can be: LinkedIn profile URL, profile slug, or conversation URN"
   )
   .option("-a, --account <slug>", "account to send from")
   .option("-s, --store <path>", "store directory")
@@ -355,9 +344,7 @@ program
 // store (subcommands)
 // ---------------------------------------------------------------------------
 
-const storeCmd = program
-  .command("store")
-  .description("Manage the local file store");
+const storeCmd = program.command("store").description("Manage the local file store");
 
 storeCmd
   .command("path")
@@ -394,7 +381,7 @@ program
   .command("install-browsers")
   .description("Install Playwright's Chromium browser (required for login)")
   .action(async () => {
-    const { execSync } = await import("child_process");
+    const { execSync } = await import("node:child_process");
     process.stderr.write("Installing Chromium via Playwright...\n");
     execSync("npx playwright install chromium", { stdio: "inherit" });
     process.stderr.write("Done.\n");

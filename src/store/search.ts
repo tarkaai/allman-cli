@@ -62,11 +62,7 @@ export async function search(
   return results.slice(0, limit);
 }
 
-function scoreMatch(
-  query: string,
-  queryWords: string[],
-  record: ConversationRecord
-): number {
+function scoreMatch(query: string, queryWords: string[], record: ConversationRecord): number {
   const slug = record.slug?.toLowerCase() ?? "";
   const profileId = record.profileId.toLowerCase();
   const name = record.name.toLowerCase();
@@ -84,9 +80,7 @@ function scoreMatch(
   // Every query word matches start of a word in name
   // e.g. "ali smi" matches "Alice Smith"
   if (queryWords.length > 1) {
-    const allMatch = queryWords.every((qw) =>
-      nameWords.some((nw) => nw.startsWith(qw))
-    );
+    const allMatch = queryWords.every((qw) => nameWords.some((nw) => nw.startsWith(qw)));
     if (allMatch) return 70;
   }
 
@@ -94,9 +88,7 @@ function scoreMatch(
   if (name.includes(query) || slug.includes(query)) return 60;
 
   // Any query word found in name
-  const anyMatch = queryWords.some(
-    (qw) => name.includes(qw) || slug.includes(qw)
-  );
+  const anyMatch = queryWords.some((qw) => name.includes(qw) || slug.includes(qw));
   if (anyMatch) return 40;
 
   return 0;

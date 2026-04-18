@@ -10,9 +10,9 @@
  *   6. relativeTime edge cases (0ms ago, future timestamps)
  */
 
-import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
-import { parseSince } from "@/utils/time.js";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { relativeTime } from "@/utils/output.js";
+import { parseSince } from "@/utils/time.js";
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -117,7 +117,7 @@ describe("parseSince — duration formats", () => {
   it("parses an ISO date string (YYYY-MM-DD) as UTC midnight", () => {
     const result = parseSince("2026-01-15");
     expect(result).toBe(new Date("2026-01-15").getTime());
-    expect(isNaN(result)).toBe(false);
+    expect(Number.isNaN(result)).toBe(false);
   });
 
   it("parses a full ISO datetime string", () => {
@@ -323,7 +323,9 @@ describe("conversations sort logic — numeric ms", () => {
     const conv2 = { newestMessageAt: 1743360000000, lastActivityAt: "2026-03-29T00:00:00Z" };
 
     const sorted = [conv1, conv2].sort((x, y) => {
-      return sortKey(y.newestMessageAt, y.lastActivityAt) - sortKey(x.newestMessageAt, x.lastActivityAt);
+      return (
+        sortKey(y.newestMessageAt, y.lastActivityAt) - sortKey(x.newestMessageAt, x.lastActivityAt)
+      );
     });
     // conv2 has the larger newestMessageAt — should sort first
     expect(sorted[0]).toBe(conv2);
@@ -365,11 +367,11 @@ describe("conversations sort logic — numeric ms", () => {
   it("sort comparison is purely numeric — no string lexicographic issues", () => {
     // "9" > "10" lexicographically, but 9 < 10 numerically
     // Confirm the sort uses subtraction, not string comparison
-    const earlier = 9_000_000_000;  // "9000000000" lexicographically > "10000000000"
-    const later   = 10_000_000_000;
+    const earlier = 9_000_000_000; // "9000000000" lexicographically > "10000000000"
+    const later = 10_000_000_000;
     const sorted = [{ t: earlier }, { t: later }].sort((a, b) => b.t - a.t);
-    expect(sorted[0]!.t).toBe(later);
-    expect(sorted[1]!.t).toBe(earlier);
+    expect(sorted[0]?.t).toBe(later);
+    expect(sorted[1]?.t).toBe(earlier);
   });
 });
 

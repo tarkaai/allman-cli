@@ -11,11 +11,11 @@
  * The convId is the canonical key (directory name).
  */
 
-import { readFile, writeFile, mkdir, readdir } from "fs/promises";
-import { createReadStream as fsCreateReadStream } from "fs";
-import { createInterface } from "readline";
-import { join } from "path";
-import { ensureDir, ensureAlias, forceAlias, resolveAlias } from "./alias.js";
+import { createReadStream as fsCreateReadStream } from "node:fs";
+import { mkdir, readdir, readFile, writeFile } from "node:fs/promises";
+import { join } from "node:path";
+import { createInterface } from "node:readline";
+import { ensureAlias, ensureDir, forceAlias, resolveAlias } from "./alias.js";
 import type { StoreGit } from "./git.js";
 import type { ConversationRecord, StoredMessage, SyncState } from "./types.js";
 
@@ -130,12 +130,16 @@ export class ConversationStore {
       record.syncState.newestMessageAt !== null ||
       record.syncState.totalSynced > 0;
     const merged: ConversationRecord = existing
-      ? { ...existing, ...record, syncState: incomingSyncHasData ? record.syncState : existing.syncState }
+      ? {
+          ...existing,
+          ...record,
+          syncState: incomingSyncHasData ? record.syncState : existing.syncState,
+        }
       : record;
 
     await writeFile(
       join(this.dir(convId), RECORD_FILE),
-      JSON.stringify(merged, null, 2) + "\n",
+      `${JSON.stringify(merged, null, 2)}\n`,
       "utf8"
     );
 
@@ -166,7 +170,9 @@ export class ConversationStore {
   }
 
   /** Find a 1:1 conversation by the contact's profile URN. Scans all records. */
-  async findByProfileUrn(profileUrn: string): Promise<{ convId: string; record: ConversationRecord } | null> {
+  async findByProfileUrn(
+    profileUrn: string
+  ): Promise<{ convId: string; record: ConversationRecord } | null> {
     const ids = await this.list();
     for (const convId of ids) {
       const record = await this.read(convId);
@@ -190,7 +196,7 @@ export class ConversationStore {
     for (const msg of messages) {
       const file = this.messageFile(convId, msg.timestamp);
       if (!byFile.has(file)) byFile.set(file, []);
-      byFile.get(file)!.push(msg);
+      byFile.get(file)?.push(msg);
     }
 
     let totalAdded = 0;
@@ -209,9 +215,13 @@ export class ConversationStore {
             try {
               const m = JSON.parse(line) as StoredMessage;
               if (m.urn) existing.set(extractMsgId(m.urn), line);
-            } catch { /* skip malformed */ }
+            } catch {
+              /* skip malformed */
+            }
           }
-        } catch { /* file doesn't exist yet */ }
+        } catch {
+          /* file doesn't exist yet */
+        }
 
         const beforeSize = existing.size;
 
@@ -223,7 +233,7 @@ export class ConversationStore {
         totalAdded += existing.size - beforeSize;
 
         // Write the merged file.
-        const out = [...existing.values()].join("\n") + "\n";
+        const out = `${[...existing.values()].join("\n")}\n`;
         await writeFile(file, out, "utf8");
       });
       this.writeLocks.set(file, work);
@@ -256,7 +266,9 @@ export class ConversationStore {
           const msg = JSON.parse(line) as StoredMessage;
           if (opts.since && msg.timestamp < opts.since) continue;
           messages.push(msg);
-        } catch { /* skip malformed lines */ }
+        } catch {
+          /* skip malformed lines */
+        }
       }
     }
 

@@ -1,10 +1,10 @@
-import { describe, it, expect } from "vitest";
+import { describe, expect, it } from "vitest";
 import {
-  slugFromUrl,
-  isLinkedInUrl,
-  urlFromSlug,
-  sanitizeSlug,
   conversationSlug,
+  isLinkedInUrl,
+  sanitizeSlug,
+  slugFromUrl,
+  urlFromSlug,
 } from "@/utils/slug.js";
 
 describe("slugFromUrl", () => {

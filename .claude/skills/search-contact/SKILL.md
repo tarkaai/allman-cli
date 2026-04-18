@@ -6,7 +6,7 @@ user-invocable: true
 
 # Search LinkedIn Contacts
 
-Find contacts in the lilac store using fuzzy search.
+Find contacts in the allman store using fuzzy search.
 
 ## Steps
 

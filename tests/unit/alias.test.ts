@@ -1,14 +1,14 @@
-import { describe, it, expect, beforeEach, afterEach } from "vitest";
-import { mkdtemp, rm, readlink, mkdir, writeFile } from "fs/promises";
-import { join } from "path";
-import { tmpdir } from "os";
-import { ensureDir, ensureAlias, forceAlias, resolveAlias } from "../../src/store/alias.js";
+import { mkdir, mkdtemp, readlink, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { ensureAlias, ensureDir, forceAlias, resolveAlias } from "../../src/store/alias.js";
 
 describe("alias utilities", () => {
   let dir: string;
 
   beforeEach(async () => {
-    dir = await mkdtemp(join(tmpdir(), "lilac-alias-test-"));
+    dir = await mkdtemp(join(tmpdir(), "allman-alias-test-"));
   });
 
   afterEach(async () => {
@@ -46,9 +46,7 @@ describe("alias utilities", () => {
 
     it("throws on conflict (different target)", async () => {
       await ensureAlias(dir, "my-slug", "2-abc");
-      await expect(ensureAlias(dir, "my-slug", "2-xyz")).rejects.toThrow(
-        /Alias conflict/
-      );
+      await expect(ensureAlias(dir, "my-slug", "2-xyz")).rejects.toThrow(/Alias conflict/);
     });
   });
 

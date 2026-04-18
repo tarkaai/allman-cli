@@ -1,8 +1,8 @@
 /**
- * lilac search — find contacts/conversations by name.
+ * allman search — find contacts/conversations by name.
  */
 
-import { Store, resolveStorePath } from "../store/index.js";
+import { resolveStorePath, Store } from "../store/index.js";
 import { search } from "../store/search.js";
 import * as output from "../utils/output.js";
 
@@ -35,8 +35,6 @@ export async function searchCommand(query: string, options: SearchOptions): Prom
 
   for (const r of results) {
     const slug = r.slug ?? r.profileId.slice(0, 16);
-    process.stdout.write(
-      `  ${String(r.confidence).padStart(3)}%  ${slug.padEnd(30)} ${r.name}\n`
-    );
+    process.stdout.write(`  ${String(r.confidence).padStart(3)}%  ${slug.padEnd(30)} ${r.name}\n`);
   }
 }

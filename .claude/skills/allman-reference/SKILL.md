@@ -1,15 +1,15 @@
 ---
-name: lilac-reference
-description: Reference guide for lilac store layout, URNs, and event shapes
+name: allman-reference
+description: Reference guide for allman store layout, URNs, and event shapes
 user-invocable: false
 ---
 
-# Lilac Reference
+# Allman Reference
 
 ## Store Layout
 
 ```
-.lilac/
+.allman/
 ├── {myProfileId}/                    # one dir per logged-in account
 │   ├── AUTH.json                     # profile info, auth status (committed)
 │   ├── COOKIES.json                  # cookie jar (gitignored)

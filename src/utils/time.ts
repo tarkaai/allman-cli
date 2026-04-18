@@ -29,20 +29,24 @@ export function parseSince(
   }
 
   const durationMatch = since.match(/^(\d+)(h|d|w|mo|y)$/);
-  if (durationMatch && durationMatch[1] && durationMatch[2]) {
+  if (durationMatch?.[1] && durationMatch[2]) {
     const n = parseInt(durationMatch[1], 10);
     const unit = durationMatch[2];
     const ms =
-      unit === "h" ? n * 60 * 60 * 1000
-      : unit === "d" ? n * 24 * 60 * 60 * 1000
-      : unit === "w" ? n * 7 * 24 * 60 * 60 * 1000
-      : unit === "mo" ? n * 30 * 24 * 60 * 60 * 1000
-      : n * 365 * 24 * 60 * 60 * 1000; // "y"
+      unit === "h"
+        ? n * 60 * 60 * 1000
+        : unit === "d"
+          ? n * 24 * 60 * 60 * 1000
+          : unit === "w"
+            ? n * 7 * 24 * 60 * 60 * 1000
+            : unit === "mo"
+              ? n * 30 * 24 * 60 * 60 * 1000
+              : n * 365 * 24 * 60 * 60 * 1000; // "y"
     return Date.now() - ms;
   }
 
   const ts = Date.parse(since);
-  if (!isNaN(ts)) return ts;
+  if (!Number.isNaN(ts)) return ts;
 
   throw new Error(
     `Invalid --since value: "${since}". Use a duration (1h, 3d, 1w, 3mo, 1y) or an ISO date (YYYY-MM-DD).`

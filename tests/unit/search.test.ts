@@ -1,6 +1,6 @@
-import { describe, it, expect, vi, beforeEach } from "vitest";
-import { search } from "../../src/store/search.js";
+import { describe, expect, it, vi } from "vitest";
 import type { ConversationStore } from "../../src/store/conversations.js";
+import { search } from "../../src/store/search.js";
 import type { ConversationRecord } from "../../src/store/types.js";
 
 function makeRecord(overrides: Partial<ConversationRecord>): ConversationRecord {
@@ -89,50 +89,50 @@ describe("search", () => {
 
   it("100: exact slug match", async () => {
     const results = await search("alice-smith", store);
-    expect(results[0].confidence).toBe(100);
-    expect(results[0].convId).toBe("2-alice");
+    expect(results[0]?.confidence).toBe(100);
+    expect(results[0]?.convId).toBe("2-alice");
   });
 
   it("100: exact profileId match", async () => {
     const results = await search("ACoAABjohn", store);
-    expect(results[0].confidence).toBe(100);
-    expect(results[0].convId).toBe("2-john");
+    expect(results[0]?.confidence).toBe(100);
+    expect(results[0]?.convId).toBe("2-john");
   });
 
   it("95: exact name match (case-insensitive)", async () => {
     const results = await search("alice smith", store);
-    expect(results[0].confidence).toBe(95);
-    expect(results[0].convId).toBe("2-alice");
+    expect(results[0]?.confidence).toBe(95);
+    expect(results[0]?.convId).toBe("2-alice");
   });
 
   it("80: name starts with query", async () => {
     const results = await search("jennif", store);
-    expect(results[0].confidence).toBe(80);
-    expect(results[0].convId).toBe("2-alice");
+    expect(results[0]?.confidence).toBe(80);
+    expect(results[0]?.convId).toBe("2-alice");
   });
 
   it("70: word-start match across multiple words", async () => {
     const results = await search("ali smi", store);
-    expect(results[0].confidence).toBe(70);
-    expect(results[0].convId).toBe("2-alice");
+    expect(results[0]?.confidence).toBe(70);
+    expect(results[0]?.convId).toBe("2-alice");
   });
 
   it("60: name contains query substring", async () => {
     const results = await search("nnifer", store);
-    expect(results[0].confidence).toBe(60);
-    expect(results[0].convId).toBe("2-alice");
+    expect(results[0]?.confidence).toBe(60);
+    expect(results[0]?.convId).toBe("2-alice");
   });
 
   it("60: slug contains query substring", async () => {
     const results = await search("smith", store);
-    expect(results[0].confidence).toBe(60);
-    expect(results[0].convId).toBe("2-john");
+    expect(results[0]?.confidence).toBe(60);
+    expect(results[0]?.convId).toBe("2-john");
   });
 
   it("40: any query word in name", async () => {
     const results = await search("moore xyz", store);
-    expect(results[0].confidence).toBe(40);
-    expect(results[0].convId).toBe("2-alice");
+    expect(results[0]?.confidence).toBe(40);
+    expect(results[0]?.convId).toBe("2-alice");
   });
 
   it("0: no match", async () => {
@@ -149,7 +149,10 @@ describe("search", () => {
     const results = await search("jen", store);
     expect(results.length).toBeGreaterThan(1);
     for (let i = 1; i < results.length; i++) {
-      expect(results[i - 1].confidence).toBeGreaterThanOrEqual(results[i].confidence);
+      const prev = results[i - 1];
+      const curr = results[i];
+      if (!prev || !curr) throw new Error("unreachable");
+      expect(prev.confidence).toBeGreaterThanOrEqual(curr.confidence);
     }
   });
 

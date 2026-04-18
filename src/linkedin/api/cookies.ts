@@ -12,10 +12,10 @@
  * All cookie handling is RFC 6265-compliant via tough-cookie.
  *
  * Reference: monorepo/lib/services/.../linkedin-api-services.ts
- *            lilac/api/src/services/session/cookie-set.ts
+ *            allman/api/src/services/session/cookie-set.ts
  */
 
-import { CookieJar, Cookie } from "tough-cookie";
+import { Cookie, CookieJar } from "tough-cookie";
 import type { AccountRecord } from "../../store/types.js";
 
 export const LINKEDIN_DOMAIN = ".www.linkedin.com";
@@ -66,9 +66,7 @@ export async function buildCookieHeader(jar: CookieJar): Promise<string> {
 
   // Sort: broader domains first (.linkedin.com before .www.linkedin.com),
   // so more specific cookies overwrite on collision
-  const linkedinCookies = all.filter(
-    (c) => c.domain && (c.domain.includes("linkedin.com"))
-  );
+  const linkedinCookies = all.filter((c) => c.domain?.includes("linkedin.com"));
   linkedinCookies.sort((a, b) => (a.domain ?? "").length - (b.domain ?? "").length);
 
   for (const c of linkedinCookies) {

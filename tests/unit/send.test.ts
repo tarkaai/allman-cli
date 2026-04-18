@@ -5,12 +5,12 @@
  * the send should be aborted and the messages shown to the user.
  */
 
-import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
-import { mkdtemp, rm, readlink } from "fs/promises";
-import { join } from "path";
-import { tmpdir } from "os";
-import { Store } from "@/store/index.js";
+import { mkdtemp, readlink, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { sendCommand } from "@/commands/send.js";
+import { Store } from "@/store/index.js";
 import type { AccountRecord, ConversationRecord } from "@/store/types.js";
 
 // ---------------------------------------------------------------------------
@@ -134,7 +134,7 @@ describe("send command — pre-send sync abort", () => {
 
   beforeEach(async () => {
     vi.clearAllMocks();
-    tempDir = await mkdtemp(join(tmpdir(), "lilac-send-test-"));
+    tempDir = await mkdtemp(join(tmpdir(), "allman-send-test-"));
     store = new Store({ path: tempDir, gitDebounceMs: 0 });
     await store.init();
 
@@ -198,9 +198,9 @@ describe("send command — pre-send sync abort", () => {
       throw new Error("process.exit called");
     }) as never);
 
-    await expect(
-      sendCommand("jfoo87", "Hey, thanks!", { store: tempDir })
-    ).rejects.toThrow("process.exit called");
+    await expect(sendCommand("jfoo87", "Hey, thanks!", { store: tempDir })).rejects.toThrow(
+      "process.exit called"
+    );
 
     // Should have exited with code 1
     expect(exitSpy).toHaveBeenCalledWith(1);
@@ -308,7 +308,7 @@ describe("send command — slug persistence", () => {
 
   beforeEach(async () => {
     vi.clearAllMocks();
-    tempDir = await mkdtemp(join(tmpdir(), "lilac-send-slug-"));
+    tempDir = await mkdtemp(join(tmpdir(), "allman-send-slug-"));
     store = new Store({ path: tempDir, gitDebounceMs: 0 });
     await store.init();
     await store.accounts.write(MY_PROFILE_ID, accountRecord);

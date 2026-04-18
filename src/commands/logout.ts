@@ -1,5 +1,5 @@
-import { Store, resolveStorePath } from "../store/index.js";
-import { success, error, info } from "../utils/output.js";
+import { resolveStorePath, Store } from "../store/index.js";
+import { error, info, success } from "../utils/output.js";
 
 export interface LogoutOptions {
   account?: string;
@@ -24,5 +24,5 @@ export async function logoutCommand(options: LogoutOptions): Promise<void> {
 
   await store.git.flush();
   success(`Logged out: ${existing.profileSlug ?? profileId}`);
-  info("Cookies cleared. Run `lilac login` to re-authenticate.");
+  info("Cookies cleared. Run `allman login` to re-authenticate.");
 }

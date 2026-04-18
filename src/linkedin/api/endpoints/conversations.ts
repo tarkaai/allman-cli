@@ -12,15 +12,13 @@
  * Source: monorepo/lib/services/.../linkedin-api-services.ts
  */
 
-import type { LinkedInApiClient } from "../client.js";
 import { encodeUrn } from "../../../utils/urn.js";
+import type { LinkedInApiClient } from "../client.js";
 
-const GRAPHQL_URL =
-  "https://www.linkedin.com/voyager/api/voyagerMessagingGraphQL/graphql";
+const GRAPHQL_URL = "https://www.linkedin.com/voyager/api/voyagerMessagingGraphQL/graphql";
 
 const QUERY_ID_LIST = "messengerConversations.45338e053010d1c19147f92de6de3ae6";
-const QUERY_ID_BY_RECIPIENTS =
-  "messengerConversations.44030325d8f59d8cebbb804f16d6b0a3";
+const QUERY_ID_BY_RECIPIENTS = "messengerConversations.44030325d8f59d8cebbb804f16d6b0a3";
 
 // ---------------------------------------------------------------------------
 // Public types
@@ -116,8 +114,7 @@ export async function listConversations(
   // Use INBOX (not PRIMARY_INBOX) to capture all conversations including
   // message requests and non-connection messages. PRIMARY_INBOX is LinkedIn's
   // "Focused" tab — a subset of INBOX — and misses connection-request threads.
-  const variables =
-    `(query:(predicateUnions:List((conversationCategoryPredicate:(category:INBOX)))),count:20,mailboxUrn:${encodeUrn(`urn:li:fsd_profile:${profileId}`)},${paginationPart})`;
+  const variables = `(query:(predicateUnions:List((conversationCategoryPredicate:(category:INBOX)))),count:20,mailboxUrn:${encodeUrn(`urn:li:fsd_profile:${profileId}`)},${paginationPart})`;
 
   const response = await client.request<NormalizedResponse>({
     method: "GET",
@@ -148,8 +145,7 @@ export async function findConversationByRecipient(
   const contactId = contactProfileUrn.replace("urn:li:fsd_profile:", "");
   const myId = myProfileUrn.replace("urn:li:fsd_profile:", "");
 
-  const variables =
-    `(recipients:List(${encodeUrn(`urn:li:fsd_profile:${contactId}`)}),mailboxUrn:${encodeUrn(`urn:li:fsd_profile:${myId}`)},count:20)`;
+  const variables = `(recipients:List(${encodeUrn(`urn:li:fsd_profile:${contactId}`)}),mailboxUrn:${encodeUrn(`urn:li:fsd_profile:${myId}`)},count:20)`;
 
   const response = await client.request<NormalizedResponse>({
     method: "GET",
@@ -177,10 +173,12 @@ export async function findConversationByRecipient(
 // Parsing helpers
 // ---------------------------------------------------------------------------
 
-function buildIncludedMap(included: Array<Record<string, unknown>> | undefined): Map<string, Record<string, unknown>> {
+function buildIncludedMap(
+  included: Array<Record<string, unknown>> | undefined
+): Map<string, Record<string, unknown>> {
   const map = new Map<string, Record<string, unknown>>();
   for (const item of included ?? []) {
-    const urn = item["entityUrn"];
+    const urn = item.entityUrn;
     if (typeof urn === "string") map.set(urn, item);
   }
   return map;

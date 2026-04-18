@@ -1,18 +1,22 @@
 /**
- * lilac send — send a message to a LinkedIn contact.
+ * allman send — send a message to a LinkedIn contact.
  */
 
-import { Store, resolveStorePath } from "../store/index.js";
-import { LinkedInError } from "../linkedin/api/client.js";
-import { loadSession } from "../linkedin/api/session.js";
+import { type LinkedInApiClient, LinkedInError } from "../linkedin/api/client.js";
 import { findConversationByRecipient } from "../linkedin/api/endpoints/conversations.js";
-import { fetchMessages, sendMessage, sendFirstMessage } from "../linkedin/api/endpoints/messages.js";
+import {
+  fetchMessages,
+  sendFirstMessage,
+  sendMessage,
+} from "../linkedin/api/endpoints/messages.js";
 import { getProfileUrnBySlug } from "../linkedin/api/endpoints/profiles.js";
-import { isUrn, extractBareConvId, profileUrnId } from "../utils/urn.js";
-import { slugFromUrl } from "../utils/slug.js";
-import * as output from "../utils/output.js";
-import type { ConversationRecord, StoredMessage } from "../store/types.js";
+import { loadSession } from "../linkedin/api/session.js";
 import type { ConversationStore } from "../store/index.js";
+import { resolveStorePath, Store } from "../store/index.js";
+import type { ConversationRecord, StoredMessage } from "../store/types.js";
+import * as output from "../utils/output.js";
+import { slugFromUrl } from "../utils/slug.js";
+import { extractBareConvId, isUrn, profileUrnId } from "../utils/urn.js";
 
 export interface SendOptions {
   account?: string;
@@ -20,12 +24,16 @@ export interface SendOptions {
   json?: boolean;
 }
 
-export async function sendCommand(target: string, text: string, options: SendOptions): Promise<void> {
+export async function sendCommand(
+  target: string,
+  text: string,
+  options: SendOptions
+): Promise<void> {
   const storePath = resolveStorePath(options.store);
   const store = new Store({ path: storePath });
   await store.init();
 
-  let session;
+  let session: Awaited<ReturnType<typeof loadSession>>;
   try {
     session = await loadSession(store, options.account);
   } catch (err) {
@@ -42,7 +50,14 @@ export async function sendCommand(target: string, text: string, options: SendOpt
     return;
   }
 
-  const { bareConvId, contactProfileUrn, contactSlug, contactFirstName, contactLastName, isNewConversation } = resolved;
+  const {
+    bareConvId,
+    contactProfileUrn,
+    contactSlug,
+    contactFirstName,
+    contactLastName,
+    isNewConversation,
+  } = resolved;
 
   // Pre-send sync — abort if new inbound messages arrived since last sync
   if (bareConvId && !isNewConversation) {
@@ -60,7 +75,12 @@ export async function sendCommand(target: string, text: string, options: SendOpt
   }
 
   // Send (rate limiting enforced by the API client)
-  let result: { messageUrn: string; conversationUrn: string; backendConversationUrn: string; deliveredAt: number };
+  let result: {
+    messageUrn: string;
+    conversationUrn: string;
+    backendConversationUrn: string;
+    deliveredAt: number;
+  };
 
   try {
     if (isNewConversation && contactProfileUrn) {
@@ -84,7 +104,8 @@ export async function sendCommand(target: string, text: string, options: SendOpt
   }
 
   // Store the sent message
-  const targetBareId = bareConvId ?? extractBareConvId(result.backendConversationUrn || result.conversationUrn);
+  const targetBareId =
+    bareConvId ?? extractBareConvId(result.backendConversationUrn || result.conversationUrn);
   const storedMsg: StoredMessage = {
     urn: result.messageUrn,
     timestamp: result.deliveredAt,
@@ -114,7 +135,9 @@ export async function sendCommand(target: string, text: string, options: SendOpt
       });
     }
   } else if (result.backendConversationUrn) {
-    const contactPid = contactProfileUrn ? contactProfileUrn.replace("urn:li:fsd_profile:", "") : "";
+    const contactPid = contactProfileUrn
+      ? contactProfileUrn.replace("urn:li:fsd_profile:", "")
+      : "";
     const newRecord: ConversationRecord = {
       convId: targetBareId,
       profileId: contactPid,
@@ -143,7 +166,13 @@ export async function sendCommand(target: string, text: string, options: SendOpt
       categories: [],
       conversationUrl: null,
       disabledFeatures: [],
-      syncState: { oldestMessageAt: result.deliveredAt, newestMessageAt: result.deliveredAt, lastSyncAt: new Date().toISOString(), totalSynced: 1, fullyBackfilled: false },
+      syncState: {
+        oldestMessageAt: result.deliveredAt,
+        newestMessageAt: result.deliveredAt,
+        lastSyncAt: new Date().toISOString(),
+        totalSynced: 1,
+        fullyBackfilled: false,
+      },
       fetchedAt: new Date().toISOString(),
     };
     await conversations.upsert(targetBareId, newRecord);
@@ -153,7 +182,12 @@ export async function sendCommand(target: string, text: string, options: SendOpt
   await store.git.flush();
 
   if (options.json) {
-    output.printData({ messageUrn: result.messageUrn, conversationUrn: result.backendConversationUrn || result.conversationUrn, deliveredAt: result.deliveredAt, isNewConversation });
+    output.printData({
+      messageUrn: result.messageUrn,
+      conversationUrn: result.backendConversationUrn || result.conversationUrn,
+      deliveredAt: result.deliveredAt,
+      isNewConversation,
+    });
   } else {
     output.success(`Message sent (${new Date(result.deliveredAt).toLocaleTimeString()})`);
     if (isNewConversation) output.info("  New conversation created.");
@@ -177,8 +211,8 @@ interface ResolvedTarget {
 async function resolveTarget(
   target: string,
   myProfileUrn: string,
-  apiClient: ReturnType<typeof buildApiClient>,
-  conversations: ConversationStore,
+  apiClient: LinkedInApiClient,
+  conversations: ConversationStore
 ): Promise<ResolvedTarget> {
   // Case 1: Direct URN
   if (isUrn(target)) {
@@ -193,7 +227,9 @@ async function resolveTarget(
   try {
     contactSlug = slugFromUrl(target);
   } catch {
-    return { error: `Cannot resolve target: "${target}". Use a LinkedIn URL, profile slug, or URN.` };
+    return {
+      error: `Cannot resolve target: "${target}". Use a LinkedIn URL, profile slug, or URN.`,
+    };
   }
 
   // Try resolving as a conversation symlink directly
@@ -204,8 +240,8 @@ async function resolveTarget(
   let contactUrn: string | null = null;
 
   // If not in local store, query LinkedIn API
-  let contactFirstName: string | null = null;
-  let contactLastName: string | null = null;
+  const contactFirstName: string | null = null;
+  const contactLastName: string | null = null;
   if (!contactUrn) {
     output.info(`Looking up profile "${contactSlug}" on LinkedIn...`);
     const urn = await getProfileUrnBySlug(apiClient, contactSlug);
@@ -217,17 +253,34 @@ async function resolveTarget(
 
   // Look for existing conversation with this contact
   const localConv = await conversations.findByProfileUrn(contactUrn);
-  if (localConv) return { bareConvId: localConv.convId, contactProfileUrn: contactUrn, contactSlug, isNewConversation: false };
+  if (localConv)
+    return {
+      bareConvId: localConv.convId,
+      contactProfileUrn: contactUrn,
+      contactSlug,
+      isNewConversation: false,
+    };
 
   // Query LinkedIn API for existing conversation
   output.info("Checking for existing conversation on LinkedIn...");
   const liConv = await findConversationByRecipient(apiClient, contactUrn, myProfileUrn);
   if (liConv) {
     const bare = extractBareConvId(liConv.backendUrn || liConv.urn);
-    return { bareConvId: bare, contactProfileUrn: contactUrn, contactSlug, isNewConversation: false };
+    return {
+      bareConvId: bare,
+      contactProfileUrn: contactUrn,
+      contactSlug,
+      isNewConversation: false,
+    };
   }
 
-  return { contactProfileUrn: contactUrn, contactSlug, contactFirstName, contactLastName, isNewConversation: true };
+  return {
+    contactProfileUrn: contactUrn,
+    contactSlug,
+    contactFirstName,
+    contactLastName,
+    isNewConversation: true,
+  };
 }
 
 // ---------------------------------------------------------------------------
@@ -235,7 +288,7 @@ async function resolveTarget(
 // ---------------------------------------------------------------------------
 
 async function preSendSync(
-  apiClient: ReturnType<typeof buildApiClient>,
+  apiClient: LinkedInApiClient,
   conversations: ConversationStore,
   bareConvId: string,
   myProfileUrn: string
@@ -260,11 +313,19 @@ async function preSendSync(
         isFromMe: m.fromUrn.includes(myId),
         body: m.body,
         reactions: m.reactions,
-        attachments: m.attachments.map((a) => ({ type: a.type as StoredMessage["attachments"][number]["type"], url: a.url, name: a.name, mimeType: a.mimeType, raw: a.raw })),
+        attachments: m.attachments.map((a) => ({
+          type: a.type as StoredMessage["attachments"][number]["type"],
+          url: a.url,
+          name: a.name,
+          mimeType: a.mimeType,
+          raw: a.raw,
+        })),
         originToken: null,
       }));
       await conversations.appendMessages(bareConvId, stored);
-      await conversations.updateSyncState(bareConvId, { newestMessageAt: Math.max(...newMessages.map((m) => m.deliveredAt)) });
+      await conversations.updateSyncState(bareConvId, {
+        newestMessageAt: Math.max(...newMessages.map((m) => m.deliveredAt)),
+      });
 
       // Only flag inbound messages that are newer than the most recent outbound.
       // If the user already replied after the inbounds, they've seen the context.

@@ -1,6 +1,6 @@
 /**
  * File store type definitions.
- * These match the shapes written to JSON/JSONL files in the .lilac store.
+ * These match the shapes written to JSON/JSONL files in the .allman store.
  */
 
 // ---------------------------------------------------------------------------

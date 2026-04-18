@@ -1,4 +1,4 @@
-# Lilac CLI Redesign
+# Allman CLI Redesign
 
 ## What's wrong now
 
@@ -17,7 +17,7 @@ A flat, file-based messaging store designed for AI agents. One directory per con
 ## Part 1 — Store Layout
 
 ```
-.lilac/                                    # git repo (message history database)
+.allman/                                    # git repo (message history database)
 ├── {myProfileId}/                         # one dir per logged-in account
 │   ├── AUTH.json                          # profile info, auth status (committed)
 │   ├── COOKIES.json                       # cookie jar (gitignored, sensitive)
@@ -37,7 +37,7 @@ A flat, file-based messaging store designed for AI agents. One directory per con
 └── your-name-slug -> {myProfileId}             # symlink: account name slug
 ```
 
-**Gitignored inside .lilac:** `COOKIES.json`, `rate-state.json`, `INBOX.jsonl`, `listen.log`
+**Gitignored inside .allman:** `COOKIES.json`, `rate-state.json`, `INBOX.jsonl`, `listen.log`
 
 **Three lookups, all O(1):**
 - `convId` → direct directory
@@ -143,7 +143,7 @@ lastMessageSentAt   # Unix ms — enforces per-account send rate limit across pr
 
 ## Part 5 — Git as database
 
-`.lilac/` is its own git repo. Message history is the commit log.
+`.allman/` is its own git repo. Message history is the commit log.
 
 **Commit strategy:**
 - `send` → commit immediately
@@ -151,7 +151,7 @@ lastMessageSentAt   # Unix ms — enforces per-account send rate limit across pr
 - `listen` → debounce 60 seconds
 
 **Remote (optional):**
-- Set at login: `lilac login --git-remote git@github.com:user/li-messages.git`
+- Set at login: `allman login --git-remote git@github.com:user/li-messages.git`
 - Stored in `config.json` as `git.remote`
 - Auto-push after each commit if configured (`git.autoPush: true`)
 - Pull on login if remote has history (restore on new machine)
@@ -160,20 +160,20 @@ lastMessageSentAt   # Unix ms — enforces per-account send rate limit across pr
 
 ## Part 6 — Channel (MCP server for Claude Code)
 
-`src/channel/index.ts` — small MCP server (~100 lines) that makes lilac "always on":
+`src/channel/index.ts` — small MCP server (~100 lines) that makes allman "always on":
 
 ```
-Claude Code (--channels plugin:lilac-channel)
-    └── lilac-channel (MCP server, spawned by CC)
-            ├── spawns `lilac listen --json` as subprocess
+Claude Code (--channels plugin:allman-channel)
+    └── allman-channel (MCP server, spawned by CC)
+            ├── spawns `allman listen --json` as subprocess
             ├── forwards inbound messages as <channel> events → Claude
             └── exposes tools:
-                - reply(slug, text) → calls `lilac send`
-                - search(query) → calls `lilac search`
-                - history(slug, limit) → calls `lilac messages`
+                - reply(slug, text) → calls `allman send`
+                - search(query) → calls `allman search`
+                - history(slug, limit) → calls `allman messages`
 ```
 
-Launch: `claude --channels plugin:lilac-channel`
+Launch: `claude --channels plugin:allman-channel`
 
 ---
 
@@ -181,11 +181,11 @@ Launch: `claude --channels plugin:lilac-channel`
 
 For non-channel use (hooks, scripts, pipes):
 
-`lilac listen` appends a summary line to `INBOX.jsonl` for each inbound message. A Claude Code `user-prompt-submit` hook reads and clears it. Gitignored.
+`allman listen` appends a summary line to `INBOX.jsonl` for each inbound message. A Claude Code `user-prompt-submit` hook reads and clears it. Gitignored.
 
 For pipe orchestration:
 ```bash
-lilac listen --json | while read -r event; do
+allman listen --json | while read -r event; do
   claude "New LinkedIn message: $event"
 done
 ```
@@ -202,7 +202,7 @@ done
 - 60: name contains query
 - 40: any query word in name
 
-**`src/commands/search.ts`** — `lilac search <query> [--account] [--json] [--limit N]`
+**`src/commands/search.ts`** — `allman search <query> [--account] [--json] [--limit N]`
 
 ---
 
@@ -210,10 +210,10 @@ done
 
 | Skill | Invocation | Purpose |
 |-------|-----------|---------|
-| `search-contact/SKILL.md` | User or agent | Find contacts via `lilac search` |
+| `search-contact/SKILL.md` | User or agent | Find contacts via `allman search` |
 | `send-message/SKILL.md` | User only (`disable-model-invocation: true`) | search → confirm → send |
-| `read-conversation/SKILL.md` | User or agent | search → `lilac messages` → formatted thread |
-| `lilac-reference/SKILL.md` | Auto-loaded (`user-invocable: false`) | Store layout, URNs, event shapes |
+| `read-conversation/SKILL.md` | User or agent | search → `allman messages` → formatted thread |
+| `allman-reference/SKILL.md` | Auto-loaded (`user-invocable: false`) | Store layout, URNs, event shapes |
 
 ---
 
