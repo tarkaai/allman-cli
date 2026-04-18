@@ -279,7 +279,7 @@ Search contacts and conversations by name, slug, or profile ID. Fuzzy matching w
 allman search "sarah"
 allman search "ali smi"    # matches "Alice Smith"
 allman search sarah-chen
-allman search --limit 5 "dan"
+allman search --limit 5 "sarah"
 allman search --json "sarah"
 ```
 
@@ -586,3 +586,22 @@ bun run lint:fix                # biome check --write
 Tests are in `tests/unit/` (no network, temp dirs) and `tests/integration/` (mock axios).
 
 Never install packages with `npm` or `yarn` — use `bun add <package>`.
+
+---
+
+## Contributing
+
+Issues and pull requests welcome. For non-trivial changes, open an issue first so we can align on approach.
+
+Before sending a PR:
+
+```bash
+bun test
+bun run lint
+```
+
+## License
+
+MIT — see [LICENSE](./LICENSE).
+
+`allman` is named in tribute to [Eric Allman](https://en.wikipedia.org/wiki/Eric_Allman), author of sendmail.
