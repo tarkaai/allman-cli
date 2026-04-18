@@ -2,17 +2,6 @@
 
 LinkedIn messenger CLI. File-backed, git-versioned, designed for AI agents and humans.
 
-## Key references
-
-Before writing any LinkedIn API code, read these files first:
-- `/Users/example/Projects/tarka/allman/api/src/services/api/linkedin-api-client.ts` — exact headers, cookie handling
-- `/Users/example/Projects/tarka/allman/api/src/services/session/cookie-set.ts` — cookie merge logic
-- `/Users/example/Projects/tarka/allman/api/src/services/realtime/stream-handler.ts` — SSE parsing
-- `/Users/example/Projects/tarka/allman/api/src/services/messaging/message-sender.ts` — send payload format
-- `/Users/example/Projects/tarka/allman/api/src/services/auth/linkedin-auth.ts` — auth flow
-
-The monorepo at `/Users/example/Projects/tarka/monorepo` also has LinkedIn API response type definitions.
-
 ## Stack
 
 - **Bun** (latest via asdf) — runtime and build tool
