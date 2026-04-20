@@ -17,7 +17,7 @@ curl -fsSL https://raw.githubusercontent.com/tarkaai/allman-cli/main/install.sh 
 Pin a version or change the install prefix:
 
 ```bash
-curl -fsSL .../install.sh | VERSION=v0.1.0 bash
+curl -fsSL .../install.sh | VERSION=2026-04-20.1-alpha bash
 curl -fsSL .../install.sh | PREFIX=$HOME/.local bash
 ```
 
