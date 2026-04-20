@@ -15,7 +15,8 @@
     "lint": "biome check src tests",
     "lint:fix": "biome check --write src tests",
     "format": "biome format --write src tests",
-    "install-browsers": "bunx playwright install chromium"
+    "install-browsers": "bunx playwright install chromium",
+    "release": "bun scripts/release.ts"
   },
   "devDependencies": {
     "@biomejs/biome": "^2.4.10",
