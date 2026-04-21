@@ -8,7 +8,7 @@ Messages are stored locally as JSONL files in a git repository. All reads come f
 
 ## Installation
 
-### From GitHub Releases (Linux, x64 and arm64)
+### From GitHub Releases (Linux and macOS, x64 and arm64)
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/tarkaai/allman-cli/main/install.sh | bash
