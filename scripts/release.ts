@@ -19,9 +19,11 @@ const DIST = join(ROOT, "dist");
 const REPO = "tarkaai/allman-cli";
 const BIN = "allman";
 const TAG_REGEX = /^20\d{2}-\d{2}-\d{2}\.\d+(?:-(?:alpha|beta))?$/;
-const ARCHES = [
-  { arch: "x64", bunTarget: "bun-linux-x64" },
-  { arch: "arm64", bunTarget: "bun-linux-arm64" },
+const TARGETS = [
+  { os: "linux", arch: "x64", bunTarget: "bun-linux-x64" },
+  { os: "linux", arch: "arm64", bunTarget: "bun-linux-arm64" },
+  { os: "darwin", arch: "x64", bunTarget: "bun-darwin-x64" },
+  { os: "darwin", arch: "arm64", bunTarget: "bun-darwin-arm64" },
 ] as const;
 
 function die(msg: string): never {
@@ -72,8 +74,8 @@ async function assertTagAvailable() {
   if (remote) die(`tag ${tag} already exists on origin`);
 }
 
-async function build(arch: string, bunTarget: string) {
-  const outfile = join(DIST, `${BIN}-linux-${arch}`);
+async function build(os: string, arch: string, bunTarget: string) {
+  const outfile = join(DIST, `${BIN}-${os}-${arch}`);
   log(`building ${outfile}`);
   await $`bun build --compile --minify --target=${bunTarget} src/index.ts --outfile ${outfile} --external chromium-bidi --external electron`;
   return outfile;
@@ -103,12 +105,12 @@ async function main() {
 
   mkdirSync(DIST, { recursive: true });
   const assets: string[] = [];
-  for (const { arch, bunTarget } of ARCHES) {
-    const bin = await build(arch, bunTarget);
+  for (const { os, arch, bunTarget } of TARGETS) {
+    const bin = await build(os, arch, bunTarget);
     const sumPath = `${bin}.sha256`;
     const sum = sha256(bin);
-    writeFileSync(sumPath, `${sum}  ${BIN}-linux-${arch}\n`);
-    log(`sha256 ${arch}: ${sum}`);
+    writeFileSync(sumPath, `${sum}  ${BIN}-${os}-${arch}\n`);
+    log(`sha256 ${os}-${arch}: ${sum}`);
     assets.push(bin, sumPath);
   }
 
