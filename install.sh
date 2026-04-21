@@ -36,11 +36,20 @@ case "$(uname -m)" in
 esac
 
 asset="allman-$os-$arch"
+
+# /releases/latest/download/ skips prereleases. Resolve via the REST API
+# instead so "latest" during alpha/beta picks up the current alpha/beta.
 if [ "$VERSION" = "latest" ]; then
-  url="https://github.com/$REPO/releases/latest/download/$asset"
-else
-  url="https://github.com/$REPO/releases/download/$VERSION/$asset"
+  VERSION="$(curl -fsSL "${auth_args[@]}" \
+    "https://api.github.com/repos/$REPO/releases?per_page=1" \
+    | awk -F'"' '/"tag_name":/ {print $4; exit}')"
+  if [ -z "$VERSION" ]; then
+    echo "could not resolve latest release for $REPO" >&2
+    exit 1
+  fi
+  echo "resolved latest release: $VERSION"
 fi
+url="https://github.com/$REPO/releases/download/$VERSION/$asset"
 
 tmp="$(mktemp -d)"
 trap 'rm -rf "$tmp"' EXIT
