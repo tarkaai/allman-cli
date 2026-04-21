@@ -37,30 +37,58 @@ esac
 
 asset="allman-$os-$arch"
 
-# /releases/latest/download/ skips prereleases. Resolve via the REST API
-# instead so "latest" during alpha/beta picks up the current alpha/beta.
+# Fetch release metadata via the REST API.
+# - Uses /releases?per_page=1 for "latest" so we include prereleases (unlike
+#   /releases/latest/download/ which skips them).
+# - Downloads assets via /releases/assets/{id} with Accept: application/octet-stream;
+#   that endpoint works on both public and private repos and survives the
+#   redirect to objects.githubusercontent.com (signed URL; no auth-header
+#   stripping issues).
+if ! command -v python3 >/dev/null 2>&1; then
+  echo "install.sh needs python3 to parse release metadata" >&2
+  exit 1
+fi
+
 if [ "$VERSION" = "latest" ]; then
-  VERSION="$(curl -fsSL "${auth_args[@]}" \
-    "https://api.github.com/repos/$REPO/releases?per_page=1" \
-    | awk -F'"' '/"tag_name":/ {print $4; exit}')"
-  if [ -z "$VERSION" ]; then
+  release_url="https://api.github.com/repos/$REPO/releases?per_page=1"
+  release_json="$(curl -fsSL "${auth_args[@]}" "$release_url")"
+  release_json="$(echo "$release_json" | python3 -c 'import json,sys; d=json.load(sys.stdin); print(json.dumps(d[0]) if d else "")')"
+  if [ -z "$release_json" ]; then
     echo "could not resolve latest release for $REPO" >&2
     exit 1
   fi
+  VERSION="$(echo "$release_json" | python3 -c 'import json,sys;print(json.load(sys.stdin)["tag_name"])')"
   echo "resolved latest release: $VERSION"
+else
+  release_json="$(curl -fsSL "${auth_args[@]}" "https://api.github.com/repos/$REPO/releases/tags/$VERSION")"
 fi
-url="https://github.com/$REPO/releases/download/$VERSION/$asset"
+
+resolve_asset_id() {
+  echo "$release_json" | python3 -c 'import json,sys
+data = json.load(sys.stdin)
+name = sys.argv[1]
+for a in data.get("assets", []):
+    if a["name"] == name:
+        print(a["id"])
+        sys.exit(0)
+sys.exit(1)' "$1"
+}
+
+bin_id="$(resolve_asset_id "$asset")" || { echo "asset $asset not found in release $VERSION" >&2; exit 1; }
+sha_id="$(resolve_asset_id "$asset.sha256" || true)"
 
 tmp="$(mktemp -d)"
 trap 'rm -rf "$tmp"' EXIT
 
 echo "downloading $asset from $VERSION..."
-# GitHub release asset URLs redirect to objects.githubusercontent.com. curl
-# strips the Authorization header on cross-host redirect by default, which
-# causes 404s for private-repo installs. --location-trusted preserves the
-# header across the (github-owned) redirect chain.
-curl -fsSL --location-trusted "${auth_args[@]}" -o "$tmp/allman" "$url"
-curl -fsSL --location-trusted "${auth_args[@]}" -o "$tmp/allman.sha256" "$url.sha256" || true
+curl -fsSL "${auth_args[@]}" -H "Accept: application/octet-stream" \
+  -o "$tmp/allman" \
+  "https://api.github.com/repos/$REPO/releases/assets/$bin_id"
+if [ -n "$sha_id" ]; then
+  curl -fsSL "${auth_args[@]}" -H "Accept: application/octet-stream" \
+    -o "$tmp/allman.sha256" \
+    "https://api.github.com/repos/$REPO/releases/assets/$sha_id"
+fi
 
 if [ -s "$tmp/allman.sha256" ]; then
   expected="$(awk '{print $1}' "$tmp/allman.sha256")"
