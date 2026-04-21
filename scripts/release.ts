@@ -52,8 +52,11 @@ async function sh(cmd: string): Promise<string> {
 }
 
 async function assertCleanTree() {
-  const status = await sh("git status --porcelain");
-  if (status) die(`working tree not clean:\n${status}`);
+  // Ignore untracked files — only fail when tracked files have uncommitted
+  // changes. Release machines often have untracked local tooling (.claude,
+  // .obsidian, etc.) that shouldn't block a release.
+  const status = await sh("git status --porcelain -uno");
+  if (status) die(`tracked files have uncommitted changes:\n${status}`);
 }
 
 async function assertOnMainPushed() {
