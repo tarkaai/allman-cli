@@ -45,7 +45,7 @@ fi
 tmp="$(mktemp -d)"
 trap 'rm -rf "$tmp"' EXIT
 
-echo "downloading $asset from $VERSION…"
+echo "downloading $asset from $VERSION..."
 curl -fsSL "${auth_args[@]}" -o "$tmp/allman" "$url"
 curl -fsSL "${auth_args[@]}" -o "$tmp/allman.sha256" "$url.sha256" || true
 
@@ -69,7 +69,7 @@ chmod +x "$tmp/allman"
 if [ -w "$BIN_DIR" ] 2>/dev/null || { [ ! -e "$BIN_DIR" ] && mkdir -p "$BIN_DIR" 2>/dev/null; }; then
   mv "$tmp/allman" "$BIN_DIR/allman"
 else
-  echo "installing to $BIN_DIR requires sudo…"
+  echo "installing to $BIN_DIR requires sudo..."
   sudo mkdir -p "$BIN_DIR"
   sudo mv "$tmp/allman" "$BIN_DIR/allman"
 fi
