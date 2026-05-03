@@ -19,3 +19,33 @@ AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
 LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
+
+================================================================================
+NOTICE — Scope of License
+================================================================================
+
+The MIT license above covers only the original source code authored by Tarka
+Ventures, Inc. ("Allman"). It does NOT, and cannot, grant any rights in:
+
+  (a) LinkedIn Corporation's API endpoints, URL paths, request and response
+      schemas, parameter names, URN formats, authentication protocols, or any
+      other interface elements of the LinkedIn service. These remain the
+      property of LinkedIn Corporation. Allman embeds references to these
+      interfaces solely for interoperability with the LinkedIn service on
+      behalf of an authenticated end user.
+
+  (b) The "LinkedIn" name, logo, or other LinkedIn trademarks. Allman is not
+      affiliated with, endorsed by, or sponsored by LinkedIn Corporation.
+
+  (c) Any data accessed through the LinkedIn service. All such data is owned
+      by its respective rights holders and remains subject to LinkedIn's
+      User Agreement.
+
+Use of Allman to access the LinkedIn service is governed by LinkedIn's User
+Agreement (https://www.linkedin.com/legal/user-agreement), which is a
+separate contract between the end user and LinkedIn. The end user is solely
+responsible for compliance with that agreement, applicable rate limits, and
+all relevant law. Tarka Ventures, Inc. disclaims all liability for the end
+user's use of the LinkedIn service through Allman.
+
+See RESPONSIBLE_USE.md for guidance on intended use.
