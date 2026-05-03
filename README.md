@@ -4,6 +4,8 @@ LinkedIn messenger from the CLI. File-backed, git-versioned, designed for AI age
 
 Messages are stored locally as JSONL files in a git repository. All reads come from disk. Network calls go to LinkedIn's private APIs using cookies captured via a headed Playwright browser session.
 
+> **Want a terminal inbox UI on top of this?** See the companion repo, [`tarkaai/allman-tui`](https://github.com/tarkaai/allman-tui). It bundles the `allman` binary, so installing the TUI gets you both.
+
 ---
 
 ## Installation
