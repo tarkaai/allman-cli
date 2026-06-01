@@ -352,6 +352,67 @@ Results are sorted newest-first.
 
 ---
 
+### `allman connections`
+
+Export your 1st-degree LinkedIn connections into the store as per-connection records with slug symlinks. Uses the flagship `relationships/dash/connections` API (IDs + slug only — no profile-page scraping). Random 2–8s delay between pages.
+
+```bash
+allman connections                       # store all connections (per-file + symlinks), git-committed
+allman connections --limit 500           # cap the number fetched
+allman connections --csv ./conns.csv     # also export a CSV
+allman connections --no-save --csv x.csv # CSV only, don't write the store
+allman connections --json                # stream NDJSON to stdout (ephemeral; no store write)
+allman connections --include-headline    # also store the headline
+```
+
+Writes `{myProfileId}/connections/{flagshipId}.json` per connection plus a `{slug} -> {flagshipId}.json` symlink. Re-running is idempotent: `firstSeenAt` is preserved and `lastSeenAt` is refreshed.
+
+**Options:**
+
+| Flag | Default | Description |
+|------|---------|-------------|
+| `-n, --limit <n>` | all | Max connections to fetch |
+| `--page-size <n>` | 100 | Results per request (max 500) |
+| `--csv <path>` | — | Also export a CSV to this path |
+| `--no-save` | — | Don't write to the store (use with `--csv`) |
+| `--include-headline` | — | Include the LinkedIn headline |
+| `--json` | — | Stream NDJSON to stdout (no store write) |
+
+---
+
+### `allman connections-of <slug>`
+
+List the 1st-degree connections of another person (`<slug>` = a LinkedIn slug or profile URL). Results are stored under `connections-of/{targetId}/`.
+
+Two backends, chosen automatically:
+- **Sales Navigator** (default when the account has a seat): `salesApiLeadSearch` with a `CONNECTION_OF` filter. Returns SalesNav id + numeric member id. ~2,500-result cap.
+- **Flagship** (fallback, or `--flagship`): `voyagerSearchDashClusters` people search with `connectionOf` + `network=[S]`. Returns flagship id + numeric member id + slug. ~1,000-result cap. The (rotating) queryId is discovered from the live bundle and cached in `query-cache.json`.
+
+```bash
+allman connections-of jane-doe                 # auto: SalesNav if a seat exists, else flagship
+allman connections-of jane-doe --flagship      # force flagship (no fallback)
+allman connections-of jane-doe --salesnav      # force SalesNav (errors without a seat)
+allman connections-of jane-doe --csv ./x.csv   # also export a CSV
+allman connections-of jane-doe --json          # stream NDJSON (no store write)
+```
+
+> Only works for people whose network LinkedIn exposes to you (generally your own 1st-degree connections). If a search returns nothing, the command stops before paginating further.
+
+**Options:**
+
+| Flag | Default | Description |
+|------|---------|-------------|
+| `-n, --limit <n>` | backend cap | Max results to fetch |
+| `--flagship` | — | Force flagship (no fallback) |
+| `--salesnav` | — | Force Sales Navigator (no fallback; errors without a seat) |
+| `--csv <path>` | — | Also export a CSV to this path |
+| `--no-save` | — | Don't write to the store (use with `--csv`) |
+| `--json` | — | Stream NDJSON to stdout (no store write) |
+
+The SalesNav seat is captured automatically by `allman login` (it visits Sales Navigator once and saves the `li_a` cookie); `allman login --no-salesnav` skips that step.
+
+---
+
 ### `allman store`
 
 Manage the local file store.
@@ -390,17 +451,27 @@ The store is a git repository. All message history is committed; session-sensiti
 │   ├── inbox-state.json              # inbox watermark (gitignored)
 │   ├── INBOX.jsonl                   # new message log (gitignored)
 │   ├── listen.log                    # SSE debug log (gitignored)
+│   ├── query-cache.json              # cached flagship search queryId (gitignored)
 │   ├── {convId}/                     # one directory per conversation
 │   │   ├── RECORD.json               # contact + conversation + sync metadata
 │   │   └── messages/
 │   │       ├── 2024-11.jsonl
 │   │       └── 2025-01.jsonl
+│   ├── connections/                  # `allman connections` output
+│   │   ├── {flagshipId}.json         # one record per 1st-degree connection
+│   │   └── {slug} -> {flagshipId}.json   # symlink: slug → connection record
+│   ├── connections-of/               # `allman connections-of` output
+│   │   ├── {targetId}/
+│   │   │   ├── RECORD.json           # target, backend, total, timestamps
+│   │   │   ├── {resultId}.json       # one record per result
+│   │   │   └── {slug} -> {resultId}.json  # symlink (flagship results have slugs)
+│   │   └── {targetSlug} -> {targetId}     # symlink: target slug → search dir
 │   ├── {profileId} -> {convId}       # symlink: contact profile ID → conversation
 │   └── {slug} -> {convId}           # symlink: LinkedIn slug → conversation
 └── {accountSlug} -> {myProfileId}   # symlink: account slug → profile directory
 ```
 
-**Gitignored:** `COOKIES.json`, `rate-state.json`, `inbox-state.json`, `INBOX.jsonl`, `listen.log`
+**Gitignored:** `COOKIES.json`, `rate-state.json`, `inbox-state.json`, `query-cache.json`, `INBOX.jsonl`, `listen.log`
 
 ### Committed to git
 
@@ -527,6 +598,7 @@ Per-conversation: if you sent a message in a conversation, that conversation's r
 |----------|-------------|
 | `ALLMAN_STORE` | Override default store path (default: `./.allman`) |
 | `ALLMAN_ACCOUNT` | Default account slug (used when `--account` is not specified) |
+| `ALLMAN_SEARCH_CLUSTERS_QID` | Override the flagship people-search queryId (otherwise auto-discovered + cached) |
 | `PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH` | Use an existing Chromium binary for login |
 
 ---
@@ -542,10 +614,16 @@ src/linkedin/api/
   client.ts                      Axios client with LinkedIn headers + cookie management
   cookies.ts                     Cookie jar loading, CSRF token extraction
   session.ts                     Session loading (reads account + initializes client)
+  flagship-queryid.ts            Resolve+cache the rotating people-search queryId
   endpoints/
     conversations.ts             List conversations, find by recipient
     messages.ts                  Fetch messages, send message, send first message
     profiles.ts                  Resolve profile slug and URN by ID
+    connections.ts               List 1st-degree connections (relationships/dash)
+    people-search.ts             Flagship connectionOf people search (voyagerSearchDashClusters)
+    salesnav.ts                  Sales Navigator lead search + id resolution
+src/linkedin/auth/
+  queryid-capture.ts             Headless capture of the flagship search queryId
 src/linkedin/realtime/
   sse-client.ts                  SSE stream with reconnect + heartbeat
 src/store/
@@ -553,6 +631,7 @@ src/store/
   types.ts                       TypeScript types for all stored data
   accounts.ts                    AccountStore: AUTH.json, COOKIES.json, config, state
   conversations.ts               ConversationStore: RECORD.json, JSONL messages, symlinks
+  connections-store.ts           ConnectionsStore: connection records + slug symlinks
   git.ts                         Debounced git auto-commit
   alias.ts                       Symlink helpers (create, resolve)
   search.ts                      Fuzzy name search with confidence scoring

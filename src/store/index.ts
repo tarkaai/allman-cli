@@ -22,6 +22,7 @@
 import { access, mkdir } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import { AccountStore } from "./accounts.js";
+import { ConnectionsStore } from "./connections-store.js";
 import { ConversationStore } from "./conversations.js";
 import { ensureGitignore, StoreGit } from "./git.js";
 
@@ -59,6 +60,11 @@ export class Store {
     return new ConversationStore(accountDir, this.git);
   }
 
+  /** Return a connections store scoped to a specific account. */
+  connectionsFor(profileId: string): ConnectionsStore {
+    return new ConnectionsStore(join(this.root, profileId), this.git);
+  }
+
   /** Return the resolved store root path. */
   get path(): string {
     return this.root;
@@ -84,5 +90,6 @@ async function ensureStoreDir(dirPath: string): Promise<void> {
 }
 
 export { AccountStore } from "./accounts.js";
+export { ConnectionsStore } from "./connections-store.js";
 export { ConversationStore } from "./conversations.js";
 export * from "./types.js";

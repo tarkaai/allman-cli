@@ -59,9 +59,16 @@ vi.mock("@/linkedin/api/endpoints/messages.js", () => ({
   sendFirstMessage: (...args: unknown[]) => mockSendFirstMessage(...args),
 }));
 
-vi.mock("@/utils/rate-limiter.js", () => ({
-  getRateLimiter: vi.fn(() => ({ acquire: vi.fn().mockResolvedValue(undefined) })),
-}));
+vi.mock("@/utils/rate-limiter.js", () => {
+  const stub = { acquire: vi.fn().mockResolvedValue(undefined) };
+  return {
+    getRateLimiter: vi.fn(() => stub),
+    buildRateLimiter: vi.fn(() => stub),
+    getDownloadRateLimiter: vi.fn(() => stub),
+    RateLimiter: class {},
+    DownloadRateLimiter: class {},
+  };
+});
 
 // ---------------------------------------------------------------------------
 // Helpers

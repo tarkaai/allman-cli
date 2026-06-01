@@ -12,6 +12,8 @@
  */
 
 import { Command } from "commander";
+import { connectionsCommand } from "./commands/connections.js";
+import { connectionsOfCommand } from "./commands/connections-of.js";
 import { conversationsCommand } from "./commands/conversations.js";
 import { grepCommand } from "./commands/grep.js";
 import { inboxCommand } from "./commands/inbox.js";
@@ -33,7 +35,7 @@ const program = new Command();
 program
   .name("allman")
   .description("LinkedIn messenger from the CLI")
-  .version("0.1.0")
+  .version("0.2.0")
   .option("-a, --account <slug>", "account to use ($ALLMAN_ACCOUNT)")
   .option("-s, --store <path>", "store directory ($ALLMAN_STORE)")
   .option("--json", "output as JSON")
@@ -54,6 +56,7 @@ program
   .option("-a, --account <slug>", "account name to create or re-authenticate")
   .option("-s, --store <path>", "store directory")
   .option("--proxy <host:port[:user:pass]>", "HTTP proxy for this account")
+  .option("--no-salesnav", "skip the optional Sales Navigator seat capture")
   .option("--json", "output as JSON")
   .action(async (opts, cmd) => {
     const globalOpts = cmd.parent?.opts() ?? {};
@@ -61,6 +64,7 @@ program
       account: opts.account ?? globalOpts.account,
       store: opts.store ?? globalOpts.store,
       proxy: opts.proxy,
+      salesnav: opts.salesnav,
       json: opts.json ?? globalOpts.json,
     });
   });
@@ -371,6 +375,68 @@ storeCmd
   .action(async (opts, cmd) => {
     const globalOpts = cmd.parent?.parent?.opts() ?? {};
     await storeStatusCommand({ store: opts.store ?? globalOpts.store });
+  });
+
+// ---------------------------------------------------------------------------
+// connections — export 1st-degree connections to CSV/NDJSON
+// ---------------------------------------------------------------------------
+
+program
+  .command("connections")
+  .description(
+    "Export your 1st-degree LinkedIn connections into the store (per-connection files + slug symlinks)"
+  )
+  .option("-a, --account <slug>", "account to use")
+  .option("-s, --store <path>", "store directory")
+  .option("--csv <path>", "also export a CSV to this path")
+  .option("--no-save", "don't write to the store (use with --csv for a pure export)")
+  .option("-n, --limit <n>", "max connections to fetch (default: all)")
+  .option("--page-size <n>", "results per request (default: 100, max: 500)", "100")
+  .option("--include-headline", "include the LinkedIn headline in stored records / CSV")
+  .option("--json", "stream NDJSON to stdout (ephemeral — does not write the store)")
+  .action(async (opts, cmd) => {
+    const globalOpts = cmd.parent?.opts() ?? {};
+    await connectionsCommand({
+      account: opts.account ?? globalOpts.account,
+      store: opts.store ?? globalOpts.store,
+      json: opts.json ?? globalOpts.json,
+      csv: opts.csv,
+      noStore: opts.save === false,
+      limit: opts.limit ? parseInt(opts.limit, 10) : undefined,
+      pageSize: opts.pageSize ? parseInt(opts.pageSize, 10) : undefined,
+      includeHeadline: opts.includeHeadline === true,
+    });
+  });
+
+// ---------------------------------------------------------------------------
+// connections-of — list people connected to <input> via Sales Navigator
+// ---------------------------------------------------------------------------
+
+program
+  .command("connections-of <slug>")
+  .description(
+    "List the 1st-degree connections of <slug> (a LinkedIn slug or profile URL). Uses Sales Navigator when a seat is present and falls back to flagship otherwise; --flagship/--salesnav force a backend (no fallback)."
+  )
+  .option("-a, --account <slug>", "account to use")
+  .option("-s, --store <path>", "store directory")
+  .option("--csv <path>", "also export a CSV to this path")
+  .option("--no-save", "don't write to the store (use with --csv for a pure export)")
+  .option("-n, --limit <n>", "max results to fetch")
+  .option("--flagship", "force the flagship people-search backend (no fallback)")
+  .option("--salesnav", "force the Sales Navigator backend (no fallback; errors without a seat)")
+  .option("--json", "stream NDJSON to stdout (ephemeral — does not write the store)")
+  .action(async (slug: string, opts, cmd) => {
+    const globalOpts = cmd.parent?.opts() ?? {};
+    await connectionsOfCommand(slug, {
+      account: opts.account ?? globalOpts.account,
+      store: opts.store ?? globalOpts.store,
+      json: opts.json ?? globalOpts.json,
+      csv: opts.csv,
+      noStore: opts.save === false,
+      limit: opts.limit ? parseInt(opts.limit, 10) : undefined,
+      flagship: opts.flagship === true,
+      salesnav: opts.salesnav === true,
+    });
   });
 
 // ---------------------------------------------------------------------------

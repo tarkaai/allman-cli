@@ -47,6 +47,18 @@ export interface AccountInboxState {
   lastSeenAt: number;
 }
 
+/**
+ * query-cache.json — cached LinkedIn web-app GraphQL query IDs that rotate with
+ * bundle releases. Captured from the live app via a headless browser
+ * (flagship-queryid.ts). Not sensitive, but gitignored (churns with deploys).
+ */
+export interface AccountQueryCache {
+  /** Live `voyagerSearchDashClusters.<hash>` for flagship people search. */
+  searchClustersQueryId?: string;
+  /** ISO timestamp when the queryId was last captured. */
+  capturedAt?: string;
+}
+
 export interface AccountConfig {
   proxy?: ProxyConfig;
   /** Minimum ms between outbound messages. Default: 3000 */

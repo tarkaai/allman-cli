@@ -40,9 +40,12 @@ tests/integration/           Mock network responses
 │   ├── COOKIES.json                 # cookie jar (gitignored)
 │   ├── config.json                  # proxy, rate limits (committed)
 │   ├── rate-state.json              # last send timestamp (gitignored)
+│   ├── query-cache.json             # cached flagship search queryId (gitignored)
 │   ├── {convId}/
 │   │   ├── RECORD.json              # contact + conversation + sync state
 │   │   └── messages/YYYY-MM.jsonl
+│   ├── connections/                 # `connections`: {flagshipId}.json + {slug} symlinks
+│   ├── connections-of/{targetId}/   # `connections-of`: RECORD.json + per-result files + symlinks
 │   ├── {profileId} -> {convId}      # symlink: contact profile ID → conversation
 │   └── {slug} -> {convId}           # symlink: LinkedIn slug → conversation
 └── {accountSlug} -> {myProfileId}   # symlink: account slug → profile dir
@@ -99,14 +102,31 @@ allman listen [--account <slug>]
 allman conversations [--account <slug>] [--json] [--limit N]
 allman messages <contact-slug|url|urn> [--account <slug>] [--json] [--limit N]
 allman send <contact-slug|url|urn> <text> [--account <slug>] [--json]
+allman connections [--limit N] [--csv <path>] [--no-save] [--include-headline] [--json]
+allman connections-of <slug> [--flagship|--salesnav] [--limit N] [--csv <path>] [--no-save] [--json]
 allman store path|commit|status
 ```
+
+### Connections (network export)
+- `connections` (your 1st-degree) uses flagship `relationships/dash/connections`; `connections-of`
+  defaults to Sales Navigator (`salesApiLeadSearch`) and falls back to flagship people search
+  (`voyagerSearchDashClusters`) when there's no SalesNav seat. `--flagship`/`--salesnav` force a
+  backend (no fallback). IDs only — never fetch a profile page.
+- SalesNav seat = the `li_a` cookie that `login` captures by visiting `/sales/` (best-effort,
+  `--no-salesnav` to skip). The flagship search queryId rotates per deploy and is auto-discovered
+  from the live bundle (headless) and cached in `query-cache.json`; `ALLMAN_SEARCH_CLUSTERS_QID`
+  overrides.
+- Both commands **store by default** (per-entity files + slug symlinks via `ConnectionsStore`,
+  git-committed, idempotent firstSeenAt/lastSeenAt). `--csv <path>` also exports; `--no-save` skips
+  the store; `--json` streams NDJSON to stdout without storing. Pages are paced with a random 2–8s
+  delay (`utils/random-delay.ts`).
 
 ## Environment variables
 
 ```
 ALLMAN_STORE        Override default store path (default: ./.allman)
 ALLMAN_ACCOUNT      Default account slug
+ALLMAN_SEARCH_CLUSTERS_QID  Override the flagship people-search queryId (else auto-discovered)
 PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH  Use existing Chromium
 ```
 

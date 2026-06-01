@@ -101,6 +101,7 @@ export async function ensureGitignore(storePath: string): Promise<void> {
         "INBOX.jsonl",
         "inbox-state.json",
         "rate-state.json",
+        "query-cache.json",
         "listen.log",
         "",
       ].join("\n"),

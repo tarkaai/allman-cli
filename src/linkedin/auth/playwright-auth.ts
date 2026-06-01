@@ -47,6 +47,8 @@ export interface AuthOptions {
   existingCookieJar?: object | null;
   /** Override executable path for Chromium. */
   executablePath?: string;
+  /** Visit Sales Navigator to capture the seat cookie (optional; default true). */
+  salesnav?: boolean;
 }
 
 /**
@@ -156,6 +158,15 @@ export async function runLogin(options: AuthOptions = {}): Promise<AuthResult> {
     // profileUrn may now be set by the response listener — don't overwrite it
   }
 
+  // Warm the Sales Navigator seat (best-effort, optional). Visiting the SalesNav
+  // app lets the SPA run its enterprise-auth handshake in-browser, which sets the
+  // seat cookies. Capturing those here means later `sales-api/*` REST calls work
+  // with no per-call handshake. Accounts without a SalesNav seat just fall
+  // through; skipped entirely when salesnav === false.
+  if (options.salesnav !== false) {
+    await warmSalesNavSeat(page);
+  }
+
   // Extract all cookies from the browser context
   const rawCookies = await context.cookies();
   const jar = await cookiesFromPlaywright(
@@ -239,6 +250,55 @@ function extractProfileFromApiResponse(body: unknown): ProfileApiData {
     return { name, headline: headlineMatch ? (headlineMatch[1] ?? null) : null };
   } catch {
     return { name: null, headline: null };
+  }
+}
+
+/**
+ * The cookie that carries the Sales Navigator seat. Set by the SPA only after
+ * the full enterprise-auth handshake completes (i.e. once the app lands on
+ * /sales/home — NOT at the intermediate /sales/contract-chooser step). Once
+ * present in the saved jar, all `sales-api/*` REST calls work with no per-call
+ * handshake. ~30-day expiry, refreshed on each login.
+ */
+const SALESNAV_SEAT_COOKIE = "li_a";
+
+/**
+ * Visit Sales Navigator so the SPA runs its enterprise-auth handshake and sets
+ * the seat cookies (`li_a`, `li_ep_auth_context`) in the browser context, which
+ * the caller then captures into the saved jar.
+ *
+ * Strictly best-effort and OPTIONAL — login never depends on SalesNav:
+ *   - Accounts without a seat never get `li_a`; we time out and skip quietly.
+ *   - Any navigation error is swallowed.
+ * We poll the context for `li_a` (the definitive "seat is live" signal) rather
+ * than racing on a URL match, because the URL hits /sales/contract-chooser
+ * before `li_a` is set.
+ */
+async function warmSalesNavSeat(page: Page): Promise<void> {
+  output.info("Checking for a Sales Navigator seat (optional)...");
+  const context = page.context();
+  const deadline = Date.now() + 30_000;
+  try {
+    await page.goto("https://www.linkedin.com/sales/?trk=d_flagship3_nav", {
+      waitUntil: "domcontentloaded",
+      timeout: 30_000,
+    });
+    while (Date.now() < deadline) {
+      const cookies = await context.cookies();
+      if (cookies.some((c) => c.name === SALESNAV_SEAT_COOKIE)) {
+        output.success("Sales Navigator seat captured.");
+        return;
+      }
+      // Bail fast if LinkedIn bounced us off the SalesNav app (no seat).
+      const url = page.url();
+      if (/\/(feed|premium|checkpoint)\b/.test(url) && !/\/sales\//.test(url)) break;
+      await page.waitForTimeout(1500);
+    }
+    output.info(
+      "No Sales Navigator seat detected — skipping (connections-of will need --salesnav off)."
+    );
+  } catch {
+    output.debug("Sales Navigator warm-up skipped (navigation failed).");
   }
 }
 
