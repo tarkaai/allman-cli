@@ -17,6 +17,7 @@ import type {
   AccountConfig,
   AccountCookies,
   AccountInboxState,
+  AccountQueryCache,
   AccountRateState,
   AccountRecord,
 } from "./types.js";
@@ -26,6 +27,7 @@ const COOKIES_FILE = "COOKIES.json";
 const CONFIG_FILE = "config.json";
 const RATE_STATE_FILE = "rate-state.json";
 const INBOX_STATE_FILE = "inbox-state.json";
+const QUERY_CACHE_FILE = "query-cache.json";
 
 // Profile IDs are base64-encoded strings starting with "ACo"
 const PROFILE_ID_PATTERN = /^ACo/;
@@ -198,6 +200,26 @@ export class AccountStore {
     await writeFile(
       join(this.dir(profileId), RATE_STATE_FILE),
       `${JSON.stringify(state)}\n`,
+      "utf8"
+    );
+  }
+
+  /** Read the cached web-app query IDs (or null if never captured). Not committed. */
+  async readQueryCache(profileId: string): Promise<AccountQueryCache | null> {
+    try {
+      const raw = await readFile(join(this.dir(profileId), QUERY_CACHE_FILE), "utf8");
+      return JSON.parse(raw) as AccountQueryCache;
+    } catch {
+      return null;
+    }
+  }
+
+  /** Write the cached web-app query IDs. No git commit — gitignored (churns with deploys). */
+  async writeQueryCache(profileId: string, cache: AccountQueryCache): Promise<void> {
+    await ensureDir(this.root, profileId);
+    await writeFile(
+      join(this.dir(profileId), QUERY_CACHE_FILE),
+      `${JSON.stringify(cache, null, 2)}\n`,
       "utf8"
     );
   }

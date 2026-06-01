@@ -10,6 +10,9 @@ export interface LoginOptions {
   store?: string;
   proxy?: string;
   json?: boolean;
+  /** Warm + capture the Sales Navigator seat cookie during login. Default true;
+   *  set false (via --no-salesnav) to skip the optional SalesNav visit. */
+  salesnav?: boolean;
 }
 
 export async function loginCommand(options: LoginOptions): Promise<void> {
@@ -55,7 +58,7 @@ export async function loginCommand(options: LoginOptions): Promise<void> {
   output.info("Opening LinkedIn in browser — please complete login in the browser window.");
   output.info(`Waiting up to 5 minutes...`);
 
-  const result = await runLogin({ existingCookieJar });
+  const result = await runLogin({ existingCookieJar, salesnav: options.salesnav !== false });
 
   if (!result.success) {
     output.error(`Login failed: ${result.error ?? "unknown error"}`, 1);
