@@ -101,7 +101,10 @@ async function main() {
 
   if (!skipTests) {
     log("test");
-    await $`bun test`;
+    // Use the project's vitest suite (`bun run test`), not bun's native runner
+    // (`bun test`), which doesn't honor vitest's vi.mock/vi.hoisted isolation
+    // and reports false failures.
+    await $`bun run test`;
   } else {
     log("skipping tests (--skip-tests)");
   }
