@@ -16,10 +16,24 @@
  * preserving the original `firstSeenAt`, so git history shows when each
  * connection first appeared and was last confirmed.
  */
-import { mkdir, readFile, writeFile } from "node:fs/promises";
+import { mkdir, readdir, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { forceAlias } from "./alias.js";
 import type { StoreGit } from "./git.js";
+
+/** A single role in a connection's work history. */
+export interface StoredPosition {
+  title: string | null;
+  company: string | null;
+  /** True for the person's current role(s). */
+  current: boolean;
+}
+
+/** A single education entry. */
+export interface StoredEducation {
+  school: string | null;
+  degree: string | null;
+}
 
 export interface StoredConnection {
   /** `urn:li:fsd_profile:<flagshipId>` */
@@ -32,8 +46,56 @@ export interface StoredConnection {
   headline?: string | null;
   /** ISO timestamp the connection was made (if reported by LinkedIn). */
   connectedAt?: string | null;
+  // --- Enrichment fields (populated by `allman enrich`) ---------------------
+  /** Current role title (from the current/primary position). */
+  title?: string | null;
+  /** Current employer name. */
+  company?: string | null;
+  /** Human-readable location (e.g. "San Francisco Bay Area"). */
+  location?: string | null;
+  /** The profile's "About" summary. */
+  about?: string | null;
+  /** Full work history — only populated by `enrich --deep`. */
+  positions?: StoredPosition[] | null;
+  /** Education history — only populated by `enrich --deep`. */
+  education?: StoredEducation[] | null;
+  /** Listed skills — only populated by `enrich --deep`. */
+  skills?: string[] | null;
+  /** ISO timestamp of the last successful enrichment (null if never enriched). */
+  enrichedAt?: string | null;
+  /** Depth of the last enrichment. */
+  enrichDepth?: "core" | "deep" | null;
   firstSeenAt: string;
   lastSeenAt: string;
+}
+
+/** The enrichable subset of a connection record — everything `enrich` may fill in. */
+export type ConnectionEnrichment = Pick<
+  StoredConnection,
+  | "firstName"
+  | "lastName"
+  | "headline"
+  | "title"
+  | "company"
+  | "location"
+  | "about"
+  | "positions"
+  | "education"
+  | "skills"
+>;
+
+/** A connection invitation we sent (via `allman connect`). */
+export interface StoredInvitation {
+  /** Invitee flagship profile id (the filename key). */
+  inviteeId: string;
+  /** `urn:li:fsd_profile:<inviteeId>` */
+  inviteeUrn: string;
+  publicIdentifier: string | null;
+  /** The custom note sent with the invite, if any. */
+  note: string | null;
+  /** `urn:li:fsd_invitation:<id>` returned by LinkedIn on success. */
+  invitationUrn: string;
+  sentAt: string;
 }
 
 export interface ConnectionOfTargetMeta {
@@ -101,6 +163,69 @@ export class ConnectionsStore {
     const rec: StoredConnection = { ...c, firstSeenAt, lastSeenAt: nowIso };
     await writeFile(path, `${JSON.stringify(rec, null, 2)}\n`, "utf8");
     if (c.publicIdentifier) await forceAlias(dir, c.publicIdentifier, file);
+  }
+
+  /**
+   * List the flagship ids of every stored 1st-degree connection.
+   * Reads the real record files (`{flagshipId}.json`) and skips the slug
+   * symlinks (which have no `.json` suffix).
+   */
+  async listConnectionIds(): Promise<string[]> {
+    const dir = this.connectionsDir();
+    try {
+      const entries = await readdir(dir, { withFileTypes: true });
+      return entries
+        .filter((e) => e.isFile() && e.name.endsWith(".json"))
+        .map((e) => e.name.slice(0, -".json".length));
+    } catch {
+      return [];
+    }
+  }
+
+  /** Read one stored connection record by flagship id (null if absent). */
+  async readConnection(flagshipId: string): Promise<StoredConnection | null> {
+    try {
+      const raw = await readFile(join(this.connectionsDir(), `${flagshipId}.json`), "utf8");
+      return JSON.parse(raw) as StoredConnection;
+    } catch {
+      return null;
+    }
+  }
+
+  /**
+   * Merge enrichment data onto an existing connection record and stamp
+   * `enrichedAt` / `enrichDepth`. Preserves `firstSeenAt`; refreshes
+   * `lastSeenAt`. No-ops (returns false) if the record doesn't exist.
+   */
+  async enrichConnection(
+    flagshipId: string,
+    patch: ConnectionEnrichment,
+    depth: "core" | "deep",
+    nowIso: string
+  ): Promise<boolean> {
+    const existing = await this.readConnection(flagshipId);
+    if (!existing) return false;
+    // Only overwrite fields the enrichment actually resolved; keep prior values
+    // (e.g. don't wipe deep fields when re-running a core enrich).
+    const merged = { ...existing } as StoredConnection & Record<string, unknown>;
+    for (const [k, v] of Object.entries(patch)) {
+      if (v !== undefined && v !== null) merged[k] = v;
+    }
+    merged.enrichedAt = nowIso;
+    merged.enrichDepth = depth;
+    merged.lastSeenAt = nowIso;
+    const path = join(this.connectionsDir(), `${flagshipId}.json`);
+    await writeFile(path, `${JSON.stringify(merged, null, 2)}\n`, "utf8");
+    return true;
+  }
+
+  /** Record a sent connection invitation (+ slug symlink when known). */
+  async recordInvitation(inv: StoredInvitation): Promise<void> {
+    const dir = join(this.accountDir, "invitations");
+    await mkdir(dir, { recursive: true });
+    const file = `${inv.inviteeId}.json`;
+    await writeFile(join(dir, file), `${JSON.stringify(inv, null, 2)}\n`, "utf8");
+    if (inv.publicIdentifier) await forceAlias(dir, inv.publicIdentifier, file);
   }
 
   /** Write the connections-of search metadata + the by-target-slug symlink. */

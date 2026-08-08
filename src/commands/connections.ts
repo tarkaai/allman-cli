@@ -22,6 +22,7 @@ import {
   randomPageSleep,
 } from "../utils/random-delay.js";
 import { profileUrnId } from "../utils/urn.js";
+import { enrichConnections } from "./enrich.js";
 
 const DEFAULT_PAGE_SIZE = 100;
 /** Hard ceiling to prevent runaway pagination. LinkedIn's known practical cap
@@ -41,6 +42,10 @@ export interface ConnectionsOptions {
   limit?: number;
   pageSize?: number;
   includeHeadline?: boolean;
+  /** After storing the list, fetch each connection's full profile. */
+  enrich?: boolean;
+  /** With --enrich: include work history, education, and skills. */
+  deep?: boolean;
   /** For tests: skip the inter-page delay. */
   noDelay?: boolean;
   delayConfig?: RandomDelayConfig;
@@ -126,6 +131,29 @@ export async function connectionsCommand(opts: ConnectionsOptions): Promise<void
     output.success(
       `Stored ${all.length} connections in ${storePath}/${session.profileId}/connections`
     );
+
+    // --enrich: fetch each connection's full profile in the same pass.
+    if (opts.enrich) {
+      const depth = opts.deep ? "deep" : "core";
+      const ids = all.map((r) => safeProfileId(r.memberUrn)).filter((id) => id.length > 0);
+      output.info(`Enriching ${ids.length} profiles (${depth})…`);
+      const res = await enrichConnections({
+        apiClient: session.apiClient,
+        cstore,
+        ids,
+        depth,
+        force: false,
+        limit: opts.limit,
+        json: false,
+        noDelay: opts.noDelay === true,
+        delayConfig,
+      });
+      cstore.git.scheduleCommit(`enrich: ${res.enriched} profiles (${depth})`);
+      await store.git.flush();
+      output.success(`Enriched ${res.enriched}, skipped ${res.skipped}, ${res.failed} failed.`);
+    }
+  } else if (opts.enrich) {
+    output.warn("--enrich requires storing; ignoring because --no-save/--json was set.");
   }
 
   // --csv: additional CSV export.

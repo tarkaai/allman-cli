@@ -12,9 +12,11 @@
  */
 
 import { Command } from "commander";
+import { connectCommand } from "./commands/connect.js";
 import { connectionsCommand } from "./commands/connections.js";
 import { connectionsOfCommand } from "./commands/connections-of.js";
 import { conversationsCommand } from "./commands/conversations.js";
+import { enrichCommand } from "./commands/enrich.js";
 import { grepCommand } from "./commands/grep.js";
 import { inboxCommand } from "./commands/inbox.js";
 import { listenCommand } from "./commands/listen.js";
@@ -393,6 +395,11 @@ program
   .option("-n, --limit <n>", "max connections to fetch (default: all)")
   .option("--page-size <n>", "results per request (default: 100, max: 500)", "100")
   .option("--include-headline", "include the LinkedIn headline in stored records / CSV")
+  .option(
+    "--enrich",
+    "after storing, fetch each connection's full profile (title, company, location, about)"
+  )
+  .option("--deep", "with --enrich: also fetch work history, education, and skills")
   .option("--json", "stream NDJSON to stdout (ephemeral — does not write the store)")
   .action(async (opts, cmd) => {
     const globalOpts = cmd.parent?.opts() ?? {};
@@ -405,6 +412,8 @@ program
       limit: opts.limit ? parseInt(opts.limit, 10) : undefined,
       pageSize: opts.pageSize ? parseInt(opts.pageSize, 10) : undefined,
       includeHeadline: opts.includeHeadline === true,
+      enrich: opts.enrich === true,
+      deep: opts.deep === true,
     });
   });
 
@@ -436,6 +445,61 @@ program
       limit: opts.limit ? parseInt(opts.limit, 10) : undefined,
       flagship: opts.flagship === true,
       salesnav: opts.salesnav === true,
+    });
+  });
+
+// ---------------------------------------------------------------------------
+// enrich — turn stored connections into full profiles
+// ---------------------------------------------------------------------------
+
+program
+  .command("enrich [target]")
+  .description(
+    "Fetch full profiles (title, company, location, about) for stored connections.\n" +
+      "  With no <target>, enriches every stored connection missing data.\n" +
+      "  <target> can be a LinkedIn slug, URL, or profile URN to enrich one person."
+  )
+  .option("-a, --account <slug>", "account to use")
+  .option("-s, --store <path>", "store directory")
+  .option("--deep", "also fetch work history, education, and skills")
+  .option("--force", "re-fetch even connections already enriched")
+  .option("-n, --limit <n>", "max profiles to fetch this run (default: all)")
+  .option("--json", "stream enriched records to stdout as NDJSON")
+  .action(async (target: string | undefined, opts, cmd) => {
+    const globalOpts = cmd.parent?.opts() ?? {};
+    await enrichCommand(target, {
+      account: opts.account ?? globalOpts.account,
+      store: opts.store ?? globalOpts.store,
+      json: opts.json ?? globalOpts.json,
+      deep: opts.deep === true,
+      force: opts.force === true,
+      limit: opts.limit ? parseInt(opts.limit, 10) : undefined,
+    });
+  });
+
+// ---------------------------------------------------------------------------
+// connect — send a connection request with an optional note
+// ---------------------------------------------------------------------------
+
+program
+  .command("connect <target>")
+  .description(
+    "Send a LinkedIn connection request\n" +
+      "  <target> can be a LinkedIn slug, URL, or profile URN"
+  )
+  .option("-a, --account <slug>", "account to send from")
+  .option("-s, --store <path>", "store directory")
+  .option("--note <text>", "personalized note (max 300 chars)")
+  .option("--dry-run", "preview the request without sending")
+  .option("--json", "output as JSON")
+  .action(async (target: string, opts, cmd) => {
+    const globalOpts = cmd.parent?.opts() ?? {};
+    await connectCommand(target, {
+      account: opts.account ?? globalOpts.account,
+      store: opts.store ?? globalOpts.store,
+      json: opts.json ?? globalOpts.json,
+      note: opts.note,
+      dryRun: opts.dryRun === true,
     });
   });
 

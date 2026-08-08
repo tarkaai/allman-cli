@@ -102,8 +102,10 @@ allman listen [--account <slug>]
 allman conversations [--account <slug>] [--json] [--limit N]
 allman messages <contact-slug|url|urn> [--account <slug>] [--json] [--limit N]
 allman send <contact-slug|url|urn> <text> [--account <slug>] [--json]
-allman connections [--limit N] [--csv <path>] [--no-save] [--include-headline] [--json]
+allman connections [--limit N] [--csv <path>] [--no-save] [--include-headline] [--enrich [--deep]] [--json]
 allman connections-of <slug> [--flagship|--salesnav] [--limit N] [--csv <path>] [--no-save] [--json]
+allman enrich [target] [--deep] [--force] [--limit N] [--json]
+allman connect <slug|url|urn> [--note <text>] [--dry-run] [--json]
 allman store path|commit|status
 ```
 
@@ -121,12 +123,40 @@ allman store path|commit|status
   the store; `--json` streams NDJSON to stdout without storing. Pages are paced with a random 2–8s
   delay (`utils/random-delay.ts`).
 
+### Enrichment (`enrich`, `connections --enrich`)
+- `connections` stores IDs + name + headline only. `enrich` does the per-profile
+  fetch that fills in **title, company, location, about** (and, with `--deep`,
+  work history + education + skills), writing them back onto each connection
+  record with an `enrichedAt` / `enrichDepth` stamp. Idempotent: skips
+  already-enriched records unless `--force` (a core→deep upgrade re-fetches).
+- Endpoint: flagship REST `identity/dash/profiles?q=memberIdentity` with the
+  `FullProfile` decoration — an **API** call, not a profile-page scrape (so it
+  still honors the `no-profile-pages` guard). The decoration version rotates;
+  override with `ALLMAN_PROFILE_DECORATION`. The parser reads the normalized
+  `included[]` by `$type`, so a decoration change degrades to fewer fields, not
+  an error. `memberIdentity` accepts a slug **or** a flagship profile id.
+- Fetches are paced with the same random 2–8s page delay. `enrich <slug>`
+  enriches one person (adding them to the store if new).
+
+### Connection requests (`connect`)
+- `POST voyagerRelationshipsDashMemberRelationships?action=verifyQuotaAndCreateV2`
+  with `{ invitee: { inviteeUnion: { memberProfile } }, customMessage? }`; success =
+  an `invitationUrn` in the response. Sent invites are stored under
+  `{profileId}/invitations/{inviteeId}.json` (+ slug symlink).
+- **Conservative by default**: pre-checks `memberRelationships` and refuses to
+  re-invite already-connected / pending profiles; caps the note at 300 chars
+  (`MAX_NOTE_LENGTH`); rate-limits invites on their **own** slow throttle
+  (`rateLimit.minInviteIntervalMs`, default 60s, persisted as
+  `rate-state.json:lastInviteSentAt`). A 403 is surfaced as a likely
+  invitation-quota hit. `--dry-run` previews without sending.
+
 ## Environment variables
 
 ```
 ALLMAN_STORE        Override default store path (default: ./.allman)
 ALLMAN_ACCOUNT      Default account slug
 ALLMAN_SEARCH_CLUSTERS_QID  Override the flagship people-search queryId (else auto-discovered)
+ALLMAN_PROFILE_DECORATION   Override the `enrich` profile decoration (else FullProfile default)
 PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH  Use existing Chromium
 ```
 

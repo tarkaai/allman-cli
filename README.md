@@ -363,6 +363,8 @@ allman connections --csv ./conns.csv     # also export a CSV
 allman connections --no-save --csv x.csv # CSV only, don't write the store
 allman connections --json                # stream NDJSON to stdout (ephemeral; no store write)
 allman connections --include-headline    # also store the headline
+allman connections --enrich              # also fetch each connection's full profile
+allman connections --enrich --deep       # ...including work history, education, skills
 ```
 
 Writes `{myProfileId}/connections/{flagshipId}.json` per connection plus a `{slug} -> {flagshipId}.json` symlink. Re-running is idempotent: `firstSeenAt` is preserved and `lastSeenAt` is refreshed.
@@ -376,6 +378,8 @@ Writes `{myProfileId}/connections/{flagshipId}.json` per connection plus a `{slu
 | `--csv <path>` | — | Also export a CSV to this path |
 | `--no-save` | — | Don't write to the store (use with `--csv`) |
 | `--include-headline` | — | Include the LinkedIn headline |
+| `--enrich` | — | After storing, fetch each connection's full profile (see `allman enrich`) |
+| `--deep` | — | With `--enrich`: also fetch work history, education, and skills |
 | `--json` | — | Stream NDJSON to stdout (no store write) |
 
 ---
@@ -410,6 +414,60 @@ allman connections-of jane-doe --json          # stream NDJSON (no store write)
 | `--json` | — | Stream NDJSON to stdout (no store write) |
 
 The SalesNav seat is captured automatically by `allman login` (it visits Sales Navigator once and saves the `li_a` cookie); `allman login --no-salesnav` skips that step.
+
+---
+
+### `allman enrich [target]`
+
+Turn stored connections (IDs + name) into full **profiles**: current title, company, location, and About — plus, with `--deep`, full work history, education, and skills. Results are written back onto each connection record with an `enrichedAt` stamp, so re-runs skip already-enriched people (unless `--force`). Fetches use the flagship profile **API** (no profile-page scraping) and are paced with the same 2–8s delay as `connections`.
+
+```bash
+allman connections                 # first, pull the connection list
+allman enrich                      # then fill in profiles (core fields)
+allman enrich --deep               # include work history, education, skills
+allman enrich --limit 200          # only fetch 200 profiles this run
+allman enrich --force              # re-fetch even already-enriched records
+allman enrich sarah-chen           # enrich a single person (adds them if new)
+allman enrich --json               # stream enriched records as NDJSON
+```
+
+**Options:**
+
+| Flag | Default | Description |
+|------|---------|-------------|
+| `[target]` | — | A slug, URL, or profile URN to enrich one person (omit to enrich all stored connections) |
+| `--deep` | — | Also fetch work history, education, and skills |
+| `--force` | — | Re-fetch even connections already enriched |
+| `-n, --limit <n>` | all | Max profiles to fetch this run |
+| `--json` | — | Stream enriched records to stdout as NDJSON |
+
+> Enriching reads only what your own LinkedIn session already shows you. `ALLMAN_PROFILE_DECORATION` overrides the profile decoration if LinkedIn rotates it.
+
+---
+
+### `allman connect <target>`
+
+Send a connection request, optionally with a personalized note. `<target>` = a LinkedIn slug, URL, or profile URN.
+
+**Conservative by design** (allman is not a cold-outbound tool — see `RESPONSIBLE_USE.md`): it first checks your relationship and won't re-invite people you're already connected to or have a pending invite with; the note is capped at LinkedIn's 300-char limit; and invitations run on their own slow rate limit (default one per minute, persisted across runs).
+
+```bash
+allman connect sarah-chen                              # bare connection request
+allman connect sarah-chen --note "Hi Sarah — loved your talk on X."
+allman connect https://www.linkedin.com/in/sarah-chen --note "..." --dry-run  # preview, don't send
+```
+
+Sent invitations are stored under `{myProfileId}/invitations/{inviteeId}.json`.
+
+**Options:**
+
+| Flag | Default | Description |
+|------|---------|-------------|
+| `--note <text>` | — | Personalized note (max 300 chars) |
+| `--dry-run` | — | Preview the request without sending |
+| `--json` | — | Output as JSON |
+
+> LinkedIn caps invitations server-side — free accounts limit invitations *with a note* (~5/month) and have weekly invite caps. A 403 from this command usually means you've hit one of those limits.
 
 ---
 
@@ -457,9 +515,12 @@ The store is a git repository. All message history is committed; session-sensiti
 │   │   └── messages/
 │   │       ├── 2024-11.jsonl
 │   │       └── 2025-01.jsonl
-│   ├── connections/                  # `allman connections` output
+│   ├── connections/                  # `allman connections` output (+ `enrich` fields)
 │   │   ├── {flagshipId}.json         # one record per 1st-degree connection
 │   │   └── {slug} -> {flagshipId}.json   # symlink: slug → connection record
+│   ├── invitations/                  # `allman connect` output (sent requests)
+│   │   ├── {inviteeId}.json          # one record per sent invitation
+│   │   └── {slug} -> {inviteeId}.json    # symlink: slug → invitation record
 │   ├── connections-of/               # `allman connections-of` output
 │   │   ├── {targetId}/
 │   │   │   ├── RECORD.json           # target, backend, total, timestamps

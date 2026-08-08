@@ -39,6 +39,8 @@ export interface AccountRecord extends AccountAuth, AccountCookies {}
 export interface AccountRateState {
   /** Unix ms timestamp of the last outbound message send. */
   lastMessageSentAt: number;
+  /** Unix ms timestamp of the last outbound connection invitation. */
+  lastInviteSentAt?: number;
 }
 
 /** inbox-state.json — tracks what messages have been shown in `inbox`. Not git-committed. */
@@ -64,6 +66,8 @@ export interface AccountConfig {
   /** Minimum ms between outbound messages. Default: 3000 */
   rateLimit?: {
     minMessageIntervalMs: number;
+    /** Minimum ms between outbound connection invitations. Default: 60000 (1/min). */
+    minInviteIntervalMs?: number;
   };
   /** Optional git remote for message history backup */
   git?: {
