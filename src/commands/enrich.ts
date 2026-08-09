@@ -104,12 +104,12 @@ export async function enrichCommand(
       },
       nowIso
     );
-    await cstore.enrichConnection(flagshipId, toEnrichment(detail), depth, nowIso);
+    await cstore.enrichConnection(flagshipId, toEnrichment(detail, depth), depth, nowIso);
     cstore.git.scheduleCommit(`enrich: ${detail.publicIdentifier ?? flagshipId}`);
     await store.git.flush();
 
     if (opts.json) {
-      output.printData({ flagshipId, ...toEnrichment(detail), enrichDepth: depth });
+      output.printData({ flagshipId, ...toEnrichment(detail, depth), enrichDepth: depth });
     } else {
       output.success(`Enriched ${displayName(detail)} (${depth}).`);
     }
@@ -215,11 +215,11 @@ export async function enrichConnections(params: EnrichPassParams): Promise<Enric
     }
 
     const nowIso = new Date().toISOString();
-    await cstore.enrichConnection(id, toEnrichment(detail), depth, nowIso);
+    await cstore.enrichConnection(id, toEnrichment(detail, depth), depth, nowIso);
     enriched += 1;
 
     if (json) {
-      output.emitEvent({ flagshipId: id, ...toEnrichment(detail), enrichDepth: depth });
+      output.emitEvent({ flagshipId: id, ...toEnrichment(detail, depth), enrichDepth: depth });
     } else {
       output.info(
         `  ${enriched}. ${displayName(detail)}${detail.company ? ` — ${detail.company}` : ""}`
@@ -246,8 +246,14 @@ function needsEnrichment(
   return false;
 }
 
-function toEnrichment(d: ProfileDetail): ConnectionEnrichment {
-  return {
+/**
+ * Map a fetched profile onto the stored connection fields.
+ *
+ * Positions are always *fetched* (they're the source of title/company) but only
+ * *stored* in deep mode — a core record stays a compact summary.
+ */
+function toEnrichment(d: ProfileDetail, depth: "core" | "deep"): ConnectionEnrichment {
+  const base: ConnectionEnrichment = {
     firstName: d.firstName,
     lastName: d.lastName,
     headline: d.headline,
@@ -255,6 +261,10 @@ function toEnrichment(d: ProfileDetail): ConnectionEnrichment {
     company: d.company,
     location: d.location,
     about: d.about,
+  };
+  if (depth !== "deep") return base;
+  return {
+    ...base,
     positions: d.positions.length > 0 ? d.positions : null,
     education: d.education.length > 0 ? d.education : null,
     skills: d.skills.length > 0 ? d.skills : null,

@@ -129,12 +129,26 @@ allman store path|commit|status
   work history + education + skills), writing them back onto each connection
   record with an `enrichedAt` / `enrichDepth` stamp. Idempotent: skips
   already-enriched records unless `--force` (a core→deep upgrade re-fetches).
-- Endpoint: flagship REST `identity/dash/profiles?q=memberIdentity` with the
-  `FullProfile` decoration — an **API** call, not a profile-page scrape (so it
-  still honors the `no-profile-pages` guard). The decoration version rotates;
-  override with `ALLMAN_PROFILE_DECORATION`. The parser reads the normalized
-  `included[]` by `$type`, so a decoration change degrades to fewer fields, not
-  an error. `memberIdentity` accepts a slug **or** a flagship profile id.
+- **Split across four resources** (all `identity/dash/*` API calls, not
+  profile-page scrapes, so the `no-profile-pages` guard still holds):
+  `profiles?q=memberIdentity` (name/headline/location/about),
+  `profilePositions?q=viewee` (title/company/history),
+  `profileEducations?q=viewee`, `profileSkills?q=viewee`.
+  The core resource carries **no** positions/education/skills — verified against
+  live responses — so title/company *always* costs a second request. Core = 2
+  requests/profile, `--deep` = 4. The `?q=viewee` sub-resources take no
+  decorationId, so they're immune to decoration rotation; only the core one
+  needs `ALLMAN_PROFILE_DECORATION` if LinkedIn rotates it. `memberIdentity`
+  accepts a slug **or** a flagship profile id.
+- **Order matters**: `included[]` is unordered — resolve `data["*elements"]` to
+  get LinkedIn's display order. Someone with several concurrent roles (CTO at
+  one company, venture partner at another) reports the wrong current employer
+  if you trust `included[]` order. Same idiom as `parseConnectionsResponse`.
+- Location lives at `profile.geoLocation["*geo"]` → resolve into `included`.
+  Never fall back to "any Geo in the graph": the graph also carries a
+  country-level Geo, which silently downgrades a metro area to "United States".
+- The legacy `identity/profiles/{slug}/profileView` aggregate (one call for
+  everything) now returns **HTTP 410 Gone**.
 - Fetches are paced with the same random 2–8s page delay. `enrich <slug>`
   enriches one person (adding them to the store if new).
 
@@ -143,12 +157,18 @@ allman store path|commit|status
   with `{ invitee: { inviteeUnion: { memberProfile } }, customMessage? }`; success =
   an `invitationUrn` in the response. Sent invites are stored under
   `{profileId}/invitations/{inviteeId}.json` (+ slug symlink).
-- **Conservative by default**: pre-checks `memberRelationships` and refuses to
-  re-invite already-connected / pending profiles; caps the note at 300 chars
-  (`MAX_NOTE_LENGTH`); rate-limits invites on their **own** slow throttle
+- **Conservative by default**: refuses to re-invite anyone already in
+  `connections/` or already recorded in `invitations/`; caps the note at 300
+  chars (`MAX_NOTE_LENGTH`); rate-limits invites on their **own** slow throttle
   (`rateLimit.minInviteIntervalMs`, default 60s, persisted as
   `rate-state.json:lastInviteSentAt`). A 403 is surfaced as a likely
   invitation-quota hit. `--dry-run` previews without sending.
+- The pre-check is **local by necessity**: LinkedIn's `memberRelationships`
+  REST resource returns HTTP 400 for every documented URL form (verified live
+  2026-08-08; the `MemberRelationshipV2` decoration still exists in the bundle,
+  so the data moved behind GraphQL). See `endpoints/relationships.ts`. A store
+  miss means "not known locally", not "definitely not connected" — LinkedIn
+  still rejects true duplicates server-side.
 
 ## Environment variables
 

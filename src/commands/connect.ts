@@ -6,17 +6,18 @@
  *   allman connect <slug> --note "..." --dry-run    preview without sending
  *
  * Conservative by design (see RESPONSIBLE_USE.md — allman is not a spam tool):
- *   - Pre-checks the relationship and refuses to re-invite people you're already
- *     connected to or have a pending invite with.
+ *   - Refuses to re-invite anyone already recorded as a connection, or anyone
+ *     allman has already sent an invitation to (checked against the local store;
+ *     LinkedIn's server-side relationship resource is dead — see below).
  *   - Caps the note at LinkedIn's 300-char limit.
  *   - Rate-limits invitations on their own slow throttle (default 1/min),
  *     persisted across runs.
+ *   - `--dry-run` previews without sending.
  */
 
 import { LinkedInError } from "../linkedin/api/client.js";
 import { MAX_NOTE_LENGTH, sendConnectionRequest } from "../linkedin/api/endpoints/invitations.js";
 import { getProfileUrnBySlug } from "../linkedin/api/endpoints/profiles.js";
-import { getMemberRelationship } from "../linkedin/api/endpoints/relationships.js";
 import { loadSession } from "../linkedin/api/session.js";
 import { resolveStorePath, Store } from "../store/index.js";
 import * as output from "../utils/output.js";
@@ -83,20 +84,31 @@ export async function connectCommand(target: string, opts: ConnectOptions): Prom
     profileUrn = urn;
   }
 
-  // Pre-check the relationship — don't re-invite existing/pending connections.
-  try {
-    const rel = await getMemberRelationship(apiClient, profileUrn);
-    if (rel.kind === "connection") {
-      output.success(`Already connected to ${slug ?? profileUrn}. Nothing to do.`);
-      return;
-    }
-    if (rel.kind === "invitation") {
-      output.success(`An invitation with ${slug ?? profileUrn} is already pending. Nothing to do.`);
-      return;
-    }
-  } catch {
-    // Relationship pre-check is best-effort; proceed if it fails.
-    output.warn("Could not verify relationship state — proceeding.");
+  // Pre-check against the local store — don't re-invite people we already know
+  // we're connected to, or who we've already invited from allman.
+  //
+  // This is deliberately a *local* check. LinkedIn's `memberRelationships` REST
+  // resource (the obvious server-side check) now returns HTTP 400 for every
+  // documented URL form — see `endpoints/relationships.ts`. The store is the
+  // reliable signal we do have; it's only as complete as the last
+  // `allman connections` run, so a miss means "not known locally", not
+  // "definitely not connected". LinkedIn still rejects true duplicates
+  // server-side, which we surface from the send below.
+  const inviteeId = profileUrnId(profileUrn);
+  const cstore = store.connectionsFor(profileId);
+
+  if (await cstore.hasConnection(inviteeId)) {
+    output.success(
+      `Already connected to ${slug ?? profileUrn} (in your local store). Nothing to do.`
+    );
+    return;
+  }
+  const priorInvite = await cstore.readInvitation(inviteeId);
+  if (priorInvite) {
+    output.success(
+      `Already invited ${slug ?? profileUrn} on ${priorInvite.sentAt.slice(0, 10)}. Nothing to do.`
+    );
+    return;
   }
 
   if (opts.dryRun) {
@@ -129,9 +141,8 @@ export async function connectCommand(target: string, opts: ConnectOptions): Prom
     return;
   }
 
-  // Record the sent invitation for provenance.
-  const inviteeId = profileUrnId(profileUrn);
-  await store.connectionsFor(profileId).recordInvitation({
+  // Record the sent invitation for provenance (and so a re-run is a no-op).
+  await cstore.recordInvitation({
     inviteeId,
     inviteeUrn: profileUrn.startsWith("urn:li:fsd_profile:")
       ? profileUrn
@@ -141,7 +152,7 @@ export async function connectCommand(target: string, opts: ConnectOptions): Prom
     invitationUrn,
     sentAt: new Date().toISOString(),
   });
-  store.connectionsFor(profileId).git.scheduleCommit(`connect: invite ${slug ?? inviteeId}`);
+  cstore.git.scheduleCommit(`connect: invite ${slug ?? inviteeId}`);
   await store.git.flush();
 
   if (opts.json) {

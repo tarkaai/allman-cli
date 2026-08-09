@@ -193,6 +193,38 @@ export class ConnectionsStore {
   }
 
   /**
+   * Whether this person is a known 1st-degree connection.
+   *
+   * Accepts a flagship id or a slug (slugs resolve through the symlink). Only
+   * as complete as the last `allman connections` run — a false here means
+   * "not known locally", not "definitely not connected".
+   */
+  async hasConnection(idOrSlug: string): Promise<boolean> {
+    try {
+      const raw = await readFile(join(this.connectionsDir(), `${idOrSlug}.json`), "utf8");
+      return raw.length > 0;
+    } catch {
+      // Slug symlinks are stored without the .json suffix.
+      try {
+        await readFile(join(this.connectionsDir(), idOrSlug), "utf8");
+        return true;
+      } catch {
+        return false;
+      }
+    }
+  }
+
+  /** Read a previously recorded invitation by invitee id (null if none). */
+  async readInvitation(inviteeId: string): Promise<StoredInvitation | null> {
+    try {
+      const raw = await readFile(join(this.accountDir, "invitations", `${inviteeId}.json`), "utf8");
+      return JSON.parse(raw) as StoredInvitation;
+    } catch {
+      return null;
+    }
+  }
+
+  /**
    * Merge enrichment data onto an existing connection record and stamp
    * `enrichedAt` / `enrichDepth`. Preserves `firstSeenAt`; refreshes
    * `lastSeenAt`. No-ops (returns false) if the record doesn't exist.

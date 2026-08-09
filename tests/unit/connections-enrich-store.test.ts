@@ -111,6 +111,33 @@ describe("enrichConnection", () => {
   });
 });
 
+describe("hasConnection / readInvitation (connect pre-checks)", () => {
+  it("finds a stored connection by flagship id and by slug", async () => {
+    await seed(ID_A, "user-a");
+    expect(await cstore.hasConnection(ID_A)).toBe(true);
+    expect(await cstore.hasConnection("user-a")).toBe(true);
+  });
+
+  it("returns false for someone not in the store", async () => {
+    await seed(ID_A, "user-a");
+    expect(await cstore.hasConnection(ID_B)).toBe(false);
+    expect(await cstore.hasConnection("nobody")).toBe(false);
+  });
+
+  it("reads back a recorded invitation, and null when none exists", async () => {
+    expect(await cstore.readInvitation(ID_B)).toBeNull();
+    await cstore.recordInvitation({
+      inviteeId: ID_B,
+      inviteeUrn: `urn:li:fsd_profile:${ID_B}`,
+      publicIdentifier: "user-b",
+      note: "hi",
+      invitationUrn: "urn:li:fsd_invitation:7000000000000000001",
+      sentAt: "2026-06-01T00:00:00.000Z",
+    });
+    expect((await cstore.readInvitation(ID_B))?.note).toBe("hi");
+  });
+});
+
 describe("recordInvitation", () => {
   it("writes an invitation record and a slug symlink", async () => {
     await cstore.recordInvitation({

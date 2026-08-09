@@ -421,6 +421,8 @@ The SalesNav seat is captured automatically by `allman login` (it visits Sales N
 
 Turn stored connections (IDs + name) into full **profiles**: current title, company, location, and About — plus, with `--deep`, full work history, education, and skills. Results are written back onto each connection record with an `enrichedAt` stamp, so re-runs skip already-enriched people (unless `--force`). Fetches use the flagship profile **API** (no profile-page scraping) and are paced with the same 2–8s delay as `connections`.
 
+LinkedIn serves this across several resources, so enriching one person costs **2 requests** (4 with `--deep`). Budget accordingly on large networks — that's why `--limit` exists.
+
 ```bash
 allman connections                 # first, pull the connection list
 allman enrich                      # then fill in profiles (core fields)
@@ -449,7 +451,9 @@ allman enrich --json               # stream enriched records as NDJSON
 
 Send a connection request, optionally with a personalized note. `<target>` = a LinkedIn slug, URL, or profile URN.
 
-**Conservative by design** (allman is not a cold-outbound tool — see `RESPONSIBLE_USE.md`): it first checks your relationship and won't re-invite people you're already connected to or have a pending invite with; the note is capped at LinkedIn's 300-char limit; and invitations run on their own slow rate limit (default one per minute, persisted across runs).
+**Conservative by design** (allman is not a cold-outbound tool — see `RESPONSIBLE_USE.md`): it won't re-invite anyone already in your stored connections or anyone allman has already invited; the note is capped at LinkedIn's 300-char limit; and invitations run on their own slow rate limit (default one per minute, persisted across runs).
+
+> The "already connected?" check reads your **local** store, so run `allman connections` first for it to be meaningful — LinkedIn's server-side relationship endpoint no longer works. If someone isn't in your store, allman will attempt the invite and surface LinkedIn's own response.
 
 ```bash
 allman connect sarah-chen                              # bare connection request
