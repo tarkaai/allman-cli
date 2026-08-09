@@ -194,10 +194,21 @@ describe("parseEducations / parseSkills", () => {
             entityUrn: "urn:li:fsd_education:1",
             schoolName: "Test University",
             degreeName: "Bachelor of Science - BS",
+            fieldOfStudy: "Computer Science",
+            schoolUrn: "urn:li:fsd_school:18158",
+            companyUrn: "urn:li:fsd_company:3558",
           },
         ],
       })
-    ).toEqual([{ school: "Test University", degree: "Bachelor of Science - BS" }]);
+    ).toEqual([
+      {
+        school: "Test University",
+        degree: "Bachelor of Science - BS",
+        fieldOfStudy: "Computer Science",
+        schoolUrn: "urn:li:fsd_school:18158",
+        companyUrn: "urn:li:fsd_company:3558",
+      },
+    ]);
   });
 
   it("parses skill names and drops unnamed entries", () => {

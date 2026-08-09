@@ -159,6 +159,7 @@ export async function connectionsCommand(opts: ConnectionsOptions): Promise<void
           lastName: r.lastName,
           headline: opts.includeHeadline ? r.headline : null,
           connectedAt: r.connectedAt !== null ? new Date(r.connectedAt).toISOString() : null,
+          source: "connections",
         },
         nowIso
       );

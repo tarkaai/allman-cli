@@ -119,6 +119,9 @@ export async function enrichCommand(
         lastName: detail.lastName,
         headline: detail.headline,
         connectedAt: null,
+        // Ad hoc: `enrich <target>` can be pointed at anyone, so this must not
+        // be mistaken for proof of a connection by `connect`'s guard.
+        source: "enrich",
       },
       nowIso
     );

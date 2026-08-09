@@ -31,6 +31,7 @@ async function seed(id: string, slug: string | null) {
       memberUrn: `urn:li:fsd_profile:${id}`,
       flagshipId: id,
       publicIdentifier: slug,
+      source: "connections",
       firstName: "Seed",
       lastName: "User",
       headline: null,
@@ -122,6 +123,39 @@ describe("hasConnection / readInvitation (connect pre-checks)", () => {
     await seed(ID_A, "user-a");
     expect(await cstore.hasConnection(ID_B)).toBe(false);
     expect(await cstore.hasConnection("nobody")).toBe(false);
+  });
+
+  it("does NOT treat an ad-hoc `enrich <target>` record as a connection", async () => {
+    // Regression: `enrich <slug>` can be pointed at anyone. Before this, it
+    // wrote into connections/ and made `connect` refuse to invite the person
+    // as "already connected".
+    await cstore.upsertConnection(
+      {
+        memberUrn: `urn:li:fsd_profile:${ID_B}`,
+        flagshipId: ID_B,
+        publicIdentifier: "stranger",
+        connectedAt: null,
+        source: "enrich",
+      },
+      "2026-06-01T00:00:00.000Z"
+    );
+    expect(await cstore.hasConnection(ID_B)).toBe(false);
+    expect(await cstore.hasConnection("stranger")).toBe(false);
+  });
+
+  it("never downgrades a confirmed connection to an enrich record", async () => {
+    await seed(ID_A, "user-a"); // from a connections sweep
+    await cstore.upsertConnection(
+      {
+        memberUrn: `urn:li:fsd_profile:${ID_A}`,
+        flagshipId: ID_A,
+        publicIdentifier: "user-a",
+        connectedAt: null,
+        source: "enrich",
+      },
+      "2026-06-02T00:00:00.000Z"
+    );
+    expect(await cstore.hasConnection(ID_A)).toBe(true);
   });
 
   it("reads back a recorded invitation, and null when none exists", async () => {

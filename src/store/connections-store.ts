@@ -31,8 +31,14 @@ export interface StoredPosition {
 
 /** A single education entry. */
 export interface StoredEducation {
+  /** School name — often null; LinkedIn returns URNs rather than names here. */
   school: string | null;
   degree: string | null;
+  fieldOfStudy: string | null;
+  /** `urn:li:fsd_school:<id>` */
+  schoolUrn: string | null;
+  /** `urn:li:fsd_company:<id>` — the id `schoolFilter` searches match on. */
+  companyUrn: string | null;
 }
 
 export interface StoredConnection {
@@ -46,6 +52,18 @@ export interface StoredConnection {
   headline?: string | null;
   /** ISO timestamp the connection was made (if reported by LinkedIn). */
   connectedAt?: string | null;
+  /**
+   * How this record entered the store.
+   *
+   * `"connections"` — came from a `allman connections` sweep, so the person
+   * really is a 1st-degree connection. `"enrich"` — created ad hoc by
+   * `allman enrich <target>`, which can be pointed at anyone, connected or not.
+   *
+   * `connect`'s "already connected?" guard trusts only the former. Absent means
+   * "connections" for backwards compatibility with records written before this
+   * field existed.
+   */
+  source?: "connections" | "enrich";
   // --- Enrichment fields (populated by `allman enrich`) ---------------------
   /** Current role title (from the current/primary position). */
   title?: string | null;
@@ -186,8 +204,13 @@ export class ConnectionsStore {
     await mkdir(dir, { recursive: true });
     const file = `${c.flagshipId}.json`;
     const path = join(dir, file);
-    const firstSeenAt = (await readFirstSeen(path)) ?? nowIso;
-    const rec: StoredConnection = { ...c, firstSeenAt, lastSeenAt: nowIso };
+    const prev = await this.readConnection(c.flagshipId);
+    const firstSeenAt = prev?.firstSeenAt ?? nowIso;
+    // A confirmed connection never gets downgraded to "enrich" by a later
+    // ad-hoc enrichment of the same person.
+    const source =
+      prev && (prev.source ?? "connections") === "connections" ? "connections" : c.source;
+    const rec: StoredConnection = { ...c, source, firstSeenAt, lastSeenAt: nowIso };
     await writeFile(path, `${JSON.stringify(rec, null, 2)}\n`, "utf8");
     if (c.publicIdentifier) await forceAlias(dir, c.publicIdentifier, file);
   }
@@ -227,18 +250,20 @@ export class ConnectionsStore {
    * "not known locally", not "definitely not connected".
    */
   async hasConnection(idOrSlug: string): Promise<boolean> {
-    try {
-      const raw = await readFile(join(this.connectionsDir(), `${idOrSlug}.json`), "utf8");
-      return raw.length > 0;
-    } catch {
-      // Slug symlinks are stored without the .json suffix.
+    for (const name of [`${idOrSlug}.json`, idOrSlug]) {
+      // Slug symlinks are stored without the .json suffix; both resolve to the
+      // same record, so read whichever exists.
       try {
-        await readFile(join(this.connectionsDir(), idOrSlug), "utf8");
-        return true;
+        const raw = await readFile(join(this.connectionsDir(), name), "utf8");
+        const rec = JSON.parse(raw) as StoredConnection;
+        // Records created ad hoc by `enrich <target>` prove nothing about the
+        // relationship — only a `connections` sweep does.
+        return (rec.source ?? "connections") === "connections";
       } catch {
-        return false;
+        // try the next name
       }
     }
+    return false;
   }
 
   private salesnavDir(): string {

@@ -44,8 +44,18 @@ export interface ProfilePosition {
 }
 
 export interface ProfileEducation {
+  /**
+   * School name. Often null: the `profileEducations` resource returns URNs
+   * rather than names, so `schoolUrn`/`companyUrn` are the reliable identity.
+   */
   school: string | null;
   degree: string | null;
+  fieldOfStudy: string | null;
+  /** `urn:li:fsd_school:<id>` */
+  schoolUrn: string | null;
+  /** `urn:li:fsd_company:<id>` — schools are also companies; this is the id
+   *  people-search's `schoolFilter` matches on. */
+  companyUrn: string | null;
 }
 
 /** The fields carried by the core `profiles` resource. */
@@ -186,6 +196,9 @@ export function parseEducations(resp: RawResponse): ProfileEducation[] {
   return orderedByType(resp, /\.profile\.Education$/).map((e) => ({
     school: text(e.schoolName),
     degree: text(e.degreeName),
+    fieldOfStudy: text(e.fieldOfStudy),
+    schoolUrn: str(e.schoolUrn) ?? null,
+    companyUrn: str(e.companyUrn) ?? null,
   }));
 }
 
