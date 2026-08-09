@@ -354,7 +354,19 @@ Results are sorted newest-first.
 
 ### `allman connections`
 
-Export your 1st-degree LinkedIn connections into the store as per-connection records with slug symlinks. Uses the flagship `relationships/dash/connections` API (IDs + slug only — no profile-page scraping). Random 2–8s delay between pages.
+Export your 1st-degree LinkedIn connections into the store. Random 2–8s delay between pages, no profile-page scraping.
+
+**Two backends.** allman uses **Sales Navigator when your account has a seat** (it returns job title, company, location and about inline — no separate enrichment needed) and the flagship API otherwise. Force either with `--salesnav` / `--flagship`.
+
+| | flagship (default without a seat) | Sales Navigator (default with a seat) |
+|---|---|---|
+| Identifies people by | flagship ID + **public slug** | SalesNav ID + **numeric member ID** |
+| Profile data included | no — run `allman enrich` (2 requests/person) | **yes** — title, company, location, about |
+| Result ceiling | all of your connections | ~2,500 per search |
+| Also gives you | `connectedAt` | `degree`, `pendingInvitation` |
+| Stored in | `connections/` | `connections-salesnav/` |
+
+> **They don't merge.** Sales Navigator never returns a public slug and the flagship list never returns a member ID, so there's no key to join the two — they're stored separately, and running both will record the same person twice under different keys. Only flagship records carry slugs, so use `--flagship` if you want records you can pass straight to `allman send` / `allman connect`.
 
 ```bash
 allman connections                       # store all connections (per-file + symlinks), git-committed
@@ -365,6 +377,8 @@ allman connections --json                # stream NDJSON to stdout (ephemeral; n
 allman connections --include-headline    # also store the headline
 allman connections --enrich              # also fetch each connection's full profile
 allman connections --enrich --deep       # ...including work history, education, skills
+allman connections --salesnav            # force Sales Navigator (rich data, no slugs)
+allman connections --flagship            # force flagship (slugs, needs `enrich`)
 ```
 
 Writes `{myProfileId}/connections/{flagshipId}.json` per connection plus a `{slug} -> {flagshipId}.json` symlink. Re-running is idempotent: `firstSeenAt` is preserved and `lastSeenAt` is refreshed.
@@ -380,6 +394,8 @@ Writes `{myProfileId}/connections/{flagshipId}.json` per connection plus a `{slu
 | `--include-headline` | — | Include the LinkedIn headline |
 | `--enrich` | — | After storing, fetch each connection's full profile (see `allman enrich`) |
 | `--deep` | — | With `--enrich`: also fetch work history, education, and skills |
+| `--salesnav` | auto | Force Sales Navigator (errors without a seat) |
+| `--flagship` | auto | Force the flagship backend |
 | `--json` | — | Stream NDJSON to stdout (no store write) |
 
 ---
@@ -445,6 +461,32 @@ allman enrich --json               # stream enriched records as NDJSON
 
 > Enriching reads only what your own LinkedIn session already shows you. `ALLMAN_PROFILE_DECORATION` overrides the profile decoration if LinkedIn rotates it.
 
+#### Rate limits
+
+Profile enrichment and connection requests are the two endpoints most likely to get an account restricted, so both carry a **volume cap that persists across runs** — closing the CLI and re-running does not hand you a fresh allowance. Defaults depend on whether you have a Sales Navigator seat:
+
+| | With a SalesNav seat | Without |
+|---|---|---|
+| **Enrichment** | 100 / hour | 25 / day |
+| **Connection requests** | 40 / day | 10 / day |
+
+When a cap is hit, `enrich` stops early and tells you when capacity returns; `connect` refuses. Already-enriched records that get skipped don't consume quota. The Sales Navigator connections sweep is a bulk list operation and is *not* billed per person.
+
+Override per account in `config.json`:
+
+```json
+{
+  "rateLimit": {
+    "maxEnrichments": 100,
+    "enrichmentWindowMs": 3600000,
+    "maxInvitesPerDay": 40,
+    "minInviteIntervalMs": 60000
+  }
+}
+```
+
+> These limits exist to protect your account. Raising them is your call and your risk — LinkedIn enforces its own limits server-side regardless.
+
 ---
 
 ### `allman connect <target>`
@@ -471,7 +513,9 @@ Sent invitations are stored under `{myProfileId}/invitations/{inviteeId}.json`.
 | `--dry-run` | — | Preview the request without sending |
 | `--json` | — | Output as JSON |
 
-> LinkedIn caps invitations server-side — free accounts limit invitations *with a note* (~5/month) and have weekly invite caps. A 403 from this command usually means you've hit one of those limits.
+allman also caps invitations locally — **40/day** with a Sales Navigator seat, **10/day** without — persisted across runs. See [Rate limits](#rate-limits).
+
+> LinkedIn caps invitations server-side too — free accounts limit invitations *with a note* (~5/month) and have weekly invite caps. A 403 from this command usually means you've hit one of those limits.
 
 ---
 
@@ -522,6 +566,8 @@ The store is a git repository. All message history is committed; session-sensiti
 │   ├── connections/                  # `allman connections` output (+ `enrich` fields)
 │   │   ├── {flagshipId}.json         # one record per 1st-degree connection
 │   │   └── {slug} -> {flagshipId}.json   # symlink: slug → connection record
+│   ├── connections-salesnav/         # `allman connections --salesnav` output
+│   │   └── {memberId}.json           # includes title, company, location, about
 │   ├── invitations/                  # `allman connect` output (sent requests)
 │   │   ├── {inviteeId}.json          # one record per sent invitation
 │   │   └── {slug} -> {inviteeId}.json    # symlink: slug → invitation record

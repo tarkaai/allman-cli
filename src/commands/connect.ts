@@ -20,10 +20,13 @@ import { MAX_NOTE_LENGTH, sendConnectionRequest } from "../linkedin/api/endpoint
 import { getProfileUrnBySlug } from "../linkedin/api/endpoints/profiles.js";
 import { loadSession } from "../linkedin/api/session.js";
 import { resolveStorePath, Store } from "../store/index.js";
+import { AccountQuota } from "../utils/account-quota.js";
 import * as output from "../utils/output.js";
+import { describeWait } from "../utils/quota.js";
 import { buildRateLimiter } from "../utils/rate-limiter.js";
 import { slugFromUrl } from "../utils/slug.js";
 import { isUrn, profileUrnId } from "../utils/urn.js";
+import { hasSalesNavSeat } from "./connections-of.js";
 
 /** Default minimum interval between invitations (ms). Deliberately slow. */
 const DEFAULT_INVITE_INTERVAL_MS = 60_000;
@@ -118,8 +121,24 @@ export async function connectCommand(target: string, opts: ConnectOptions): Prom
     return;
   }
 
-  // Invitation rate limit (its own slow throttle, persisted across runs).
+  // Daily invitation quota — the hard volume cap. Seat-aware (40/day with a
+  // Sales Navigator seat, 10/day without) and persisted, so it holds across
+  // runs. Refuses rather than sleeping: the window is a day.
   const config = await store.accounts.readConfig(profileId);
+  const hasSeat = hasSalesNavSeat(session.accountRecord.cookieJar);
+  const quota = await AccountQuota.load(store, profileId, "invite", config, hasSeat);
+  const before = quota.status();
+  if (!(await quota.tryConsume())) {
+    output.error(
+      `Daily invitation limit reached (${before.max}/day${hasSeat ? "" : " — no Sales Navigator seat"}). ` +
+        `Capacity returns in ${describeWait(before.nextFreeAt)}. ` +
+        "Override with rateLimit.maxInvitesPerDay in config.json if you know what you're doing.",
+      1
+    );
+    return;
+  }
+
+  // Spacing throttle (persisted across runs) on top of the volume cap.
   const rateState = await store.accounts.readRateState(profileId);
   const limiter = buildRateLimiter({
     minIntervalMs: config.rateLimit?.minInviteIntervalMs ?? DEFAULT_INVITE_INTERVAL_MS,
@@ -127,6 +146,7 @@ export async function connectCommand(target: string, opts: ConnectOptions): Prom
   });
   await limiter.acquire();
   await store.accounts.writeRateState(profileId, {
+    ...(rateState ?? { lastMessageSentAt: 0 }),
     lastMessageSentAt: rateState?.lastMessageSentAt ?? 0,
     lastInviteSentAt: Date.now(),
   });

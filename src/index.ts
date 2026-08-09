@@ -400,6 +400,8 @@ program
     "after storing, fetch each connection's full profile (title, company, location, about)"
   )
   .option("--deep", "with --enrich: also fetch work history, education, and skills")
+  .option("--salesnav", "force the Sales Navigator backend (default when a seat exists)")
+  .option("--flagship", "force the flagship backend")
   .option("--json", "stream NDJSON to stdout (ephemeral — does not write the store)")
   .action(async (opts, cmd) => {
     const globalOpts = cmd.parent?.opts() ?? {};
@@ -414,6 +416,8 @@ program
       includeHeadline: opts.includeHeadline === true,
       enrich: opts.enrich === true,
       deep: opts.deep === true,
+      salesnav: opts.salesnav === true,
+      flagship: opts.flagship === true,
     });
   });
 

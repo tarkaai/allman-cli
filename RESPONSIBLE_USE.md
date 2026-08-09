@@ -32,6 +32,11 @@ to your messages or session.
 - **Circumventing LinkedIn rate limits or safety controls.** The built-in
   rate limiter (default 3000ms between sends) is intentional. Disabling or
   working around platform-side rate limits is not a supported configuration.
+  The same applies to the volume caps on profile enrichment (100/hour with a
+  Sales Navigator seat, 25/day without) and connection requests (40/day with a
+  seat, 10/day without). These persist across runs by design. They are
+  configurable because accounts differ, not because raising them is
+  encouraged — those two endpoints are the ones that get accounts restricted.
 
 ## Compliance is your responsibility
 

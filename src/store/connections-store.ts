@@ -84,6 +84,33 @@ export type ConnectionEnrichment = Pick<
   | "skills"
 >;
 
+/**
+ * A 1st-degree connection as seen through Sales Navigator.
+ *
+ * Kept in its own namespace (`connections-salesnav/`) rather than merged into
+ * `connections/`: SalesNav identifies people by salesnav id + numeric member id
+ * and never returns a flagship id or public slug, while the flagship
+ * connections list returns no member id — so there is no key to join on. Merging
+ * would mean two records for one person under different keys.
+ */
+export interface StoredSalesnavConnection {
+  salesnavId: string;
+  /** Numeric member id — the filename key. */
+  memberId: string;
+  memberUrn: string;
+  firstName: string | null;
+  lastName: string | null;
+  fullName: string | null;
+  location: string | null;
+  degree: number | null;
+  title: string | null;
+  company: string | null;
+  about: string | null;
+  pendingInvitation: boolean;
+  firstSeenAt: string;
+  lastSeenAt: string;
+}
+
 /** A connection invitation we sent (via `allman connect`). */
 export interface StoredInvitation {
   /** Invitee flagship profile id (the filename key). */
@@ -212,6 +239,27 @@ export class ConnectionsStore {
         return false;
       }
     }
+  }
+
+  private salesnavDir(): string {
+    return join(this.accountDir, "connections-salesnav");
+  }
+
+  /**
+   * Upsert one SalesNav-sourced connection, keyed by numeric member id.
+   * Idempotent: preserves `firstSeenAt`, refreshes `lastSeenAt`.
+   */
+  async upsertSalesnavConnection(
+    c: Omit<StoredSalesnavConnection, "firstSeenAt" | "lastSeenAt">,
+    nowIso: string
+  ): Promise<void> {
+    const dir = this.salesnavDir();
+    await mkdir(dir, { recursive: true });
+    const key = c.memberId || c.salesnavId;
+    const path = join(dir, `${key}.json`);
+    const firstSeenAt = (await readFirstSeen(path)) ?? nowIso;
+    const rec: StoredSalesnavConnection = { ...c, firstSeenAt, lastSeenAt: nowIso };
+    await writeFile(path, `${JSON.stringify(rec, null, 2)}\n`, "utf8");
   }
 
   /** Read a previously recorded invitation by invitee id (null if none). */

@@ -24,7 +24,9 @@ import {
 import { loadSession } from "../linkedin/api/session.js";
 import type { ConnectionEnrichment, ConnectionsStore } from "../store/connections-store.js";
 import { resolveStorePath, Store } from "../store/index.js";
+import { AccountQuota } from "../utils/account-quota.js";
 import * as output from "../utils/output.js";
+import { describeWait, describeWindow } from "../utils/quota.js";
 import {
   DEFAULT_PAGE_DELAY,
   type RandomDelayConfig,
@@ -32,6 +34,7 @@ import {
 } from "../utils/random-delay.js";
 import { slugFromUrl } from "../utils/slug.js";
 import { isUrn, profileUrnId } from "../utils/urn.js";
+import { hasSalesNavSeat } from "./connections-of.js";
 
 export interface EnrichOptions {
   account?: string;
@@ -67,12 +70,27 @@ export async function enrichCommand(
   const cstore = store.connectionsFor(session.profileId);
   const depth = opts.deep ? "deep" : "core";
 
+  // Volume cap on this sensitive endpoint. Seat-aware: 100/hour with a Sales
+  // Navigator seat, 25/day without. Persisted, so it holds across runs.
+  const config = await store.accounts.readConfig(session.profileId);
+  const hasSeat = hasSalesNavSeat(session.accountRecord.cookieJar);
+  const quota = await AccountQuota.load(store, session.profileId, "enrichment", config, hasSeat);
+
   // Single-target mode: `allman enrich <slug|url|urn>`.
   if (target) {
     const identity = resolveIdentity(target);
     if (!identity) {
       output.error(
         `Cannot resolve "${target}". Use a LinkedIn URL, profile slug, or profile id.`,
+        1
+      );
+      return;
+    }
+    const single = quota.status();
+    if (!(await quota.tryConsume())) {
+      output.error(
+        `Enrichment limit reached (${describeWindow(quota.window)}${hasSeat ? "" : " — no Sales Navigator seat"}). ` +
+          `Capacity returns in ${describeWait(single.nextFreeAt)}.`,
         1
       );
       return;
@@ -124,6 +142,11 @@ export async function enrichCommand(
   }
 
   const delayConfig = opts.delayConfig ?? DEFAULT_PAGE_DELAY;
+  const before = quota.status();
+  output.info(
+    `Enrichment quota: ${before.remaining}/${before.max} remaining (${describeWindow(quota.window)}).`
+  );
+
   const result = await enrichConnections({
     apiClient: session.apiClient,
     cstore,
@@ -134,6 +157,7 @@ export async function enrichCommand(
     json: opts.json === true,
     noDelay: opts.noDelay === true,
     delayConfig,
+    quota,
   });
 
   cstore.git.scheduleCommit(`enrich: ${result.enriched} profiles (${depth})`);
@@ -142,6 +166,12 @@ export async function enrichCommand(
   output.success(
     `Enriched ${result.enriched}, skipped ${result.skipped} (already done), ${result.failed} failed.`
   );
+  if (result.quotaExhausted) {
+    output.warn(
+      `Stopped early: enrichment limit reached (${describeWindow(quota.window)}). ` +
+        `Capacity returns in ${describeWait(quota.status().nextFreeAt)} — re-run then to continue.`
+    );
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -159,12 +189,16 @@ export interface EnrichPassParams {
   json: boolean;
   noDelay: boolean;
   delayConfig: RandomDelayConfig;
+  /** Persisted volume cap. Each profile fetched consumes one slot. */
+  quota?: AccountQuota;
 }
 
 export interface EnrichPassResult {
   enriched: number;
   skipped: number;
   failed: number;
+  /** True when the run stopped early because the quota window was full. */
+  quotaExhausted: boolean;
 }
 
 /**
@@ -174,12 +208,13 @@ export interface EnrichPassResult {
  * the caller owns the git commit + flush.
  */
 export async function enrichConnections(params: EnrichPassParams): Promise<EnrichPassResult> {
-  const { apiClient, cstore, ids, depth, force, limit, json, noDelay, delayConfig } = params;
+  const { apiClient, cstore, ids, depth, force, limit, json, noDelay, delayConfig, quota } = params;
   const cap = limit && limit > 0 ? limit : Number.POSITIVE_INFINITY;
 
   let enriched = 0;
   let skipped = 0;
   let failed = 0;
+  let quotaExhausted = false;
   let firstFetch = true;
 
   for (const id of ids) {
@@ -193,6 +228,13 @@ export async function enrichConnections(params: EnrichPassParams): Promise<Enric
     if (!force && !needsEnrichment(record.enrichedAt ?? null, record.enrichDepth ?? null, depth)) {
       skipped += 1;
       continue;
+    }
+
+    // Volume cap: claim a slot before spending a request. Checked here (not up
+    // front) so skipped records don't burn quota.
+    if (quota && !(await quota.tryConsume())) {
+      quotaExhausted = true;
+      break;
     }
 
     // Pace between actual network fetches (not on skips).
@@ -227,7 +269,7 @@ export async function enrichConnections(params: EnrichPassParams): Promise<Enric
     }
   }
 
-  return { enriched, skipped, failed };
+  return { enriched, skipped, failed, quotaExhausted };
 }
 
 // ---------------------------------------------------------------------------

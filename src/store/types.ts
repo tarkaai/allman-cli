@@ -41,6 +41,12 @@ export interface AccountRateState {
   lastMessageSentAt: number;
   /** Unix ms timestamp of the last outbound connection invitation. */
   lastInviteSentAt?: number;
+  /**
+   * Rolling-window quota ledgers (unix ms timestamps, pruned to their window).
+   * Persisted so per-day/per-hour caps survive process restarts.
+   */
+  enrichmentTimestamps?: number[];
+  inviteTimestamps?: number[];
 }
 
 /** inbox-state.json — tracks what messages have been shown in `inbox`. Not git-committed. */
@@ -68,6 +74,15 @@ export interface AccountConfig {
     minMessageIntervalMs: number;
     /** Minimum ms between outbound connection invitations. Default: 60000 (1/min). */
     minInviteIntervalMs?: number;
+    /**
+     * Volume caps for the two sensitive endpoints. Defaults are seat-aware —
+     * with a Sales Navigator seat: 100 enrichments/hour, 40 invites/day;
+     * without: 25 enrichments/day, 10 invites/day. Set either pair to override.
+     */
+    maxEnrichments?: number;
+    /** Window for `maxEnrichments`, in ms (default: 1h with a seat, 24h without). */
+    enrichmentWindowMs?: number;
+    maxInvitesPerDay?: number;
   };
   /** Optional git remote for message history backup */
   git?: {

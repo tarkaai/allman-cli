@@ -12,6 +12,11 @@ import {
   type ConnectionRecord,
   listConnectionsPage,
 } from "../linkedin/api/endpoints/connections.js";
+import {
+  leadSearchOwnConnections,
+  type OwnConnectionsPage,
+  type SalesnavConnection,
+} from "../linkedin/api/endpoints/salesnav.js";
 import { loadSession } from "../linkedin/api/session.js";
 import { resolveStorePath, Store } from "../store/index.js";
 import { csvLines } from "../utils/csv.js";
@@ -22,6 +27,7 @@ import {
   randomPageSleep,
 } from "../utils/random-delay.js";
 import { profileUrnId } from "../utils/urn.js";
+import { hasSalesNavSeat } from "./connections-of.js";
 import { enrichConnections } from "./enrich.js";
 
 const DEFAULT_PAGE_SIZE = 100;
@@ -46,6 +52,10 @@ export interface ConnectionsOptions {
   enrich?: boolean;
   /** With --enrich: include work history, education, and skills. */
   deep?: boolean;
+  /** Force the Sales Navigator backend (errors without a seat). */
+  salesnav?: boolean;
+  /** Force the flagship backend. */
+  flagship?: boolean;
   /** For tests: skip the inter-page delay. */
   noDelay?: boolean;
   delayConfig?: RandomDelayConfig;
@@ -67,6 +77,33 @@ export async function connectionsCommand(opts: ConnectionsOptions): Promise<void
   const pageSize = clamp(opts.pageSize ?? DEFAULT_PAGE_SIZE, 1, 500);
   const limit = Math.min(opts.limit ?? SAFETY_MAX, SAFETY_MAX);
   const delayConfig = opts.delayConfig ?? DEFAULT_PAGE_DELAY;
+
+  // Backend selection: Sales Navigator when a seat is present (it returns
+  // name + location + current role + about in the same sweep, so no separate
+  // enrichment pass is needed), flagship otherwise. Explicit flags force one.
+  const seat = hasSalesNavSeat(session.accountRecord.cookieJar);
+  if (opts.salesnav && !seat) {
+    output.error("--salesnav requires a Sales Navigator seat. Re-run `allman login`.", 1);
+    return;
+  }
+  // Explicit flags win; otherwise the seat decides. Note `opts.salesnav` is a
+  // plain boolean (absent === false), so `??` would never fall through to seat.
+  const useSalesnav = opts.salesnav === true ? true : opts.flagship === true ? false : seat;
+
+  if (useSalesnav) {
+    await salesnavConnections({
+      store,
+      session,
+      limit,
+      pageSize: clamp(opts.pageSize ?? SALESNAV_PAGE_SIZE, 1, 100),
+      json: opts.json === true,
+      noStore: opts.noStore === true,
+      csv: opts.csv,
+      noDelay: opts.noDelay === true,
+      delayConfig,
+    });
+    return;
+  }
 
   output.info(`Fetching connections (page size ${pageSize}, limit ${limit})…`);
 
@@ -168,6 +205,142 @@ export async function connectionsCommand(opts: ConnectionsOptions): Promise<void
     output.success(
       `Fetched ${all.length} connections (not stored — pass --csv or drop --no-store).`
     );
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Sales Navigator backend
+// ---------------------------------------------------------------------------
+
+/** SalesNav lead search caps a page at 100. */
+const SALESNAV_PAGE_SIZE = 100;
+/** SalesNav's own practical ceiling on a search result set. */
+const SALESNAV_MAX = 2500;
+
+interface SalesnavSweepParams {
+  store: Store;
+  session: Awaited<ReturnType<typeof loadSession>>;
+  limit: number;
+  pageSize: number;
+  json: boolean;
+  noStore: boolean;
+  csv?: string;
+  noDelay: boolean;
+  delayConfig: RandomDelayConfig;
+}
+
+/**
+ * Pull your 1st-degree connections through Sales Navigator.
+ *
+ * One sweep yields name, location, current title/company and about — the same
+ * fields the flagship path needs a separate 2-request enrichment for — so there
+ * is no `--enrich` step here; the records land already enriched.
+ */
+async function salesnavConnections(p: SalesnavSweepParams): Promise<void> {
+  const { store, session, json, noStore, delayConfig } = p;
+  const cap = Math.min(p.limit, SALESNAV_MAX);
+  output.info(`Fetching connections via Sales Navigator (page size ${p.pageSize}, limit ${cap})…`);
+
+  const all: SalesnavConnection[] = [];
+  let start = 0;
+  let pageNum = 0;
+  let reportedTotal: number | null = null;
+
+  while (all.length < cap) {
+    pageNum += 1;
+    const want = Math.min(p.pageSize, cap - all.length);
+    let page: OwnConnectionsPage;
+    try {
+      page = await leadSearchOwnConnections(session.apiClient, { start, count: want });
+    } catch (err) {
+      output.error(`Page ${pageNum} failed: ${(err as Error).message}`, 1);
+      return;
+    }
+    reportedTotal = page.total ?? reportedTotal;
+    all.push(...page.connections);
+    output.info(
+      `  page ${pageNum}: +${page.connections.length} (running total ${all.length}${
+        reportedTotal !== null ? ` of ${reportedTotal}` : ""
+      })${page.isLastPage ? " [last]" : ""}`
+    );
+    if (page.isLastPage || all.length >= cap) break;
+    start += page.connections.length;
+    if (!p.noDelay) await randomPageSleep(delayConfig);
+  }
+
+  if (reportedTotal !== null && reportedTotal > SALESNAV_MAX && cap >= SALESNAV_MAX) {
+    output.warn(
+      `Sales Navigator reports ${reportedTotal} connections but caps a result set at ~${SALESNAV_MAX}. ` +
+        "Use the flagship backend (--flagship) for a complete list."
+    );
+  }
+
+  if (json) {
+    for (const c of all) output.emitEvent({ ...c });
+    output.success(`Emitted ${all.length} connections as NDJSON.`);
+    return;
+  }
+
+  if (!noStore) {
+    const nowIso = new Date().toISOString();
+    const cstore = store.connectionsFor(session.profileId);
+    for (const c of all) {
+      await cstore.upsertSalesnavConnection(
+        {
+          salesnavId: c.salesnavId,
+          memberId: c.memberId,
+          memberUrn: c.memberUrn,
+          firstName: c.firstName,
+          lastName: c.lastName,
+          fullName: c.fullName,
+          location: c.location,
+          degree: c.degree,
+          title: c.title,
+          company: c.company,
+          about: c.about,
+          pendingInvitation: c.pendingInvitation,
+        },
+        nowIso
+      );
+    }
+    cstore.git.scheduleCommit(`connections: salesnav export ${all.length}`);
+    await store.git.flush();
+    output.success(
+      `Stored ${all.length} connections in ${store.path}/${session.profileId}/connections-salesnav`
+    );
+    output.info(
+      "These records already include title, company, location and about — no `enrich` needed."
+    );
+  }
+
+  if (p.csv) {
+    const header = [
+      "member_id",
+      "salesnav_id",
+      "first_name",
+      "last_name",
+      "title",
+      "company",
+      "location",
+      "degree",
+      "pending_invitation",
+    ];
+    const rows = [
+      header,
+      ...all.map((c) => [
+        c.memberId,
+        c.salesnavId,
+        c.firstName,
+        c.lastName,
+        c.title,
+        c.company,
+        c.location,
+        c.degree,
+        String(c.pendingInvitation),
+      ]),
+    ];
+    await writeFile(p.csv, `${csvLines(rows)}\r\n`, "utf8");
+    output.success(`Exported ${all.length} connections to ${p.csv}`);
   }
 }
 
