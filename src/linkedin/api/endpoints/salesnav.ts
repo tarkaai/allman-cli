@@ -117,6 +117,58 @@ export async function resolveSalesnavIdFromFlagshipId(
   return null;
 }
 
+/**
+ * Maximum flagship ids per `salesApiProfiles` call. 100 resolves cleanly
+ * (~9.2 KB of URL); 150 returns HTTP 400.
+ */
+export const SALESNAV_RESOLVE_BATCH = 100;
+
+/**
+ * Batch-resolve flagship ids (`ACo…`) to salesnav ids (`ACw…`).
+ *
+ * This is the bridge between the two backends. SalesNav search results carry no
+ * flagship id or slug, but `salesApiProfiles` accepts *flagship* ids as input
+ * and hands back the matching salesnav URNs — 100 per request — so a flagship
+ * connection list can be mapped onto SalesNav's rich data without a per-person
+ * round trip.
+ *
+ * Unresolvable people are simply absent from the returned map (SalesNav doesn't
+ * know everyone). Chunks that fail are skipped rather than failing the batch.
+ */
+export async function resolveSalesnavIdsFromFlagshipIds(
+  client: LinkedInApiClient,
+  flagshipIds: string[],
+  opts: { onChunk?: (done: number, total: number) => void | Promise<void> } = {}
+): Promise<Map<string, string>> {
+  const out = new Map<string, string>();
+  for (let i = 0; i < flagshipIds.length; i += SALESNAV_RESOLVE_BATCH) {
+    const chunk = flagshipIds.slice(i, i + SALESNAV_RESOLVE_BATCH);
+    const idsTuple = chunk
+      .map((id) => `(profileId:${id},authType:undefined,authToken:undefined)`)
+      .join(",");
+    try {
+      const raw = await client.request<ProfileResolveRaw>({
+        method: "GET",
+        url: `${SALES_API_BASE}/salesApiProfiles?ids=List(${restli(idsTuple)})`,
+      });
+      for (const [key, value] of Object.entries(mergeResults(raw))) {
+        // key looks like `*(authToken:undefined,authType:undefined,profileId:ACo…)`
+        const flagshipId = /profileId:([^),]+)/.exec(key)?.[1];
+        const salesnavId = typeof value === "string" ? extractSalesnavId(value) : null;
+        if (flagshipId && salesnavId) out.set(flagshipId, salesnavId);
+      }
+    } catch {
+      // A bad chunk shouldn't sink the whole resolution pass.
+    }
+    await opts.onChunk?.(Math.min(i + chunk.length, flagshipIds.length), flagshipIds.length);
+  }
+  return out;
+}
+
+function mergeResults(raw: ProfileResolveRaw): Record<string, unknown> {
+  return { ...(raw.results ?? {}), ...(raw.data?.results ?? {}) };
+}
+
 // ---------------------------------------------------------------------------
 // Lead search: CONNECTION_OF (the 1st-degree connections of person X)
 // ---------------------------------------------------------------------------
@@ -234,4 +286,141 @@ function coerceTotal(v: number | string | undefined): number | null {
   if (typeof v === "number") return v;
   if (typeof v === "string" && /^\d+$/.test(v)) return parseInt(v, 10);
   return null;
+}
+
+// ---------------------------------------------------------------------------
+// Lead search: RELATIONSHIP:F (the viewer's OWN 1st-degree connections)
+// ---------------------------------------------------------------------------
+
+/**
+ * Your own connections, decorated.
+ *
+ * This is the big win of the SalesNav backend: the search hits already carry
+ * name, location, current role, and summary, so one paginated sweep at 100/page
+ * yields what the flagship path needs 2 extra requests *per person* to gather.
+ *
+ * The cost is identity: SalesNav returns a salesnav id + numeric member id but
+ * **no flagship id and no public slug**, and the flagship connections list
+ * carries no member id — so the two sources cannot be joined in bulk. That's
+ * why these records live in their own store namespace rather than merging.
+ */
+export interface SalesnavConnection {
+  salesnavId: string;
+  entityUrn: string;
+  /** `urn:li:member:<numeric>` */
+  memberUrn: string;
+  memberId: string;
+  firstName: string | null;
+  lastName: string | null;
+  fullName: string | null;
+  /** e.g. "Austin, Texas Metropolitan Area" */
+  location: string | null;
+  /** Network distance; 1 for a 1st-degree connection. */
+  degree: number | null;
+  title: string | null;
+  company: string | null;
+  /** The profile's About text, when SalesNav exposes it. */
+  about: string | null;
+  /** True when an invitation between you and this person is outstanding. */
+  pendingInvitation: boolean;
+}
+
+export interface OwnConnectionsPage {
+  connections: SalesnavConnection[];
+  total: number | null;
+  isLastPage: boolean;
+}
+
+/** Filter for "people I'm directly connected to". */
+export function buildOwnConnectionsQuery(): string {
+  return "(filters:List((type:RELATIONSHIP,values:List((id:F,selectionType:INCLUDED)))))";
+}
+
+/** Fetch one page of your own 1st-degree connections, decorated. */
+export async function leadSearchOwnConnections(
+  client: LinkedInApiClient,
+  opts: { start: number; count: number }
+): Promise<OwnConnectionsPage> {
+  const url =
+    `${SALES_API_BASE}/salesApiLeadSearch?q=searchQuery&query=${restli(buildOwnConnectionsQuery())}` +
+    `&start=${opts.start}&count=${opts.count}&decorationId=${LEAD_SEARCH_DECORATION_ID}`;
+  const resp = await client.request<DecoratedSearchRaw>({ method: "GET", url });
+  return parseOwnConnectionsResponse(resp, opts.count);
+}
+
+interface DecoratedHit {
+  $type?: string;
+  entityUrn?: string;
+  objectUrn?: string;
+  firstName?: string;
+  lastName?: string;
+  fullName?: string;
+  geoRegion?: string;
+  degree?: number;
+  summary?: string;
+  pendingInvitation?: boolean;
+  currentPositions?: Array<{ title?: string; companyName?: string }>;
+}
+interface DecoratedSearchRaw {
+  data?: LeadSearchInner;
+  included?: DecoratedHit[];
+  paging?: { total?: number };
+  metadata?: { totalDisplayCount?: number | string };
+}
+
+/**
+ * Parse a decorated lead-search response into connection records.
+ * Pure — exposed for unit testing.
+ */
+export function parseOwnConnectionsResponse(
+  raw: DecoratedSearchRaw,
+  requestedCount: number
+): OwnConnectionsPage {
+  const data: LeadSearchInner = raw.data ?? {};
+  const hits = (raw.included ?? []).filter((i) =>
+    typeof i.$type === "string" ? i.$type.includes("DecoratedPeopleSearchHit") : false
+  );
+
+  const connections: SalesnavConnection[] = [];
+  const seen = new Set<string>();
+  for (const h of hits) {
+    const entityUrn = h.entityUrn ?? "";
+    const salesnavId = extractSalesnavId(entityUrn);
+    if (!salesnavId || seen.has(salesnavId)) continue;
+    seen.add(salesnavId);
+    // Current role: SalesNav already filters to ongoing positions, so the
+    // first entry is the one the UI shows.
+    const primary = h.currentPositions?.[0];
+    const memberUrn = h.objectUrn ?? "";
+    connections.push({
+      salesnavId,
+      entityUrn,
+      memberUrn,
+      memberId: /urn:li:member:(\d+)/.exec(memberUrn)?.[1] ?? "",
+      firstName: nonEmpty(h.firstName),
+      lastName: nonEmpty(h.lastName),
+      fullName: nonEmpty(h.fullName),
+      location: nonEmpty(h.geoRegion),
+      degree: typeof h.degree === "number" ? h.degree : null,
+      title: nonEmpty(primary?.title),
+      company: nonEmpty(primary?.companyName),
+      about: nonEmpty(h.summary),
+      pendingInvitation: h.pendingInvitation === true,
+    });
+  }
+
+  const total =
+    coerceTotal(data.paging?.total) ??
+    coerceTotal(raw.paging?.total) ??
+    coerceTotal(data.metadata?.totalDisplayCount) ??
+    coerceTotal(raw.metadata?.totalDisplayCount);
+  return {
+    connections,
+    total,
+    isLastPage: connections.length < requestedCount,
+  };
+}
+
+function nonEmpty(v: string | undefined): string | null {
+  return typeof v === "string" && v.length > 0 ? v : null;
 }

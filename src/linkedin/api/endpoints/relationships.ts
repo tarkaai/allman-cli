@@ -4,6 +4,14 @@
  * connections-of searches: only 1st-degree connections of the viewer expose
  * their own 1st-degree network.
  *
+ * ⚠️ CURRENTLY DEAD (verified against live LinkedIn, 2026-08-08): every URL
+ * form below returns HTTP 400. The `MemberRelationshipV2` decoration still
+ * exists in the web bundle's schema, so the data moved behind GraphQL rather
+ * than disappearing — re-point this module at that query if you need it. No
+ * command depends on it today: `connect` pre-checks against the local
+ * connections/invitations store instead. The parser below is still exercised
+ * by unit tests and is correct for the documented response shape.
+ *
  *   GET /voyager/api/relationships/dash/memberRelationships/{urlEncodedFsdProfileUrn}
  *       ?decorationId=com.linkedin.voyager.dash.deco.relationships.MemberRelationshipV2
  *

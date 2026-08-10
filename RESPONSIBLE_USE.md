@@ -10,12 +10,18 @@ to your messages or session.
 - Reading, searching, and replying to conversations in your own inbox.
 - Piping your own messages to local agents and scripts.
 - Bulk-importing your own message history into local tooling.
+- Building profiles on **your own** connections (`enrich`) from what your
+  session already shows you, and sending **personalized, individual** connection
+  requests (`connect`) within LinkedIn's limits.
 
 ## Use that we do not support or encourage
 
 - **Mass unsolicited outreach.** Allman is not a cold-outbound spam tool.
-  LinkedIn enforces per-day messaging limits server-side, and accounts that
-  send spam will be restricted or banned by LinkedIn directly.
+  LinkedIn enforces per-day messaging **and invitation** limits server-side,
+  and accounts that send spam will be restricted or banned by LinkedIn
+  directly. `connect` deliberately rate-limits invitations, skips people you're
+  already connected to, and sends one at a time — do not try to work around
+  that to blast requests.
 - **Operating someone else's account.** Allman authenticates with your own
   browser session. Logging in as another person, or running Allman against an
   account you don't control, is a violation of LinkedIn's User Agreement and
@@ -26,6 +32,11 @@ to your messages or session.
 - **Circumventing LinkedIn rate limits or safety controls.** The built-in
   rate limiter (default 3000ms between sends) is intentional. Disabling or
   working around platform-side rate limits is not a supported configuration.
+  The same applies to the volume caps on profile enrichment (100/hour with a
+  Sales Navigator seat, 25/day without) and connection requests (40/day with a
+  seat, 10/day without). These persist across runs by design. They are
+  configurable because accounts differ, not because raising them is
+  encouraged — those two endpoints are the ones that get accounts restricted.
 
 ## Compliance is your responsibility
 
