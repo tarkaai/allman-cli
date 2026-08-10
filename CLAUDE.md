@@ -160,20 +160,26 @@ before touching either:
 | resource | `relationships/dash/connections` | `salesApiLeadSearch` + `RELATIONSHIP:F` |
 | identity | flagship id (`ACo…`) + **public slug** | salesnav id (`ACw…`) + **numeric member id** |
 | profile data | none (needs `enrich`, 2 req/person) | title, company, location, about **inline** |
-| page size / ceiling | 100 / all connections | 100 / ~2500 results |
+| page size | 100 | 100 (not 25) |
+| depth cap | **none** — verified past `start=8400` | **2500, hard** — `start=2500` → HTTP 400 |
 | extras | `connectedAt` | `degree`, `pendingInvitation` |
 
-- **Default: SalesNav when a seat exists**, flagship otherwise. `--salesnav` /
-  `--flagship` force one (`--salesnav` errors without a seat).
-- The two **cannot be joined**: SalesNav never returns a flagship id or slug, and
-  the flagship connections list carries no member id (verified). So SalesNav
-  results live in their own namespace, `connections-salesnav/{memberId}.json`,
-  rather than merging into `connections/`. Running both backends stores the same
-  person twice under different keys — that's the deliberate tradeoff for not
-  inventing a fuzzy name-based join.
-- Consequence: only flagship records have slugs, so only they are usable as
-  `allman send <slug>` / `connect <slug>` targets without a lookup. Use flagship
-  when you need addressability; SalesNav when you want bulk profile data cheaply.
+- **Default: flagship, always.** SalesNav is opt-in via `--salesnav` despite
+  being richer, because its 2500 wall would silently truncate any larger network
+  (8.4k account → under a third). Don't "improve" this by defaulting to the seat.
+- SalesNav results live in `connections-salesnav/{memberId}.json`, not merged
+  into `connections/`, because the search returns no flagship id or slug.
+- **But the two ARE joinable in bulk**: `salesApiProfiles?ids=List(...)` takes
+  *flagship* ids and returns salesnav ids, **100 per request** (150 → 400). That
+  is the join key — see `resolveSalesnavIdsFromFlagshipIds` and
+  `enrich --salesnav`, which resolves, sweeps, and writes SalesNav data onto the
+  slug-bearing flagship records.
+- Only flagship records have slugs, so only they are usable as
+  `allman send <slug>` / `connect <slug>` targets without a lookup.
+- Not found (guessed names, all 404): `salesApiConnections`, `salesApiMyNetwork`,
+  `salesApiRelationships`, `salesApiLeadLists`, `salesApiSavedLeads`. If a
+  higher-capacity SalesNav enumeration endpoint exists, find it by driving the
+  SalesNav UI in a browser and watching the network tab — don't guess names.
 
 ### Enrichment (`enrich`, `connections --enrich`)
 - `connections` stores IDs + name + headline only. `enrich` does the per-profile

@@ -31,10 +31,15 @@ import { hasSalesNavSeat } from "./connections-of.js";
 import { enrichConnections } from "./enrich.js";
 
 const DEFAULT_PAGE_SIZE = 100;
-/** Hard ceiling to prevent runaway pagination. LinkedIn's known practical cap
- *  is somewhere between ~1k and ~3k for this endpoint; we paginate past that
- *  and rely on the server's `isLastPage` signal, with this as a safety net. */
-const SAFETY_MAX = 10_000;
+/**
+ * Runaway-pagination backstop, not a LinkedIn limit. The flagship connections
+ * resource has no depth cap — verified live at `start=8400` on an 8.4k network,
+ * where it still returned full pages — so we paginate until the server sets
+ * `isLastPage` and keep this only as a safety net. (Contrast Sales Navigator,
+ * which hard-refuses `start >= 2500`.) LinkedIn caps accounts at 30k
+ * connections, so this ceiling sits comfortably above any real network.
+ */
+const SAFETY_MAX = 35_000;
 
 export interface ConnectionsOptions {
   account?: string;
@@ -78,17 +83,17 @@ export async function connectionsCommand(opts: ConnectionsOptions): Promise<void
   const limit = Math.min(opts.limit ?? SAFETY_MAX, SAFETY_MAX);
   const delayConfig = opts.delayConfig ?? DEFAULT_PAGE_DELAY;
 
-  // Backend selection: Sales Navigator when a seat is present (it returns
-  // name + location + current role + about in the same sweep, so no separate
-  // enrichment pass is needed), flagship otherwise. Explicit flags force one.
+  // Backend selection. Flagship is the default even when a Sales Navigator seat
+  // exists, because SalesNav lead search refuses `start >= 2500` (verified: 2400
+  // OK, 2500 → HTTP 400). For a network larger than that, defaulting to SalesNav
+  // would silently return a fraction of your connections — and it never returns
+  // public slugs either. `--salesnav` opts into the richer-but-capped sweep.
   const seat = hasSalesNavSeat(session.accountRecord.cookieJar);
   if (opts.salesnav && !seat) {
     output.error("--salesnav requires a Sales Navigator seat. Re-run `allman login`.", 1);
     return;
   }
-  // Explicit flags win; otherwise the seat decides. Note `opts.salesnav` is a
-  // plain boolean (absent === false), so `??` would never fall through to seat.
-  const useSalesnav = opts.salesnav === true ? true : opts.flagship === true ? false : seat;
+  const useSalesnav = opts.salesnav === true;
 
   if (useSalesnav) {
     await salesnavConnections({
@@ -215,7 +220,13 @@ export async function connectionsCommand(opts: ConnectionsOptions): Promise<void
 
 /** SalesNav lead search caps a page at 100. */
 const SALESNAV_PAGE_SIZE = 100;
-/** SalesNav's own practical ceiling on a search result set. */
+/**
+ * Hard pagination wall: SalesNav rejects `start >= 2500` with HTTP 400
+ * (verified live — start=2400 returns a full page, start=2500 errors). This is
+ * a ceiling on the *result set*, not a page count, so a bigger page size buys
+ * nothing past it. Networks larger than this cannot be fully enumerated here —
+ * that's what the flagship backend is for.
+ */
 const SALESNAV_MAX = 2500;
 
 interface SalesnavSweepParams {
@@ -269,10 +280,11 @@ async function salesnavConnections(p: SalesnavSweepParams): Promise<void> {
     if (!p.noDelay) await randomPageSleep(delayConfig);
   }
 
-  if (reportedTotal !== null && reportedTotal > SALESNAV_MAX && cap >= SALESNAV_MAX) {
+  if (reportedTotal !== null && reportedTotal > SALESNAV_MAX) {
     output.warn(
-      `Sales Navigator reports ${reportedTotal} connections but caps a result set at ~${SALESNAV_MAX}. ` +
-        "Use the flagship backend (--flagship) for a complete list."
+      `Sales Navigator reports ${reportedTotal} connections but refuses to paginate past ${SALESNAV_MAX}, ` +
+        `so ${reportedTotal - SALESNAV_MAX} of them are unreachable here. ` +
+        "Run `allman connections` (flagship) for the complete list."
     );
   }
 

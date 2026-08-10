@@ -356,17 +356,19 @@ Results are sorted newest-first.
 
 Export your 1st-degree LinkedIn connections into the store. Random 2–8s delay between pages, no profile-page scraping.
 
-**Two backends.** allman uses **Sales Navigator when your account has a seat** (it returns job title, company, location and about inline — no separate enrichment needed) and the flagship API otherwise. Force either with `--salesnav` / `--flagship`.
+**Two backends.** The flagship API is the default; `--salesnav` opts into Sales Navigator, which returns profile data inline but **cannot see past 2,500 connections**.
 
-| | flagship (default without a seat) | Sales Navigator (default with a seat) |
+| | flagship (default) | Sales Navigator (`--salesnav`) |
 |---|---|---|
 | Identifies people by | flagship ID + **public slug** | SalesNav ID + **numeric member ID** |
-| Profile data included | no — run `allman enrich` (2 requests/person) | **yes** — title, company, location, about |
-| Result ceiling | all of your connections | ~2,500 per search |
+| Profile data included | no — run `allman enrich` | **yes** — title, company, location, about |
+| Result ceiling | **none** — your whole network | **2,500, hard** (`start=2500` → HTTP 400) |
 | Also gives you | `connectedAt` | `degree`, `pendingInvitation` |
 | Stored in | `connections/` | `connections-salesnav/` |
 
-> **They don't merge.** Sales Navigator never returns a public slug and the flagship list never returns a member ID, so there's no key to join the two — they're stored separately, and running both will record the same person twice under different keys. Only flagship records carry slugs, so use `--flagship` if you want records you can pass straight to `allman send` / `allman connect`.
+> **Why flagship is the default even with a seat:** Sales Navigator refuses to paginate past 2,500 results. On a 8,000-connection network it would silently return under a third of your network — so it's opt-in. The flagship resource has no such cap (verified past 8,400).
+
+> **The two stores don't merge automatically.** SalesNav search returns no public slug, so its records live separately and only flagship records can be passed straight to `allman send` / `allman connect`. They *are* joinable, though — see `allman enrich --salesnav`.
 
 ```bash
 allman connections                       # store all connections (per-file + symlinks), git-committed
@@ -455,11 +457,35 @@ allman enrich --json               # stream enriched records as NDJSON
 |------|---------|-------------|
 | `[target]` | — | A slug, URL, or profile URN to enrich one person (omit to enrich all stored connections) |
 | `--deep` | — | Also fetch work history, education, and skills |
+| `--salesnav` | — | Bulk-enrich via Sales Navigator (see below) |
 | `--force` | — | Re-fetch even connections already enriched |
 | `-n, --limit <n>` | all | Max profiles to fetch this run |
 | `--json` | — | Stream enriched records to stdout as NDJSON |
 
 > Enriching reads only what your own LinkedIn session already shows you. `ALLMAN_PROFILE_DECORATION` overrides the profile decoration if LinkedIn rotates it.
+
+#### Bulk enrichment via Sales Navigator (`--salesnav`)
+
+Enriching one at a time costs 2 requests **per person**. With a Sales Navigator seat there's a much cheaper route, because `salesApiProfiles` accepts *flagship* IDs and hands back SalesNav IDs — 100 per request. That's the join key between the two backends:
+
+1. batch-resolve your flagship IDs → SalesNav IDs (100 per request)
+2. sweep SalesNav's connection search, which returns title, company, location and about inline (100 per request)
+3. join on SalesNav ID and write onto your flagship records — which keep their slugs, so they stay usable with `send` / `connect`
+
+```bash
+allman connections                 # flagship list (complete, has slugs)
+allman enrich --salesnav           # bulk-fill profiles by joining SalesNav data
+```
+
+**This pays off in bulk, not for a handful.** The sweep costs a flat ~25 requests regardless of how many people you're enriching, so enriching 2,000 people costs about the same as enriching 20. Rough shape:
+
+| People to enrich | flagship (2 req each) | `--salesnav` |
+|---|---|---|
+| 20 | ~40 | ~26 |
+| 500 | ~1,000 | ~30 |
+| 2,500 | ~5,000 | ~50 |
+
+Two catches. The sweep inherits SalesNav's 2,500-result wall, so anyone outside your first 2,500 connections won't be matched — allman reports the count so you can finish them with the flagship path. And `--deep` fields (work history, education, skills) are flagship-only.
 
 #### Rate limits
 

@@ -8,6 +8,7 @@ import { describe, expect, it } from "vitest";
 import {
   buildOwnConnectionsQuery,
   parseOwnConnectionsResponse,
+  resolveSalesnavIdsFromFlagshipIds,
 } from "@/linkedin/api/endpoints/salesnav.js";
 
 const HIT = "com.linkedin.sales.search.DecoratedPeopleSearchHit";
@@ -122,5 +123,75 @@ describe("parseOwnConnectionsResponse", () => {
       hit({ sn: `ACwSYNTH1${i}`, member: String(100 + i), first: "P", last: String(i) })
     );
     expect(parseOwnConnectionsResponse({ included }, 3).isLastPage).toBe(false);
+  });
+});
+
+describe("resolveSalesnavIdsFromFlagshipIds", () => {
+  const FLAG_A = "ACoSYNTH0000000000000000000000000000001";
+  const FLAG_B = "ACoSYNTH0000000000000000000000000000002";
+
+  function client(pages: Array<Record<string, unknown>>) {
+    const calls: string[] = [];
+    let i = 0;
+    return {
+      calls,
+      client: {
+        request: async ({ url }: { url: string }) => {
+          calls.push(url);
+          return pages[i++] ?? { data: { results: {} } };
+        },
+      } as unknown as Parameters<typeof resolveSalesnavIdsFromFlagshipIds>[0],
+    };
+  }
+
+  const resultsFor = (pairs: Array<[string, string]>) => ({
+    data: {
+      results: Object.fromEntries(
+        pairs.map(([flag, sn]) => [
+          `*(authToken:undefined,authType:undefined,profileId:${flag})`,
+          `urn:li:fs_salesProfile:(${sn},undefined,undefined)`,
+        ])
+      ),
+    },
+  });
+
+  it("maps flagship ids to salesnav ids", async () => {
+    const { client: c } = client([
+      resultsFor([
+        [FLAG_A, "ACwSYNTH01"],
+        [FLAG_B, "ACwSYNTH02"],
+      ]),
+    ]);
+    const map = await resolveSalesnavIdsFromFlagshipIds(c, [FLAG_A, FLAG_B]);
+    expect(map.get(FLAG_A)).toBe("ACwSYNTH01");
+    expect(map.get(FLAG_B)).toBe("ACwSYNTH02");
+  });
+
+  it("chunks at 100 ids per request (150 ids → 2 calls)", async () => {
+    const ids = Array.from({ length: 150 }, (_, i) => `ACoSYNTH${String(i).padStart(10, "0")}`);
+    const { client: c, calls } = client([resultsFor([]), resultsFor([])]);
+    await resolveSalesnavIdsFromFlagshipIds(c, ids);
+    expect(calls).toHaveLength(2);
+  });
+
+  it("omits people SalesNav doesn't recognise rather than inventing entries", async () => {
+    const { client: c } = client([resultsFor([[FLAG_A, "ACwSYNTH01"]])]);
+    const map = await resolveSalesnavIdsFromFlagshipIds(c, [FLAG_A, FLAG_B]);
+    expect(map.size).toBe(1);
+    expect(map.has(FLAG_B)).toBe(false);
+  });
+
+  it("survives a failing chunk instead of losing the whole batch", async () => {
+    let n = 0;
+    const c = {
+      request: async () => {
+        n += 1;
+        if (n === 1) throw new Error("boom");
+        return resultsFor([[FLAG_B, "ACwSYNTH02"]]);
+      },
+    } as unknown as Parameters<typeof resolveSalesnavIdsFromFlagshipIds>[0];
+    const ids = Array.from({ length: 150 }, (_, i) => `ACoSYNTH${String(i).padStart(10, "0")}`);
+    const map = await resolveSalesnavIdsFromFlagshipIds(c, ids);
+    expect(map.get(FLAG_B)).toBe("ACwSYNTH02");
   });
 });

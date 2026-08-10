@@ -467,6 +467,10 @@ program
   .option("-s, --store <path>", "store directory")
   .option("--deep", "also fetch work history, education, and skills")
   .option("--force", "re-fetch even connections already enriched")
+  .option(
+    "--salesnav",
+    "bulk-enrich via Sales Navigator (far cheaper per person; cannot see past 2500 connections)"
+  )
   .option("-n, --limit <n>", "max profiles to fetch this run (default: all)")
   .option("--json", "stream enriched records to stdout as NDJSON")
   .action(async (target: string | undefined, opts, cmd) => {
@@ -478,6 +482,7 @@ program
       deep: opts.deep === true,
       force: opts.force === true,
       limit: opts.limit ? parseInt(opts.limit, 10) : undefined,
+      salesnav: opts.salesnav === true,
     });
   });
 
