@@ -21,10 +21,6 @@ import {
   fetchProfileDetail,
   type ProfileDetail,
 } from "../linkedin/api/endpoints/profile-detail.js";
-import {
-  leadSearchOwnConnections,
-  resolveSalesnavIdsFromFlagshipIds,
-} from "../linkedin/api/endpoints/salesnav.js";
 import { loadSession } from "../linkedin/api/session.js";
 import type { ConnectionEnrichment, ConnectionsStore } from "../store/connections-store.js";
 import { resolveStorePath, Store } from "../store/index.js";
@@ -50,8 +46,6 @@ export interface EnrichOptions {
   force?: boolean;
   /** Max profiles to fetch this run (default: all). */
   limit?: number;
-  /** Use the Sales Navigator bulk join instead of per-person flagship fetches. */
-  salesnav?: boolean;
   /** For tests: skip the inter-fetch delay. */
   noDelay?: boolean;
   delayConfig?: RandomDelayConfig;
@@ -156,46 +150,6 @@ export async function enrichCommand(
     `Enrichment quota: ${before.remaining}/${before.max} remaining (${describeWindow(quota.window)}).`
   );
 
-  // Sales Navigator path: bulk join instead of per-person fetches. Opt-in —
-  // it's dramatically cheaper per person but can't see past 2500 connections.
-  if (opts.salesnav) {
-    if (!hasSeat) {
-      output.error("--salesnav requires a Sales Navigator seat. Re-run `allman login`.", 1);
-      return;
-    }
-    const pending: string[] = [];
-    for (const id of ids) {
-      const rec = await cstore.readConnection(id);
-      if (!rec) continue;
-      if (opts.force || needsEnrichment(rec.enrichedAt ?? null, rec.enrichDepth ?? null, depth)) {
-        pending.push(id);
-      }
-    }
-    if (pending.length === 0) {
-      output.success("Nothing to enrich — every stored connection is already enriched.");
-      return;
-    }
-    const snResult = await enrichViaSalesnav({
-      apiClient: session.apiClient,
-      cstore,
-      ids: opts.limit ? pending.slice(0, opts.limit) : pending,
-      quota,
-      noDelay: opts.noDelay === true,
-      delayConfig,
-      json: opts.json === true,
-    });
-    cstore.git.scheduleCommit(`enrich: ${snResult.enriched} profiles (salesnav)`);
-    await store.git.flush();
-    output.success(`Enriched ${snResult.enriched}, ${snResult.failed} unmatched.`);
-    if (snResult.quotaExhausted) {
-      output.warn(
-        `Stopped early: enrichment limit reached (${describeWindow(quota.window)}). ` +
-          `Capacity returns in ${describeWait(quota.status().nextFreeAt)}.`
-      );
-    }
-    return;
-  }
-
   const result = await enrichConnections({
     apiClient: session.apiClient,
     cstore,
@@ -221,112 +175,6 @@ export async function enrichCommand(
         `Capacity returns in ${describeWait(quota.status().nextFreeAt)} — re-run then to continue.`
     );
   }
-}
-
-// ---------------------------------------------------------------------------
-// Sales Navigator enrichment (bulk join)
-// ---------------------------------------------------------------------------
-
-/** SalesNav refuses `start >= 2500`, so the sweep can only see this many. */
-const SALESNAV_SWEEP_MAX = 2500;
-const SALESNAV_SWEEP_PAGE = 100;
-
-/**
- * Enrich flagship-keyed connection records using Sales Navigator's bulk data.
- *
- * The two backends identify people differently, but `salesApiProfiles` accepts
- * *flagship* ids and returns salesnav ids (100 per request) — that's the join
- * key. So:
- *
- *   1. batch-resolve the flagship ids we want → salesnav ids
- *   2. sweep SalesNav's own-connections search, which returns title, company,
- *      location and about inline
- *   3. join on salesnav id and write onto the flagship records (which keep
- *      their slugs, so they stay addressable by `send` / `connect`)
- *
- * Cost is per *request*, not per person: ~1 request per 100 people resolved
- * plus ~1 per 100 swept, versus 2 requests per person on the flagship path.
- * The catch is reach — the sweep cannot see past 2500 connections.
- */
-async function enrichViaSalesnav(params: {
-  apiClient: LinkedInApiClient;
-  cstore: ConnectionsStore;
-  ids: string[];
-  quota: AccountQuota;
-  noDelay: boolean;
-  delayConfig: RandomDelayConfig;
-  json: boolean;
-}): Promise<EnrichPassResult> {
-  const { apiClient, cstore, ids, quota, noDelay, delayConfig, json } = params;
-
-  output.info(`Resolving ${ids.length} flagship ids to Sales Navigator ids…`);
-  let quotaExhausted = false;
-  const flagshipToSalesnav = await resolveSalesnavIdsFromFlagshipIds(apiClient, ids, {
-    onChunk: async (done, total) => {
-      if (!(await quota.tryConsume())) quotaExhausted = true;
-      output.info(`  resolved ${done}/${total}`);
-    },
-  });
-  if (flagshipToSalesnav.size === 0) {
-    output.warn("Sales Navigator recognised none of these profiles.");
-    return { enriched: 0, skipped: 0, failed: ids.length, quotaExhausted };
-  }
-  // Invert: salesnav id → the flagship record it belongs to.
-  const wanted = new Map<string, string>();
-  for (const [flagshipId, salesnavId] of flagshipToSalesnav) wanted.set(salesnavId, flagshipId);
-  output.info(`Matched ${wanted.size} of ${ids.length}. Sweeping Sales Navigator…`);
-
-  let enriched = 0;
-  let start = 0;
-  while (start < SALESNAV_SWEEP_MAX && wanted.size > 0 && !quotaExhausted) {
-    if (!(await quota.tryConsume())) {
-      quotaExhausted = true;
-      break;
-    }
-    const want = Math.min(SALESNAV_SWEEP_PAGE, SALESNAV_SWEEP_MAX - start);
-    let page: Awaited<ReturnType<typeof leadSearchOwnConnections>>;
-    try {
-      page = await leadSearchOwnConnections(apiClient, { start, count: want });
-    } catch (err) {
-      output.warn(`  sweep stopped at ${start}: ${(err as Error).message}`);
-      break;
-    }
-    const nowIso = new Date().toISOString();
-    for (const c of page.connections) {
-      const flagshipId = wanted.get(c.salesnavId);
-      if (!flagshipId) continue;
-      wanted.delete(c.salesnavId);
-      await cstore.enrichConnection(
-        flagshipId,
-        {
-          firstName: c.firstName,
-          lastName: c.lastName,
-          title: c.title,
-          company: c.company,
-          location: c.location,
-          about: c.about,
-        },
-        "core",
-        nowIso
-      );
-      enriched += 1;
-      if (json) output.emitEvent({ flagshipId, ...c });
-    }
-    output.info(
-      `  swept ${start + page.connections.length} (matched ${enriched}, ${wanted.size} left)`
-    );
-    if (page.isLastPage) break;
-    start += page.connections.length;
-    if (!noDelay) await randomPageSleep(delayConfig);
-  }
-
-  if (wanted.size > 0 && start >= SALESNAV_SWEEP_MAX) {
-    output.warn(
-      `${wanted.size} profile(s) were not found in the first ${SALESNAV_SWEEP_MAX} Sales Navigator ` +
-        "results, which is as deep as it will paginate. Enrich those with --flagship."
-    );
-  }
-  return { enriched, skipped: 0, failed: ids.length - enriched, quotaExhausted };
 }
 
 // ---------------------------------------------------------------------------

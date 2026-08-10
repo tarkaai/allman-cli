@@ -161,19 +161,25 @@ before touching either:
 | identity | flagship id (`ACo…`) + **public slug** | salesnav id (`ACw…`) + **numeric member id** |
 | profile data | none (needs `enrich`, 2 req/person) | title, company, location, about **inline** |
 | page size | 100 | 100 (not 25) |
-| depth cap | **none** — verified past `start=8400` | **2500, hard** — `start=2500` → HTTP 400 |
+| depth cap | **none** observed | **2500, hard** — `start=2500` → HTTP 400 |
 | extras | `connectedAt` | `degree`, `pendingInvitation` |
 
 - **Default: flagship, always.** SalesNav is opt-in via `--salesnav` despite
-  being richer, because its 2500 wall would silently truncate any larger network
-  (8.4k account → under a third). Don't "improve" this by defaulting to the seat.
+  being richer, because its 2500 wall silently truncates any larger network.
+  Don't "improve" this by defaulting to the seat.
 - SalesNav results live in `connections-salesnav/{memberId}.json`, not merged
   into `connections/`, because the search returns no flagship id or slug.
-- **But the two ARE joinable in bulk**: `salesApiProfiles?ids=List(...)` takes
-  *flagship* ids and returns salesnav ids, **100 per request** (150 → 400). That
-  is the join key — see `resolveSalesnavIdsFromFlagshipIds` and
-  `enrich --salesnav`, which resolves, sweeps, and writes SalesNav data onto the
-  slug-bearing flagship records.
+- **The join key exists**: `salesApiProfiles?ids=List(...)` takes *flagship* ids
+  and returns salesnav ids, **100 per request** (150 → 400) —
+  `resolveSalesnavIdsFromFlagshipIds`. It is a genuine batched lookup over a
+  known id set.
+- **There is no per-person SalesNav enrichment.** `salesApiProfiles` with a
+  field projection returns 400, and without one returns empty shells; rich
+  SalesNav data only comes from the search sweep. Do NOT rebuild "SalesNav
+  enrichment" by scanning the sweep for particular people — that is a
+  brute-force search wearing a lookup's clothes, and it reads thousands of
+  profiles to find a handful. Bulk SalesNav data belongs to
+  `connections --salesnav`, where enumerating IS the operation.
 - Only flagship records have slugs, so only they are usable as
   `allman send <slug>` / `connect <slug>` targets without a lookup.
 - Not found (guessed names, all 404): `salesApiConnections`, `salesApiMyNetwork`,
