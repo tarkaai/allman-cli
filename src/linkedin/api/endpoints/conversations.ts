@@ -28,8 +28,27 @@ export interface ConversationParticipantData {
   entityUrn: string;
   name: string | null;
   profileUrl: string | null;
+  /** Smallest available avatar — the one list UIs want. */
   imageUrl: string | null;
   headline: string | null;
+  /** Every avatar size LinkedIn offers, largest last. */
+  profilePictures: ConversationProfilePicture[];
+  /** DISTANCE_1 / DISTANCE_2 / DISTANCE_3 / OUT_OF_NETWORK / SELF. */
+  distance: string | null;
+  /** Standardized pronoun, e.g. "HE_HIM". Null when unset or custom. */
+  pronoun: string | null;
+  /** e.g. "PREMIUM_PROFILE", "VERIFIED_PROFILE", "INFLUENCER". */
+  memberBadgeType: string | null;
+  isPremium: boolean;
+  isVerified: boolean;
+  /** `urn:li:msg_messagingParticipant:…` — the participant, not the person. */
+  backendUrn: string | null;
+}
+
+export interface ConversationProfilePicture {
+  width: number;
+  height: number;
+  url: string;
 }
 
 export interface ConversationData {
@@ -42,6 +61,20 @@ export interface ConversationData {
   lastActivityAt: number | null;
   unreadCount: number;
   participants: ConversationParticipantData[];
+  /** Unix ms the thread was created — the true "first contact" date. */
+  createdAt: number | null;
+  /** Unix ms you last read the thread. */
+  lastReadAt: number | null;
+  /** LinkedIn's own read flag, which is not always `unreadCount === 0`. */
+  read: boolean;
+  /** ACTIVE / MUTED. */
+  notificationStatus: string | null;
+  /** e.g. ["INBOX", "PRIMARY_INBOX"], or ["INBOX", "OTHER"] for the Other tab. */
+  categories: string[];
+  /** Direct link to the thread on linkedin.com. */
+  conversationUrl: string | null;
+  /** e.g. ["ADD_PARTICIPANT", "REMOVE_PARTICIPANT"]. */
+  disabledFeatures: string[];
 }
 
 // ---------------------------------------------------------------------------
@@ -71,22 +104,39 @@ interface ConversationRaw {
   groupChat?: boolean;
   lastActivityAt?: number;
   unreadCount?: number;
+  createdAt?: number;
+  lastReadAt?: number;
+  read?: boolean;
+  notificationStatus?: string | null;
+  categories?: string[];
+  conversationUrl?: string | null;
+  disabledFeatures?: Array<{ disabledFeature?: string }>;
   "*conversationParticipants"?: string[];
 }
 
 interface ParticipantRaw {
   $type?: string;
   entityUrn?: string;
+  backendUrn?: string;
   hostIdentityUrn?: string;
+  memberBadgeType?: string | null;
+  showPremiumInBug?: boolean;
+  showVerificationBadge?: boolean;
   participantType?: {
     member?: {
       firstName?: { text?: string };
       lastName?: { text?: string };
       headline?: { text?: string };
       profileUrl?: string;
+      distance?: string | null;
+      pronoun?: { standardizedPronoun?: string | null; customPronoun?: string | null } | null;
       profilePicture?: {
         rootUrl?: string;
-        artifacts?: Array<{ fileIdentifyingUrlPathSegment?: string; width?: number }>;
+        artifacts?: Array<{
+          fileIdentifyingUrlPathSegment?: string;
+          width?: number;
+          height?: number;
+        }>;
       };
     };
   };
@@ -121,17 +171,28 @@ export async function listConversations(
     url: `${GRAPHQL_URL}?queryId=${QUERY_ID_LIST}&variables=${variables}`,
   });
 
-  const included = buildIncludedMap(response.included);
   const query = response?.data?.data?.messengerConversationsByCategoryQuery;
-  const convUrns = query?.["*elements"] ?? [];
-
   return {
-    conversations: convUrns.flatMap((urn) => {
-      const c = parseConversation(urn, included);
-      return c ? [c] : [];
-    }),
+    conversations: parseConversationsResponse(response),
     nextCursor: query?.metadata?.nextCursor ?? null,
   };
+}
+
+/**
+ * Turn a normalized conversations response into records.
+ * Pure function — exposed for unit testing.
+ */
+export function parseConversationsResponse(response: NormalizedResponse): ConversationData[] {
+  const included = buildIncludedMap(response.included);
+  const roots = response?.data?.data;
+  const convUrns =
+    roots?.messengerConversationsByCategoryQuery?.["*elements"] ??
+    roots?.messengerConversationsByRecipients?.["*elements"] ??
+    [];
+  return convUrns.flatMap((urn) => {
+    const c = parseConversation(urn, included);
+    return c ? [c] : [];
+  });
 }
 
 /**
@@ -205,7 +266,19 @@ function parseConversation(
     lastActivityAt: raw.lastActivityAt ?? null,
     unreadCount: raw.unreadCount ?? 0,
     participants,
+    createdAt: typeof raw.createdAt === "number" ? raw.createdAt : null,
+    lastReadAt: typeof raw.lastReadAt === "number" ? raw.lastReadAt : null,
+    // Prefer LinkedIn's own flag; fall back to the count only when it is absent.
+    read: typeof raw.read === "boolean" ? raw.read : (raw.unreadCount ?? 0) === 0,
+    notificationStatus: raw.notificationStatus ?? null,
+    categories: Array.isArray(raw.categories) ? raw.categories.filter(isNonEmpty) : [],
+    conversationUrl: raw.conversationUrl ?? null,
+    disabledFeatures: (raw.disabledFeatures ?? []).map((d) => d.disabledFeature).filter(isNonEmpty),
   };
+}
+
+function isNonEmpty(v: string | undefined | null): v is string {
+  return typeof v === "string" && v.length > 0;
 }
 
 function parseParticipant(
@@ -222,17 +295,38 @@ function parseParticipant(
   const headline = member?.headline?.text ?? null;
   const profileUrl = member?.profileUrl ?? null;
 
-  // Pick the smallest artifact for image URL
+  // Every artifact, smallest first. `imageUrl` keeps the historical behaviour
+  // of exposing the smallest; the full ladder is now preserved alongside it.
   const picture = member?.profilePicture;
-  let imageUrl: string | null = null;
+  const profilePictures: ConversationProfilePicture[] = [];
   if (picture?.rootUrl && picture.artifacts?.length) {
-    const sorted = [...picture.artifacts].sort((a, b) => (a.width ?? 0) - (b.width ?? 0));
-    const seg = sorted[0]?.fileIdentifyingUrlPathSegment;
-    if (seg) imageUrl = `${picture.rootUrl}${seg}`;
+    for (const a of [...picture.artifacts].sort((x, y) => (x.width ?? 0) - (y.width ?? 0))) {
+      const seg = a.fileIdentifyingUrlPathSegment;
+      if (!seg) continue;
+      profilePictures.push({
+        width: a.width ?? 0,
+        height: a.height ?? a.width ?? 0,
+        url: `${picture.rootUrl}${seg}`,
+      });
+    }
   }
 
   // hostIdentityUrn is the actual profile URN
   const entityUrn = raw.hostIdentityUrn ?? urn;
+  const badge = raw.memberBadgeType ?? null;
 
-  return { entityUrn, name, profileUrl, imageUrl, headline };
+  return {
+    entityUrn,
+    name,
+    profileUrl,
+    imageUrl: profilePictures[0]?.url ?? null,
+    headline,
+    profilePictures,
+    distance: member?.distance ?? null,
+    pronoun: member?.pronoun?.standardizedPronoun ?? null,
+    memberBadgeType: badge,
+    isPremium: raw.showPremiumInBug === true || badge === "PREMIUM_PROFILE",
+    isVerified: raw.showVerificationBadge === true || badge === "VERIFIED_PROFILE",
+    backendUrn: raw.backendUrn ?? null,
+  };
 }

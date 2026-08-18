@@ -83,12 +83,32 @@ describe("parseLeadSearchResponse — normalized shape (live)", () => {
         entityUrn: urn("ACwAAB0000000000000000000000000000000001"),
         memberUrn: "urn:li:member:1000001",
         memberId: "1000001",
+        firstName: null,
+        lastName: null,
+        fullName: null,
+        location: null,
+        degree: null,
+        title: null,
+        company: null,
+        companyUrn: null,
+        companyIndustry: null,
+        profilePictureUrl: null,
       },
       {
         salesnavId: "ACwAAB0000000000000000000000000000000002",
         entityUrn: urn("ACwAAB0000000000000000000000000000000002"),
         memberUrn: "urn:li:member:1000002",
         memberId: "1000002",
+        firstName: null,
+        lastName: null,
+        fullName: null,
+        location: null,
+        degree: null,
+        title: null,
+        company: null,
+        companyUrn: null,
+        companyIndustry: null,
+        profilePictureUrl: null,
       },
     ]);
     expect(page.isLastPage).toBe(false);
@@ -131,6 +151,16 @@ describe("parseLeadSearchResponse — normalized shape (live)", () => {
         entityUrn: urn("ACwAAB0000000000000000000000000000000009"),
         memberUrn: "",
         memberId: "",
+        firstName: null,
+        lastName: null,
+        fullName: null,
+        location: null,
+        degree: null,
+        title: null,
+        company: null,
+        companyUrn: null,
+        companyIndustry: null,
+        profilePictureUrl: null,
       },
     ]);
   });
@@ -160,6 +190,54 @@ describe("parseLeadSearchResponse — normalized shape (live)", () => {
   });
 });
 
+describe("parseLeadSearchResponse — decorated hits", () => {
+  const urn = (id: string) => `urn:li:fs_salesProfile:(${id},NAME_SEARCH,Xxxx)`;
+
+  it("keeps the person the lead-search decoration already returned", () => {
+    // The CONNECTION_OF sweep pays for a decorated response either way; reading
+    // only the ids threw away name, role and employer that were already on the
+    // wire.
+    const sid = "ACwAAB0000000000000000000000000000000007";
+    const resp = {
+      data: { paging: { total: 1, count: 1, start: 0 }, "*elements": [urn(sid)] },
+      included: [
+        {
+          $type: "com.linkedin.sales.company.Company",
+          entityUrn: "urn:li:fs_salesCompany:99",
+          name: "Example Co",
+          industry: "Management Consulting",
+          location: "Austin, Texas, United States",
+        },
+        {
+          $type: "com.linkedin.sales.search.DecoratedPeopleSearchHit",
+          entityUrn: urn(sid),
+          objectUrn: "urn:li:member:1000007",
+          firstName: "Delta",
+          lastName: "Tester",
+          fullName: "Delta Tester",
+          geoRegion: "Austin, Texas Metropolitan Area",
+          degree: 2,
+          currentPositions: [
+            {
+              title: "Principal",
+              companyName: "Example Co",
+              companyUrn: "urn:li:fs_salesCompany:99",
+            },
+          ],
+        },
+      ],
+    };
+    const [lead] = parseLeadSearchResponse(resp, 0, 25).leads;
+    expect(lead?.fullName).toBe("Delta Tester");
+    expect(lead?.location).toBe("Austin, Texas Metropolitan Area");
+    expect(lead?.degree).toBe(2);
+    expect(lead?.title).toBe("Principal");
+    expect(lead?.company).toBe("Example Co");
+    expect(lead?.companyUrn).toBe("urn:li:fs_salesCompany:99");
+    expect(lead?.companyIndustry).toBe("Management Consulting");
+  });
+});
+
 describe("parseLeadSearchResponse — decorated fallback", () => {
   it("reads entityUrn/objectUrn inline when there is no *elements", () => {
     const resp = {
@@ -180,6 +258,16 @@ describe("parseLeadSearchResponse — decorated fallback", () => {
           "urn:li:fs_salesProfile:(ACwAAB0000000000000000000000000000000005,NAME_SEARCH,Yy)",
         memberUrn: "urn:li:member:1000005",
         memberId: "1000005",
+        firstName: null,
+        lastName: null,
+        fullName: null,
+        location: null,
+        degree: null,
+        title: null,
+        company: null,
+        companyUrn: null,
+        companyIndustry: null,
+        profilePictureUrl: null,
       },
     ]);
   });

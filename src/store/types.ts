@@ -46,6 +46,7 @@ export interface AccountRateState {
    * Persisted so per-day/per-hour caps survive process restarts.
    */
   enrichmentTimestamps?: number[];
+  companyTimestamps?: number[];
   inviteTimestamps?: number[];
 }
 
@@ -82,6 +83,14 @@ export interface AccountConfig {
     maxEnrichments?: number;
     /** Window for `maxEnrichments`, in ms (default: 1h with a seat, 24h without). */
     enrichmentWindowMs?: number;
+    /**
+     * Max `allman companies` lookups per window. Metered separately from
+     * enrichment: it reads org pages on a different resource, so it should not
+     * compete with the budget for enriching people.
+     */
+    maxCompanyLookups?: number;
+    /** Window for `maxCompanyLookups`, in ms (default: 1h with a seat, 24h without). */
+    companyWindowMs?: number;
     maxInvitesPerDay?: number;
   };
   /** Optional git remote for message history backup */
@@ -239,4 +248,23 @@ export interface StoredMessage {
   attachments: MessageAttachment[];
   /** Present on sent messages — used to detect echo events from SSE stream */
   originToken: string | null;
+  // --- Optional: absent on records written before these were captured. ---
+  /** Rich-text spans over `body`; @-mentions carry the mentioned member's URN. */
+  bodyAttributes?: MessageBodyAttribute[];
+  /** InMail / sponsored subject line. Ordinary DMs have none. */
+  subject?: string | null;
+  /** DEFAULT / SYSTEM / … — how LinkedIn wants the body rendered. */
+  renderFormat?: string | null;
+  /** Plain-text stand-in for content a client cannot render. */
+  fallbackText?: string | null;
+  /** `urn:li:messagingThread:…` the message belongs to. */
+  conversationUrn?: string | null;
+}
+
+/** One span of rich text over a message body. */
+export interface MessageBodyAttribute {
+  start: number;
+  length: number;
+  /** Tagged union — `com.linkedin.pemberly.text.Entity` for an @-mention. */
+  type: unknown;
 }

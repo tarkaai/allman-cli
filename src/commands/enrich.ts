@@ -42,6 +42,11 @@ export interface EnrichOptions {
   json?: boolean;
   /** Fetch full work history, education, and skills. */
   deep?: boolean;
+  /**
+   * Also store the untouched LinkedIn entity payloads on each record. Opt-in:
+   * see `StoredConnection.raw` for why this is not the default.
+   */
+  raw?: boolean;
   /** Re-fetch even connections that already have enrichment data. */
   force?: boolean;
   /** Max profiles to fetch this run (default: all). */
@@ -98,7 +103,10 @@ export async function enrichCommand(
     output.info(`Fetching profile "${identity}"…`);
     let detail: ProfileDetail | null;
     try {
-      detail = await fetchProfileDetail(session.apiClient, identity, { deep: opts.deep });
+      detail = await fetchProfileDetail(session.apiClient, identity, {
+        deep: opts.deep,
+        raw: opts.raw,
+      });
     } catch (err) {
       output.error(`Profile fetch failed: ${(err as Error).message}`, 1);
       return;
@@ -161,6 +169,7 @@ export async function enrichCommand(
     noDelay: opts.noDelay === true,
     delayConfig,
     quota,
+    raw: opts.raw === true,
   });
 
   cstore.git.scheduleCommit(`enrich: ${result.enriched} profiles (${depth})`);
@@ -194,6 +203,8 @@ export interface EnrichPassParams {
   delayConfig: RandomDelayConfig;
   /** Persisted volume cap. Each profile fetched consumes one slot. */
   quota?: AccountQuota;
+  /** Store the untouched LinkedIn payloads alongside the parsed record. */
+  raw?: boolean;
 }
 
 export interface EnrichPassResult {
@@ -211,7 +222,8 @@ export interface EnrichPassResult {
  * the caller owns the git commit + flush.
  */
 export async function enrichConnections(params: EnrichPassParams): Promise<EnrichPassResult> {
-  const { apiClient, cstore, ids, depth, force, limit, json, noDelay, delayConfig, quota } = params;
+  const { apiClient, cstore, ids, depth, force, limit, json, noDelay, delayConfig, quota, raw } =
+    params;
   const cap = limit && limit > 0 ? limit : Number.POSITIVE_INFINITY;
 
   let enriched = 0;
@@ -247,7 +259,7 @@ export async function enrichConnections(params: EnrichPassParams): Promise<Enric
     const identity = record.publicIdentifier ?? id;
     let detail: ProfileDetail | null;
     try {
-      detail = await fetchProfileDetail(apiClient, identity, { deep: depth === "deep" });
+      detail = await fetchProfileDetail(apiClient, identity, { deep: depth === "deep", raw });
     } catch (err) {
       output.warn(`  ${identity}: fetch failed (${(err as Error).message})`);
       failed += 1;
@@ -299,13 +311,28 @@ function needsEnrichment(
  */
 function toEnrichment(d: ProfileDetail, depth: "core" | "deep"): ConnectionEnrichment {
   const base: ConnectionEnrichment = {
+    objectUrn: d.objectUrn,
+    memberId: d.memberId,
     firstName: d.firstName,
     lastName: d.lastName,
     headline: d.headline,
     title: d.title,
     company: d.company,
+    companyUrn: d.companyUrn,
     location: d.location,
+    country: d.country,
+    geoUrn: d.geoUrn,
     about: d.about,
+    industry: d.industry,
+    industryUrn: d.industryUrn,
+    address: d.address,
+    premium: d.premium,
+    memorialized: d.memorialized,
+    pronoun: d.pronoun,
+    profilePictureUrl: d.profilePictureUrl,
+    primaryLocale: d.primaryLocale,
+    versionTag: d.versionTag,
+    raw: d.raw ?? null,
   };
   if (depth !== "deep") return base;
   return {

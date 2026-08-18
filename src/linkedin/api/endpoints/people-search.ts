@@ -29,6 +29,7 @@
  *     .target.profile.{entityUrn, publicIdentifier}
  */
 import type { LinkedInApiClient } from "../client.js";
+import { bestImageUrl } from "./profile-detail.js";
 
 const GRAPHQL_URL = "https://www.linkedin.com/voyager/api/graphql";
 
@@ -43,6 +44,26 @@ export interface PeopleSearchHit {
   memberId: string | null;
   /** Slug — the `linkedin.com/in/<slug>` form (from `navigationUrl`), or null. */
   publicIdentifier: string | null;
+  // ---------------------------------------------------------------------
+  // The display fields the SRP card renders. UNVERIFIED against a live
+  // response: `voyagerSearchDashClusters` needs a rotating queryId that the
+  // headless capture could not resolve when this was written, so these are
+  // taken from the EntityResultViewModel shape rather than an observed
+  // payload. Every one is read take-if-present and degrades to null, so a
+  // shape mismatch costs an unpopulated field, never a parse error.
+  // ---------------------------------------------------------------------
+  /** Display name, e.g. "Jane Roe". */
+  name: string | null;
+  /** The card's first subtitle — in practice the headline. */
+  headline: string | null;
+  /** The card's second subtitle — in practice the location. */
+  location: string | null;
+  /** Trailing summary line, when the card has one. */
+  summary: string | null;
+  /** Degree badge text, e.g. "• 2nd". */
+  degreeText: string | null;
+  /** Avatar URL. Signed and expiring — a cache, not a permalink. */
+  profilePictureUrl: string | null;
 }
 
 export interface PeopleSearchPage {
@@ -129,11 +150,20 @@ export async function searchPeopleConnectionOf(
 // Parsing
 // ---------------------------------------------------------------------------
 
+interface AttributedText {
+  text?: string;
+}
 interface IncludedEntity {
   $type?: string;
   entityUrn?: string;
   trackingUrn?: string;
   navigationUrl?: string;
+  title?: AttributedText;
+  primarySubtitle?: AttributedText;
+  secondarySubtitle?: AttributedText;
+  summary?: AttributedText;
+  badgeText?: AttributedText;
+  image?: unknown;
 }
 type SearchClustersRaw = {
   data?: {
@@ -176,10 +206,44 @@ export function parseSearchClustersResponse(
       memberUrn: `urn:li:fsd_profile:${flagshipId}`,
       memberId,
       publicIdentifier: slug ? slug.toLowerCase() : null,
+      name: attrText(e.title),
+      headline: attrText(e.primarySubtitle),
+      location: attrText(e.secondarySubtitle),
+      summary: attrText(e.summary),
+      degreeText: attrText(e.badgeText),
+      profilePictureUrl: bestImageUrl(pickVectorImage(e.image)),
     });
   }
 
   // The page size we asked for vs. what came back tells us if more remain.
   const reachedTotal = total !== null && start + hits.length >= total;
   return { hits, total, start, count, isLastPage: hits.length < count || reachedTotal };
+}
+
+/** A LinkedIn text-ish field is a plain string or `{ text }`. */
+function attrText(v: AttributedText | string | undefined): string | null {
+  if (typeof v === "string") return v.length > 0 ? v : null;
+  const t = v?.text;
+  return typeof t === "string" && t.length > 0 ? t : null;
+}
+
+/**
+ * Search cards wrap their avatar a couple of layers deep
+ * (`image.attributes[0].detailData.*Picture`), so walk down to the first
+ * object that looks like a VectorImage and hand that to `bestImageUrl`.
+ */
+function pickVectorImage(image: unknown): unknown {
+  const seen = new Set<unknown>();
+  const walk = (v: unknown, depth: number): unknown => {
+    if (!v || typeof v !== "object" || depth > 6 || seen.has(v)) return null;
+    seen.add(v);
+    const o = v as Record<string, unknown>;
+    if (typeof o.rootUrl === "string" && Array.isArray(o.artifacts)) return o;
+    for (const child of Array.isArray(v) ? v : Object.values(o)) {
+      const hit = walk(child, depth + 1);
+      if (hit) return hit;
+    }
+    return null;
+  };
+  return walk(image, 0);
 }

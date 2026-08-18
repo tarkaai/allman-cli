@@ -100,6 +100,123 @@ describe("parseProfileCore", () => {
     expect(d?.headline).toBe("Wrapped headline");
   });
 
+  it("captures the numeric member id from objectUrn", () => {
+    // objectUrn is the only place the flagship profile surface exposes
+    // `urn:li:member:<n>` — the id Sales Navigator keys on, and therefore the
+    // only join between the two backends.
+    const d = parseProfileCore({
+      included: [profileEntry({ objectUrn: "urn:li:member:375843124" })],
+    });
+    expect(d?.objectUrn).toBe("urn:li:member:375843124");
+    expect(d?.memberId).toBe("375843124");
+  });
+
+  it("leaves member ids null when objectUrn is absent", () => {
+    const d = parseProfileCore({ included: [profileEntry()] });
+    expect(d?.objectUrn).toBeNull();
+    expect(d?.memberId).toBeNull();
+  });
+
+  it("resolves the industry label through the *industry reference", () => {
+    const d = parseProfileCore({
+      included: [
+        profileEntry({ "*industry": "urn:li:fsd_industry:11" }),
+        {
+          $type: "com.linkedin.voyager.dash.common.Industry",
+          entityUrn: "urn:li:fsd_industry:11",
+          name: "Management Consulting",
+        },
+      ],
+    });
+    expect(d?.industry).toBe("Management Consulting");
+    expect(d?.industryUrn).toBe("urn:li:fsd_industry:11");
+  });
+
+  it("does not mistake an unrelated named entity for the industry", () => {
+    const d = parseProfileCore({
+      included: [
+        profileEntry({ "*industry": "urn:li:fsd_industry:11" }),
+        // Same URN, wrong type — must not be picked up.
+        {
+          $type: "com.linkedin.voyager.dash.common.Geo",
+          entityUrn: "urn:li:fsd_industry:11",
+          name: "Nope",
+        },
+      ],
+    });
+    expect(d?.industry).toBeNull();
+    expect(d?.industryUrn).toBe("urn:li:fsd_industry:11");
+  });
+
+  it("keeps the geo URN alongside the location label", () => {
+    const d = parseProfileCore({
+      included: [
+        profileEntry({ geoLocation: { "*geo": GEO_METRO } }),
+        geo(GEO_COUNTRY, "United States"),
+        geo(GEO_METRO, "Austin, Texas Metropolitan Area"),
+      ],
+    });
+    expect(d?.location).toBe("Austin, Texas Metropolitan Area");
+    expect(d?.geoUrn).toBe(GEO_METRO);
+  });
+
+  it("keeps the country code, premium/memorialized flags, pronoun and locale", () => {
+    const d = parseProfileCore({
+      included: [
+        profileEntry({
+          location: { countryCode: "DE" },
+          premium: true,
+          memorialized: true,
+          pronounUnion: { standardizedPronoun: "SHE_HER" },
+          primaryLocale: { language: "en", country: "US" },
+          versionTag: "3240452913",
+          address: "https://cal.example/15-minute-meeting",
+        }),
+      ],
+    });
+    expect(d?.country).toBe("DE");
+    expect(d?.premium).toBe(true);
+    expect(d?.memorialized).toBe(true);
+    expect(d?.pronoun).toBe("SHE_HER");
+    expect(d?.primaryLocale).toBe("en_US");
+    expect(d?.versionTag).toBe("3240452913");
+    // Members routinely put a booking or site link in the address field.
+    expect(d?.address).toBe("https://cal.example/15-minute-meeting");
+  });
+
+  it("defaults the flags to false and the rest to null when absent", () => {
+    const d = parseProfileCore({ included: [profileEntry()] });
+    expect(d?.premium).toBe(false);
+    expect(d?.memorialized).toBe(false);
+    expect(d?.pronoun).toBeNull();
+    expect(d?.country).toBeNull();
+    expect(d?.industry).toBeNull();
+    expect(d?.profilePictureUrl).toBeNull();
+    expect(d?.versionTag).toBeNull();
+  });
+
+  it("composes the largest profile photo URL from rootUrl + artifact segment", () => {
+    const d = parseProfileCore({
+      included: [
+        profileEntry({
+          profilePicture: {
+            displayImageReference: {
+              vectorImage: {
+                rootUrl: "https://media.example/photo-shrink_",
+                artifacts: [
+                  { width: 100, height: 100, fileIdentifyingUrlPathSegment: "100_100/a.jpg" },
+                  { width: 800, height: 800, fileIdentifyingUrlPathSegment: "800_800/b.jpg" },
+                  { width: 200, height: 200, fileIdentifyingUrlPathSegment: "200_200/c.jpg" },
+                ],
+              },
+            },
+          },
+        }),
+      ],
+    });
+    expect(d?.profilePictureUrl).toBe("https://media.example/photo-shrink_800_800/b.jpg");
+  });
+
   it("does not confuse MiniProfile with the full Profile record", () => {
     const d = parseProfileCore({
       included: [
@@ -128,9 +245,94 @@ describe("parsePositions", () => {
       ],
     });
     expect(positions).toEqual([
-      { title: "Staff Engineer", company: "Current Co", current: true },
-      { title: "Intern", company: "Old Co", current: false },
+      {
+        title: "Staff Engineer",
+        company: "Current Co",
+        current: true,
+        companyUrn: null,
+        startDate: "2020-01",
+        endDate: null,
+        location: null,
+        description: null,
+        positionUrn: "urn:li:fsd_position:Staff Engineer",
+        employmentTypeUrn: null,
+        geoUrn: null,
+      },
+      {
+        title: "Intern",
+        company: "Old Co",
+        current: false,
+        companyUrn: null,
+        startDate: "2020-01",
+        endDate: "2019-05",
+        location: null,
+        description: null,
+        positionUrn: "urn:li:fsd_position:Intern",
+        employmentTypeUrn: null,
+        geoUrn: null,
+      },
     ]);
+  });
+
+  it("keeps the company URN, dates, location and description", () => {
+    const [pos] = parsePositions({
+      included: [
+        {
+          $type: "com.linkedin.voyager.dash.identity.profile.Position",
+          title: "Principal",
+          companyName: "MarketBridge",
+          companyUrn: "urn:li:fsd_company:11850",
+          locationName: "Washington, DC, USA",
+          description: "Led GTM strategy engagements.",
+          dateRange: { start: { month: 3, year: 2009 }, end: { month: 6, year: 2011 } },
+        },
+      ],
+    });
+    expect(pos?.companyUrn).toBe("urn:li:fsd_company:11850");
+    expect(pos?.startDate).toBe("2009-03");
+    expect(pos?.endDate).toBe("2011-06");
+    expect(pos?.location).toBe("Washington, DC, USA");
+    expect(pos?.description).toBe("Led GTM strategy engagements.");
+    expect(pos?.current).toBe(false);
+  });
+
+  it("falls back to a bare year when LinkedIn omits the month", () => {
+    const [pos] = parsePositions({
+      included: [
+        {
+          $type: "com.linkedin.voyager.dash.identity.profile.Position",
+          title: "Founder",
+          companyName: "Solo Co",
+          dateRange: { start: { year: 2018 } },
+        },
+      ],
+    });
+    expect(pos?.startDate).toBe("2018");
+    expect(pos?.endDate).toBeNull();
+    expect(pos?.current).toBe(true);
+  });
+
+  it("keeps the position URN, employment type and geo URN", () => {
+    const [pos] = parsePositions({
+      included: [
+        {
+          $type: `${P}Position`,
+          entityUrn: "urn:li:fsd_profilePosition:(ACoSYNTH,2401416182)",
+          title: "Gesellschafter",
+          companyName: "Seibert Solutions GmbH",
+          companyUrn: "urn:li:fsd_company:92762681",
+          employmentTypeUrn: "urn:li:fsd_employmentType:3",
+          geoUrn: "urn:li:fsd_geo:102473731",
+          geoLocationName: "Stuttgart, Baden-Württemberg, Deutschland",
+          dateRange: { start: { month: 12, year: 2023 } },
+        },
+      ],
+    });
+    expect(pos?.positionUrn).toBe("urn:li:fsd_profilePosition:(ACoSYNTH,2401416182)");
+    expect(pos?.employmentTypeUrn).toBe("urn:li:fsd_employmentType:3");
+    expect(pos?.geoUrn).toBe("urn:li:fsd_geo:102473731");
+    // locationName is absent, so the geo-derived label is used.
+    expect(pos?.location).toBe("Stuttgart, Baden-Württemberg, Deutschland");
   });
 
   it("returns [] when the response carries no positions", () => {
@@ -167,7 +369,19 @@ describe("parsePositions", () => {
 });
 
 describe("pickPrimaryPosition", () => {
-  const p = (title: string, current: boolean) => ({ title, company: "Co", current });
+  const p = (title: string, current: boolean) => ({
+    title,
+    company: "Co",
+    current,
+    companyUrn: null,
+    startDate: null,
+    endDate: null,
+    location: null,
+    description: null,
+    positionUrn: null,
+    employmentTypeUrn: null,
+    geoUrn: null,
+  });
 
   it("prefers a current role over an earlier one", () => {
     expect(pickPrimaryPosition([p("Old", false), p("Now", true)])?.title).toBe("Now");
@@ -207,8 +421,47 @@ describe("parseEducations / parseSkills", () => {
         fieldOfStudy: "Computer Science",
         schoolUrn: "urn:li:fsd_school:18158",
         companyUrn: "urn:li:fsd_company:3558",
+        startDate: null,
+        endDate: null,
+        activities: null,
+        description: null,
+        grade: null,
+        degreeUrn: null,
+        fieldOfStudyUrn: null,
+        educationUrn: "urn:li:fsd_education:1",
       },
     ]);
+  });
+
+  it("keeps education dates, activities, grade and the standardized URNs", () => {
+    const [edu] = parseEducations({
+      included: [
+        {
+          $type: `${P}Education`,
+          entityUrn: "urn:li:fsd_profileEducation:(ACoSYNTH,1887176)",
+          schoolName: "University of Oregon",
+          degreeName: "BA",
+          fieldOfStudy: "Business Administration",
+          schoolUrn: "urn:li:fsd_school:19207",
+          companyUrn: "urn:li:fsd_company:5827",
+          degreeUrn: "urn:li:fsd_degree:7",
+          standardizedFieldOfStudyUrn: "urn:li:fsd_fieldOfStudy:100",
+          activities: "Gamma Phi Beta, Nu Chapter",
+          description: "Studied abroad in Lyon.",
+          grade: "3.8",
+          dateRange: { start: { year: 1992 }, end: { year: 1996 } },
+        },
+      ],
+    });
+    expect(edu?.startDate).toBe("1992");
+    expect(edu?.endDate).toBe("1996");
+    expect(edu?.activities).toBe("Gamma Phi Beta, Nu Chapter");
+    expect(edu?.description).toBe("Studied abroad in Lyon.");
+    expect(edu?.grade).toBe("3.8");
+    expect(edu?.degreeUrn).toBe("urn:li:fsd_degree:7");
+    // Falls back to the standardized URN when the plain one is absent.
+    expect(edu?.fieldOfStudyUrn).toBe("urn:li:fsd_fieldOfStudy:100");
+    expect(edu?.educationUrn).toBe("urn:li:fsd_profileEducation:(ACoSYNTH,1887176)");
   });
 
   it("parses skill names and drops unnamed entries", () => {

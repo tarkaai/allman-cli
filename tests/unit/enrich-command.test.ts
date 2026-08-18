@@ -69,6 +69,19 @@ vi.mock("@/linkedin/api/session.js", () => ({
                 lastName: "Thetic",
                 headline: "Headline",
                 summary: "About.",
+                objectUrn: "urn:li:member:375843124",
+                "*industry": "urn:li:fsd_industry:11",
+                industryUrn: "urn:li:fsd_industry:11",
+                location: { countryCode: "US" },
+                premium: true,
+                memorialized: false,
+                versionTag: "v1",
+                multiLocaleHeadline: { en_US: "Headline" },
+              },
+              {
+                $type: "com.linkedin.voyager.dash.common.Industry",
+                entityUrn: "urn:li:fsd_industry:11",
+                name: "Management Consulting",
               },
             ],
           };
@@ -81,6 +94,7 @@ vi.mock("@/linkedin/api/session.js", () => ({
                 entityUrn: "urn:li:fsd_position:1",
                 title: "Engineer",
                 companyName: "Test Co",
+                companyUrn: "urn:li:fsd_company:4242",
                 dateRange: { start: { year: 2020 } },
               },
             ],
@@ -180,6 +194,64 @@ describe("enrich: request shape", () => {
     h.state.records.set(ID_1, pending(ID_1));
     await enrichCommand(undefined, { noDelay: true });
     expect(h.enrichCalls[0]?.patch).not.toHaveProperty("positions");
+  });
+
+  it("asks the sub-resources for 100 rows, not LinkedIn's silent default of 20", async () => {
+    // Regression: the default truncated a 50-skill profile to 20 with no error
+    // — `paging.total` was the only tell.
+    h.state.records.set(ID_1, pending(ID_1));
+    await enrichCommand(undefined, { deep: true, noDelay: true });
+    for (const resource of ["profilePositions", "profileEducations", "profileSkills"]) {
+      const url = h.urls.find((u) => u.includes(resource));
+      expect(url, resource).toContain("count=100");
+    }
+  });
+
+  it("carries the identity, industry and company URNs through to the store", async () => {
+    h.state.records.set(ID_1, pending(ID_1));
+    await enrichCommand(undefined, { noDelay: true });
+    expect(h.enrichCalls[0]?.patch).toMatchObject({
+      // The join key to Sales Navigator, and the reason a company no longer
+      // has to be resolved by fuzzy name match.
+      objectUrn: "urn:li:member:375843124",
+      memberId: "375843124",
+      companyUrn: "urn:li:fsd_company:4242",
+      industry: "Management Consulting",
+      industryUrn: "urn:li:fsd_industry:11",
+      country: "US",
+      premium: true,
+      memorialized: false,
+      versionTag: "v1",
+    });
+  });
+});
+
+describe("enrich: raw passthrough", () => {
+  it("stores nothing raw by default", async () => {
+    h.state.records.set(ID_1, pending(ID_1));
+    await enrichCommand(undefined, { deep: true, noDelay: true });
+    expect(h.enrichCalls[0]?.patch.raw).toBeNull();
+  });
+
+  it("--raw keeps the untouched entities, minus schema noise and locale mirrors", async () => {
+    h.state.records.set(ID_1, pending(ID_1));
+    await enrichCommand(undefined, { deep: true, raw: true, noDelay: true });
+    const raw = h.enrichCalls[0]?.patch.raw as {
+      profile: Record<string, unknown>;
+      positions: Array<Record<string, unknown>>;
+      educations: Array<Record<string, unknown>>;
+      skills: Array<Record<string, unknown>>;
+    };
+    // Fields no parser reads today are preserved verbatim...
+    expect(raw.profile.publicIdentifier).toBe("slug-1");
+    expect(raw.profile.objectUrn).toBe("urn:li:member:375843124");
+    expect(raw.positions[0]?.companyUrn).toBe("urn:li:fsd_company:4242");
+    expect(raw.educations[0]?.degreeName).toBe("BS");
+    expect(raw.skills[0]?.name).toBe("TypeScript");
+    // ...and the payload stays self-describing so it can be re-parsed...
+    expect(raw.profile.$type).toBe(`${P}Profile`);
+    // ...while per-locale duplicates are dropped.
+    expect(raw.profile).not.toHaveProperty("multiLocaleHeadline");
   });
 });
 

@@ -125,6 +125,8 @@ async function handleEvent(
       let realUrn: string | null = null;
       let attachments: StoredMessage["attachments"] = [];
       let reactions: StoredMessage["reactions"] = [];
+      // Fields only the REST message carries — SSE events never include them.
+      let extra: Partial<StoredMessage> = {};
       if (event.conversationUrn) {
         try {
           const convUrn = convRecord?.backendUrn ?? event.conversationUrn;
@@ -157,6 +159,13 @@ async function handleEvent(
               raw: a.raw,
             }));
             reactions = match.reactions;
+            extra = {
+              bodyAttributes: match.bodyAttributes,
+              subject: match.subject,
+              renderFormat: match.renderFormat,
+              fallbackText: match.fallbackText,
+              conversationUrn: match.conversationUrn,
+            };
           }
         } catch {
           /* non-fatal */
@@ -190,6 +199,7 @@ async function handleEvent(
           reactions,
           attachments,
           originToken: event.originToken ?? null,
+          ...extra,
         };
         await conversations.appendMessages(convId, [storedMsg]).catch((err) => {
           debug(`Failed to persist message: ${String(err)}`);
@@ -320,21 +330,22 @@ async function fetchAndUpsertConversation(
       name: fullName,
       headline: otherParticipant.headline ?? null,
       profileUrl: otherParticipant.profileUrl ?? null,
-      profilePictures: null,
-      distance: null,
-      pronoun: null,
-      memberBadgeType: null,
-      isPremium: false,
-      isVerified: false,
+      profilePictures:
+        otherParticipant.profilePictures.length > 0 ? otherParticipant.profilePictures : null,
+      distance: otherParticipant.distance,
+      pronoun: otherParticipant.pronoun,
+      memberBadgeType: otherParticipant.memberBadgeType,
+      isPremium: otherParticipant.isPremium,
+      isVerified: otherParticipant.isVerified,
       unreadCount: match.unreadCount,
       lastActivityAt: match.lastActivityAt ? new Date(match.lastActivityAt).toISOString() : null,
-      lastReadAt: null,
-      createdAt: null,
-      read: match.unreadCount === 0,
-      notificationStatus: null,
-      categories: [],
-      conversationUrl: null,
-      disabledFeatures: [],
+      lastReadAt: match.lastReadAt ? new Date(match.lastReadAt).toISOString() : null,
+      createdAt: match.createdAt ? new Date(match.createdAt).toISOString() : null,
+      read: match.read,
+      notificationStatus: match.notificationStatus,
+      categories: match.categories,
+      conversationUrl: match.conversationUrl,
+      disabledFeatures: match.disabledFeatures,
       syncState: existingRecord?.syncState ?? {
         oldestMessageAt: null,
         newestMessageAt: null,

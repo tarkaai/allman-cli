@@ -21,14 +21,16 @@
  *   urn:li:member:<numeric>                               (canonical member id)
  */
 import type { LinkedInApiClient } from "../client.js";
+import { bestImageUrl } from "./profile-detail.js";
 
 const SALES_API_BASE = "https://www.linkedin.com/sales-api";
 
 /**
  * Decoration controlling the lead-search response shape. We use the standard
- * desktop search decoration; we only read the IDs (the `*elements`
- * fs_salesProfile URNs + each hit's `objectUrn`) and discard everything else,
- * so we never persist profile data. Confirmed working against the live API.
+ * desktop search decoration. It returns fully decorated hits — name, location,
+ * current/past roles, and a sibling `sales.company.Company` entity carrying the
+ * employer's industry and HQ — so the parsers below read the whole hit rather
+ * than only its ids. Confirmed working against the live API.
  */
 const LEAD_SEARCH_DECORATION_ID = "com.linkedin.sales.deco.desktop.searchv2.LeadSearchResult-14";
 
@@ -173,6 +175,44 @@ function mergeResults(raw: ProfileResolveRaw): Record<string, unknown> {
 // Lead search: CONNECTION_OF (the 1st-degree connections of person X)
 // ---------------------------------------------------------------------------
 
+/**
+ * One role from a Sales Navigator search hit.
+ *
+ * SalesNav is the only surface that hands back the employer's industry and HQ
+ * location inline (via a sibling `sales.company.Company` entity) and that
+ * pre-computes tenure — the flagship profile resource gives you neither.
+ */
+export interface SalesnavPosition {
+  title: string | null;
+  company: string | null;
+  /** `urn:li:fs_salesCompany:<id>` — SalesNav's company namespace. */
+  companyUrn: string | null;
+  /** Standardized industry of the employer, e.g. "Technology, Information and Internet". */
+  companyIndustry: string | null;
+  /** Employer HQ location, e.g. "San Mateo, California, United States". */
+  companyLocation: string | null;
+  /** Employer logo URL. Signed and expiring — a cache, not a permalink. */
+  companyLogoUrl: string | null;
+  /** `YYYY-MM`, or `YYYY` when SalesNav omits the month. */
+  startDate: string | null;
+  endDate: string | null;
+  current: boolean;
+  /** Months in this role, as SalesNav computes it. */
+  tenureMonths: number | null;
+  /** Months at this employer across all roles. */
+  companyTenureMonths: number | null;
+}
+
+/**
+ * A SalesNav "spotlight" — the badges the UI puts on a search hit, e.g.
+ * "23 mutual connections", "2 recent posts on Linkedin", "changed jobs".
+ * `id` is the stable enum; `label` is the rendered string that carries the count.
+ */
+export interface SalesnavSpotlight {
+  id: string;
+  label: string | null;
+}
+
 export interface SalesnavLead {
   /** Salesnav id — first segment of the composite fs_salesProfile URN. */
   salesnavId: string;
@@ -182,6 +222,21 @@ export interface SalesnavLead {
   memberUrn: string;
   /** Numeric member id alone, extracted from memberUrn (may be ""). */
   memberId: string;
+  // The lead-search decoration returns fully decorated hits, so a
+  // CONNECTION_OF sweep already carries the person — not just their id.
+  firstName: string | null;
+  lastName: string | null;
+  fullName: string | null;
+  /** e.g. "Austin, Texas Metropolitan Area" */
+  location: string | null;
+  /** Network distance; 2 for a 2nd-degree result. */
+  degree: number | null;
+  title: string | null;
+  company: string | null;
+  /** `urn:li:fs_salesCompany:<id>` of the current employer. */
+  companyUrn: string | null;
+  companyIndustry: string | null;
+  profilePictureUrl: string | null;
 }
 
 export interface LeadSearchPage {
@@ -203,7 +258,7 @@ interface LeadSearchInner {
 }
 type LeadSearchRaw = LeadSearchInner & {
   data?: LeadSearchInner;
-  included?: Array<{ entityUrn?: string; objectUrn?: string }>;
+  included?: Array<DecoratedHit & RawSalesCompany>;
 };
 
 /**
@@ -249,7 +304,8 @@ export function parseLeadSearchResponse(
 ): LeadSearchPage {
   const data: LeadSearchInner = raw.data ?? raw;
   const included = raw.included ?? [];
-  const byUrn = new Map<string, { entityUrn?: string; objectUrn?: string }>();
+  const companies = companyIndex(included);
+  const byUrn = new Map<string, DecoratedHit>();
   for (const i of included) {
     if (i.entityUrn) byUrn.set(i.entityUrn, i);
   }
@@ -260,9 +316,29 @@ export function parseLeadSearchResponse(
     const salesnavId = extractSalesnavId(entityUrn);
     if (!salesnavId || seen.has(salesnavId)) return;
     seen.add(salesnavId);
-    const memberUrn = inlineObjectUrn ?? byUrn.get(entityUrn)?.objectUrn ?? "";
+    // The lead-search decoration returns the whole person alongside the id.
+    // Reading it here is free — the bytes already crossed the wire.
+    const hit = byUrn.get(entityUrn);
+    const memberUrn = inlineObjectUrn ?? hit?.objectUrn ?? "";
     const memberId = /urn:li:member:(\d+)/.exec(memberUrn)?.[1] ?? "";
-    leads.push({ salesnavId, entityUrn, memberUrn, memberId });
+    const primary = hit?.currentPositions?.[0];
+    const company = primary?.companyUrn ? companies.get(primary.companyUrn) : undefined;
+    leads.push({
+      salesnavId,
+      entityUrn,
+      memberUrn,
+      memberId,
+      firstName: nonEmpty(hit?.firstName),
+      lastName: nonEmpty(hit?.lastName),
+      fullName: nonEmpty(hit?.fullName),
+      location: nonEmpty(hit?.geoRegion),
+      degree: typeof hit?.degree === "number" ? hit.degree : null,
+      title: nonEmpty(primary?.title),
+      company: nonEmpty(primary?.companyName) ?? nonEmpty(company?.name),
+      companyUrn: nonEmpty(primary?.companyUrn),
+      companyIndustry: nonEmpty(company?.industry),
+      profilePictureUrl: bestImageUrl(hit?.profilePictureDisplayImage),
+    });
   };
 
   // Normalized form.
@@ -319,10 +395,34 @@ export interface SalesnavConnection {
   degree: number | null;
   title: string | null;
   company: string | null;
+  /** `urn:li:fs_salesCompany:<id>` of the current employer. */
+  companyUrn: string | null;
+  /** Standardized industry of the current employer. */
+  companyIndustry: string | null;
+  /** Current employer's HQ location. */
+  companyLocation: string | null;
   /** The profile's About text, when SalesNav exposes it. */
   about: string | null;
   /** True when an invitation between you and this person is outstanding. */
   pendingInvitation: boolean;
+  /** True when the member holds a Premium subscription. */
+  premium: boolean;
+  /** True when the member accepts InMail from outside their network. */
+  openLink: boolean;
+  /** True for a memorialized (deceased) member — exclude from outreach. */
+  memorialized: boolean;
+  /** Whether you have saved this lead in Sales Navigator. */
+  saved: boolean;
+  /** Whether you have already viewed this lead's profile. */
+  viewed: boolean;
+  /** Largest profile photo URL. Signed and expiring — a cache, not a permalink. */
+  profilePictureUrl: string | null;
+  /** Every ongoing role, not just the one the UI shows. */
+  currentPositions: SalesnavPosition[];
+  /** Work history SalesNav already resolved — no per-profile fetch needed. */
+  pastPositions: SalesnavPosition[];
+  /** Search-hit badges: mutual connections, recent posts, job changes. */
+  spotlights: SalesnavSpotlight[];
 }
 
 export interface OwnConnectionsPage {
@@ -348,6 +448,26 @@ export async function leadSearchOwnConnections(
   return parseOwnConnectionsResponse(resp, opts.count);
 }
 
+/** SalesNav's `Duration` — `{ numYears, numMonths }`, both optional. */
+interface RawDuration {
+  numYears?: number;
+  numMonths?: number;
+}
+/** SalesNav's `sales.profile.Position`, as it appears inside a decorated hit. */
+interface RawSalesPosition {
+  title?: string;
+  companyName?: string;
+  companyUrn?: string;
+  current?: boolean;
+  startedOn?: { year?: number; month?: number };
+  endedOn?: { year?: number; month?: number };
+  tenureAtPosition?: RawDuration;
+  tenureAtCompany?: RawDuration;
+}
+interface RawSpotlight {
+  id?: string;
+  displayValue?: string;
+}
 interface DecoratedHit {
   $type?: string;
   entityUrn?: string;
@@ -359,11 +479,28 @@ interface DecoratedHit {
   degree?: number;
   summary?: string;
   pendingInvitation?: boolean;
-  currentPositions?: Array<{ title?: string; companyName?: string }>;
+  premium?: boolean;
+  openLink?: boolean;
+  memorialized?: boolean;
+  saved?: boolean;
+  viewed?: boolean;
+  profilePictureDisplayImage?: unknown;
+  spotlightBadges?: RawSpotlight[];
+  currentPositions?: RawSalesPosition[];
+  pastPositions?: RawSalesPosition[];
+}
+/** `sales.company.Company` — the sibling entity holding industry + HQ + logo. */
+interface RawSalesCompany {
+  $type?: string;
+  entityUrn?: string;
+  name?: string;
+  industry?: string;
+  location?: string;
+  companyPictureDisplayImage?: unknown;
 }
 interface DecoratedSearchRaw {
   data?: LeadSearchInner;
-  included?: DecoratedHit[];
+  included?: Array<DecoratedHit & RawSalesCompany>;
   paging?: { total?: number };
   metadata?: { totalDisplayCount?: number | string };
 }
@@ -377,7 +514,9 @@ export function parseOwnConnectionsResponse(
   requestedCount: number
 ): OwnConnectionsPage {
   const data: LeadSearchInner = raw.data ?? {};
-  const hits = (raw.included ?? []).filter((i) =>
+  const included = raw.included ?? [];
+  const companies = companyIndex(included);
+  const hits = included.filter((i) =>
     typeof i.$type === "string" ? i.$type.includes("DecoratedPeopleSearchHit") : false
   );
 
@@ -388,9 +527,13 @@ export function parseOwnConnectionsResponse(
     const salesnavId = extractSalesnavId(entityUrn);
     if (!salesnavId || seen.has(salesnavId)) continue;
     seen.add(salesnavId);
+    const currentPositions = (h.currentPositions ?? []).map((p) =>
+      salesPosition(p, companies, true)
+    );
+    const pastPositions = (h.pastPositions ?? []).map((p) => salesPosition(p, companies, false));
     // Current role: SalesNav already filters to ongoing positions, so the
     // first entry is the one the UI shows.
-    const primary = h.currentPositions?.[0];
+    const primary = currentPositions[0];
     const memberUrn = h.objectUrn ?? "";
     connections.push({
       salesnavId,
@@ -402,10 +545,24 @@ export function parseOwnConnectionsResponse(
       fullName: nonEmpty(h.fullName),
       location: nonEmpty(h.geoRegion),
       degree: typeof h.degree === "number" ? h.degree : null,
-      title: nonEmpty(primary?.title),
-      company: nonEmpty(primary?.companyName),
+      title: primary?.title ?? null,
+      company: primary?.company ?? null,
+      companyUrn: primary?.companyUrn ?? null,
+      companyIndustry: primary?.companyIndustry ?? null,
+      companyLocation: primary?.companyLocation ?? null,
       about: nonEmpty(h.summary),
       pendingInvitation: h.pendingInvitation === true,
+      premium: h.premium === true,
+      openLink: h.openLink === true,
+      memorialized: h.memorialized === true,
+      saved: h.saved === true,
+      viewed: h.viewed === true,
+      profilePictureUrl: bestImageUrl(h.profilePictureDisplayImage),
+      currentPositions,
+      pastPositions,
+      spotlights: (h.spotlightBadges ?? []).flatMap((b) =>
+        b.id ? [{ id: b.id, label: nonEmpty(b.displayValue) }] : []
+      ),
     });
   }
 
@@ -419,6 +576,62 @@ export function parseOwnConnectionsResponse(
     total,
     isLastPage: connections.length < requestedCount,
   };
+}
+
+/** Index the `sales.company.Company` entities a decorated response ships alongside its hits. */
+function companyIndex(
+  included: Array<DecoratedHit & RawSalesCompany>
+): Map<string, RawSalesCompany> {
+  const out = new Map<string, RawSalesCompany>();
+  for (const i of included) {
+    if (typeof i.$type === "string" && i.$type.endsWith(".company.Company") && i.entityUrn) {
+      out.set(i.entityUrn, i);
+    }
+  }
+  return out;
+}
+
+/**
+ * Normalize one SalesNav position, folding in the employer's industry, HQ and
+ * logo from the sibling Company entity `companyUrn` points at.
+ */
+function salesPosition(
+  p: RawSalesPosition,
+  companies: Map<string, RawSalesCompany>,
+  defaultCurrent: boolean
+): SalesnavPosition {
+  const company = p.companyUrn ? companies.get(p.companyUrn) : undefined;
+  return {
+    title: nonEmpty(p.title),
+    company: nonEmpty(p.companyName) ?? nonEmpty(company?.name),
+    companyUrn: nonEmpty(p.companyUrn),
+    companyIndustry: nonEmpty(company?.industry),
+    companyLocation: nonEmpty(company?.location),
+    companyLogoUrl: bestImageUrl(company?.companyPictureDisplayImage),
+    startDate: salesDate(p.startedOn),
+    endDate: salesDate(p.endedOn),
+    current: typeof p.current === "boolean" ? p.current : defaultCurrent,
+    tenureMonths: durationMonths(p.tenureAtPosition),
+    companyTenureMonths: durationMonths(p.tenureAtCompany),
+  };
+}
+
+/** `{year, month?}` -> `YYYY-MM`, or `YYYY` when the month is absent. */
+function salesDate(d: { year?: number; month?: number } | undefined): string | null {
+  if (!d || typeof d.year !== "number") return null;
+  return typeof d.month === "number"
+    ? `${d.year}-${String(d.month).padStart(2, "0")}`
+    : String(d.year);
+}
+
+/** `{numYears, numMonths}` -> total months. */
+function durationMonths(d: RawDuration | undefined): number | null {
+  if (!d) return null;
+  const y = typeof d.numYears === "number" ? d.numYears : 0;
+  const m = typeof d.numMonths === "number" ? d.numMonths : 0;
+  return y === 0 && m === 0 && d.numYears === undefined && d.numMonths === undefined
+    ? null
+    : y * 12 + m;
 }
 
 function nonEmpty(v: string | undefined): string | null {

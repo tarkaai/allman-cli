@@ -38,9 +38,35 @@ export interface MessageData {
   fromUrn: string;
   fromName: string | null;
   body: string;
+  /**
+   * Rich-text annotations over `body` — most usefully the @-mentions, which
+   * carry the mentioned member's URN and are invisible in the plain text.
+   */
+  bodyAttributes: MessageBodyAttribute[];
+  /** InMail and sponsored messages carry a subject line; ordinary DMs do not. */
+  subject: string | null;
+  /** DEFAULT / SYSTEM / … — how LinkedIn wants the body rendered. */
+  renderFormat: string | null;
+  /** Plain-text stand-in LinkedIn supplies for content a client cannot render. */
+  fallbackText: string | null;
+  /** `urn:li:messagingThread:…` — makes a message self-describing. */
+  conversationUrn: string | null;
   originToken: string | null;
   reactions: MessageReactionData[];
   attachments: MessageAttachmentData[];
+}
+
+/** One span of rich text over a message body. */
+export interface MessageBodyAttribute {
+  start: number;
+  length: number;
+  /**
+   * Tagged union naming the annotation, e.g.
+   * `{ "com.linkedin.pemberly.text.Entity": { urn: "urn:li:fsd_profile:…" } }`
+   * for an @-mention. Kept raw: the union has a long tail and every member of
+   * it is worth preserving.
+   */
+  type: unknown;
 }
 
 export interface MessageReactionData {
@@ -124,8 +150,12 @@ interface MessageRaw {
   $type?: string;
   entityUrn?: string;
   backendUrn?: string;
+  backendConversationUrn?: string;
   deliveredAt?: number;
-  body?: { text?: string };
+  subject?: string | null;
+  messageBodyRenderFormat?: string | null;
+  renderContentFallbackText?: string | null;
+  body?: { text?: string; attributes?: unknown[] };
   originToken?: string | null;
   // LinkedIn returns `viewerReacted` (bool); older clients called it `hasUserReacted`.
   reactionSummaries?: Array<{
@@ -506,6 +536,11 @@ export function parseMessageRaw(
     fromUrn,
     fromName,
     body: raw.body?.text ?? "",
+    bodyAttributes: parseBodyAttributes(raw.body?.attributes),
+    subject: nonEmptyStr(raw.subject),
+    renderFormat: nonEmptyStr(raw.messageBodyRenderFormat),
+    fallbackText: nonEmptyStr(raw.renderContentFallbackText),
+    conversationUrn: nonEmptyStr(raw.backendConversationUrn),
     originToken: raw.originToken ?? null,
     reactions: (raw.reactionSummaries ?? []).map((r) => ({
       emoji: r.emoji ?? "",
@@ -514,6 +549,21 @@ export function parseMessageRaw(
     })),
     attachments: parseAttachments(raw.renderContent, included),
   };
+}
+
+function nonEmptyStr(v: unknown): string | null {
+  return typeof v === "string" && v.length > 0 ? v : null;
+}
+
+/** Keep only well-formed spans; a malformed attribute is dropped, not fatal. */
+function parseBodyAttributes(attributes: unknown[] | undefined): MessageBodyAttribute[] {
+  if (!Array.isArray(attributes)) return [];
+  return attributes.flatMap((a) => {
+    if (!a || typeof a !== "object") return [];
+    const o = a as Record<string, unknown>;
+    if (typeof o.start !== "number" || typeof o.length !== "number") return [];
+    return [{ start: o.start, length: o.length, type: o.attributeKindUnion ?? o.type ?? null }];
+  });
 }
 
 function pickNumber(obj: Record<string, unknown>, key: string): number | null {

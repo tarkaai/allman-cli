@@ -66,6 +66,19 @@ interface ResultRow {
   memberId: string | null;
   memberUrn: string | null;
   publicIdentifier: string | null;
+  // Populated by the SalesNav backend, whose search hits arrive decorated.
+  // The flagship backend leaves these null.
+  firstName?: string | null;
+  lastName?: string | null;
+  fullName?: string | null;
+  location?: string | null;
+  degree?: number | null;
+  headline?: string | null;
+  title?: string | null;
+  company?: string | null;
+  companyUrn?: string | null;
+  companyIndustry?: string | null;
+  profilePictureUrl?: string | null;
 }
 
 /** A completed run: the rows plus the server total and which backend produced them. */
@@ -231,6 +244,16 @@ async function runSalesnav(
         memberId: lead.memberId || null,
         memberUrn: lead.memberUrn || null,
         publicIdentifier: null,
+        firstName: lead.firstName,
+        lastName: lead.lastName,
+        fullName: lead.fullName,
+        location: lead.location,
+        degree: lead.degree,
+        title: lead.title,
+        company: lead.company,
+        companyUrn: lead.companyUrn,
+        companyIndustry: lead.companyIndustry,
+        profilePictureUrl: lead.profilePictureUrl,
       });
     }
     output.info(
@@ -327,6 +350,10 @@ async function runFlagship(
         memberId: hit.memberId,
         memberUrn: hit.memberUrn,
         publicIdentifier: hit.publicIdentifier,
+        fullName: hit.name,
+        headline: hit.headline,
+        location: hit.location,
+        profilePictureUrl: hit.profilePictureUrl,
       });
     }
     output.info(
@@ -393,6 +420,17 @@ async function emit(
           memberId: r.memberId,
           memberUrn: r.memberUrn,
           publicIdentifier: r.publicIdentifier,
+          firstName: r.firstName ?? null,
+          headline: r.headline ?? null,
+          lastName: r.lastName ?? null,
+          fullName: r.fullName ?? null,
+          location: r.location ?? null,
+          degree: r.degree ?? null,
+          title: r.title ?? null,
+          company: r.company ?? null,
+          companyUrn: r.companyUrn ?? null,
+          companyIndustry: r.companyIndustry ?? null,
+          profilePictureUrl: r.profilePictureUrl ?? null,
         },
         nowIso
       );

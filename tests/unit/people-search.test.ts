@@ -75,15 +75,74 @@ describe("parseSearchClustersResponse (normalized EntityResultViewModel shape)",
         memberUrn: "urn:li:fsd_profile:ACoAAB0000000000000000000000000000000001",
         memberId: "1000001",
         publicIdentifier: "example-user-a",
+        name: null,
+        headline: null,
+        location: null,
+        summary: null,
+        degreeText: null,
+        profilePictureUrl: null,
       },
       {
         memberUrn: "urn:li:fsd_profile:ACoAAB0000000000000000000000000000000002",
         memberId: "1000002",
         publicIdentifier: "example-user-b",
+        name: null,
+        headline: null,
+        location: null,
+        summary: null,
+        degreeText: null,
+        profilePictureUrl: null,
       },
     ]);
     // 2 < 10 → last page
     expect(page.isLastPage).toBe(true);
+  });
+
+  it("keeps the card's display fields when the response carries them", () => {
+    // NOTE: unverified against a live payload — `voyagerSearchDashClusters`
+    // needs a rotating queryId the headless capture could not resolve. The
+    // parser reads take-if-present, so a shape change costs a null, not a throw.
+    const resp = {
+      data: { data: { searchDashClustersByAll: { metadata: { totalResultCount: 1 } } } },
+      included: [
+        {
+          $type: "com.linkedin.voyager.dash.search.EntityResultViewModel",
+          entityUrn:
+            "urn:li:fsd_entityResultViewModel:(urn:li:fsd_profile:ACoAAB0000000000000000000000000000000008,SEARCH_SRP,DEFAULT)",
+          trackingUrn: "urn:li:member:1000008",
+          navigationUrl: "https://www.linkedin.com/in/example-user-c?miniProfileUrn=x",
+          title: { text: "Echo Tester" },
+          primarySubtitle: { text: "Principal at Example Co" },
+          secondarySubtitle: { text: "Austin, Texas Metropolitan Area" },
+          summary: { text: "Current: Principal at Example Co" },
+          badgeText: { text: "• 2nd" },
+          image: {
+            attributes: [
+              {
+                detailData: {
+                  nonEntityProfilePicture: {
+                    vectorImage: {
+                      rootUrl: "https://media.example/photo-",
+                      artifacts: [
+                        { width: 100, fileIdentifyingUrlPathSegment: "100_100/a.jpg" },
+                        { width: 400, fileIdentifyingUrlPathSegment: "400_400/b.jpg" },
+                      ],
+                    },
+                  },
+                },
+              },
+            ],
+          },
+        },
+      ],
+    };
+    const [hit] = parseSearchClustersResponse(resp, 0, 10).hits;
+    expect(hit?.name).toBe("Echo Tester");
+    expect(hit?.headline).toBe("Principal at Example Co");
+    expect(hit?.location).toBe("Austin, Texas Metropolitan Area");
+    expect(hit?.summary).toBe("Current: Principal at Example Co");
+    expect(hit?.degreeText).toBe("• 2nd");
+    expect(hit?.profilePictureUrl).toBe("https://media.example/photo-400_400/b.jpg");
   });
 
   it("is not the last page when a full count came back below total", () => {
@@ -128,6 +187,12 @@ describe("parseSearchClustersResponse (normalized EntityResultViewModel shape)",
       {
         memberUrn: "urn:li:fsd_profile:ACoAAB0000000000000000000000000000000007",
         memberId: null,
+        name: null,
+        headline: null,
+        location: null,
+        summary: null,
+        degreeText: null,
+        profilePictureUrl: null,
         publicIdentifier: null,
       },
     ]);
