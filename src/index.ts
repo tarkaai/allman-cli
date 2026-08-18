@@ -38,7 +38,7 @@ const program = new Command();
 program
   .name("allman")
   .description("LinkedIn messenger from the CLI")
-  .version("0.3.1")
+  .version("0.3.2")
   .option("-a, --account <slug>", "account to use ($ALLMAN_ACCOUNT)")
   .option("-s, --store <path>", "store directory ($ALLMAN_STORE)")
   .option("--json", "output as JSON")
