@@ -1,5 +1,11 @@
 import { describe, expect, it } from "vitest";
-import { companyId, parseCompany } from "../../src/linkedin/api/endpoints/companies.js";
+import type { LinkedInApiClient } from "../../src/linkedin/api/client.js";
+import {
+  companyId,
+  fetchCompany,
+  parseCompany,
+  parseUniversalNameLookup,
+} from "../../src/linkedin/api/endpoints/companies.js";
 
 describe("companyId", () => {
   it("extracts the numeric id from an fsd_company urn", () => {
@@ -11,8 +17,105 @@ describe("companyId", () => {
   });
 
   it("returns null for anything without an id", () => {
+    // A vanity slug is not an id; `fetchCompany` resolves those over the wire.
     expect(companyId("etymonai")).toBeNull();
     expect(companyId("")).toBeNull();
+  });
+});
+
+describe("parseUniversalNameLookup", () => {
+  it("reads the id out of a flat elements[] response", () => {
+    const resp = { elements: [{ entityUrn: "urn:li:fs_normalized_company:11850" }] };
+    expect(parseUniversalNameLookup(resp)).toBe("11850");
+  });
+
+  it("reads the id out of a normalized data.elements[] response", () => {
+    const resp = { data: { elements: [{ entityUrn: "urn:li:company:99112930" }] } };
+    expect(parseUniversalNameLookup(resp)).toBe("99112930");
+  });
+
+  it("falls back to included[], ignoring non-company entities", () => {
+    const resp = {
+      data: {},
+      included: [{ entityUrn: "urn:li:fsd_industry:96" }, { entityUrn: "urn:li:fsd_company:42" }],
+    };
+    expect(parseUniversalNameLookup(resp)).toBe("42");
+  });
+
+  it("returns null when nothing in the response names a company", () => {
+    expect(parseUniversalNameLookup({})).toBeNull();
+    expect(parseUniversalNameLookup({ elements: [] })).toBeNull();
+    expect(
+      parseUniversalNameLookup({ elements: [{ entityUrn: "urn:li:fsd_industry:96" }] })
+    ).toBeNull();
+  });
+});
+
+describe("fetchCompany", () => {
+  /** Records every URL requested so we can assert how many round trips happen. */
+  function stubClient(handler: (url: string) => unknown): {
+    client: LinkedInApiClient;
+    urls: string[];
+  } {
+    const urls: string[] = [];
+    const client = {
+      request: async ({ url }: { url: string }) => {
+        urls.push(url);
+        return handler(url);
+      },
+    } as unknown as LinkedInApiClient;
+    return { client, urls };
+  }
+
+  const byId = { data: { name: "Marketbridge", universalName: "marketbridge" } };
+
+  it("fetches a numeric id directly, with no lookup round trip", async () => {
+    const { client, urls } = stubClient(() => byId);
+    const c = await fetchCompany(client, "11850");
+    expect(c?.id).toBe("11850");
+    expect(urls).toEqual(["https://www.linkedin.com/voyager/api/organization/companies/11850"]);
+  });
+
+  it("resolves a vanity slug through the universalName query first", async () => {
+    const { client, urls } = stubClient((url) =>
+      url.includes("q=universalName")
+        ? { elements: [{ entityUrn: "urn:li:fs_normalized_company:11850" }] }
+        : byId
+    );
+    const c = await fetchCompany(client, "marketbridge");
+    expect(c?.id).toBe("11850");
+    expect(c?.name).toBe("Marketbridge");
+    expect(urls).toEqual([
+      "https://www.linkedin.com/voyager/api/organization/companies?q=universalName&universalName=marketbridge",
+      "https://www.linkedin.com/voyager/api/organization/companies/11850",
+    ]);
+  });
+
+  it("lower-cases the slug the user typed", async () => {
+    const { client, urls } = stubClient((url) =>
+      url.includes("q=universalName") ? { elements: [{ entityUrn: "urn:li:company:7" }] } : byId
+    );
+    await fetchCompany(client, " MarketBridge ");
+    expect(urls[0]).toContain("universalName=marketbridge");
+  });
+
+  it("returns null without a second request when the slug resolves to nothing", async () => {
+    const { client, urls } = stubClient(() => ({ elements: [] }));
+    expect(await fetchCompany(client, "no-such-company")).toBeNull();
+    expect(urls).toHaveLength(1);
+  });
+
+  it("returns null rather than throwing when the lookup fails", async () => {
+    const { client } = stubClient(() => {
+      throw new Error("403");
+    });
+    expect(await fetchCompany(client, "marketbridge")).toBeNull();
+  });
+
+  it("never requests anything for a target that cannot be a slug", async () => {
+    const { client, urls } = stubClient(() => byId);
+    expect(await fetchCompany(client, "Not A Slug!")).toBeNull();
+    expect(urls).toEqual([]);
   });
 });
 
