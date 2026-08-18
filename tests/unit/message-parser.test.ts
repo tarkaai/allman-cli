@@ -249,3 +249,80 @@ describe("parseMessageRaw: timestamp fallback when deliveredAt is missing", () =
     expect(msg?.deliveredAt).toBe(0);
   });
 });
+
+describe("parseMessageRaw: fields beyond the body text", () => {
+  const MSG = "urn:li:msg_message:(urn:li:fsd_profile:ACoSYNTH,2-synthetic==)";
+
+  function included(raw: Record<string, unknown>) {
+    return new Map<string, Record<string, unknown>>([[MSG, { entityUrn: MSG, ...raw }]]);
+  }
+
+  it("keeps the subject, render format, fallback text and owning thread", () => {
+    // InMail and sponsored messages carry a subject; the fallback text is what
+    // LinkedIn wants shown when a client cannot render the real content.
+    const m = parseMessageRaw(
+      MSG,
+      included({
+        backendUrn: "urn:li:messagingMessage:2-synthetic==",
+        backendConversationUrn: "urn:li:messagingThread:2-thread==",
+        deliveredAt: 1787023580970,
+        subject: "An opportunity at Example Co",
+        messageBodyRenderFormat: "DEFAULT",
+        renderContentFallbackText: "Shared a post",
+        body: { text: "Hi there" },
+      })
+    );
+    expect(m?.subject).toBe("An opportunity at Example Co");
+    expect(m?.renderFormat).toBe("DEFAULT");
+    expect(m?.fallbackText).toBe("Shared a post");
+    expect(m?.conversationUrn).toBe("urn:li:messagingThread:2-thread==");
+  });
+
+  it("keeps @-mention spans, which are invisible in the plain body text", () => {
+    const m = parseMessageRaw(
+      MSG,
+      included({
+        deliveredAt: 1,
+        body: {
+          text: "Thanks Alpha Tester!",
+          attributes: [
+            {
+              start: 7,
+              length: 12,
+              attributeKindUnion: {
+                entity: { urn: "urn:li:fsd_profile:ACoSYNTHMENTION0000000000000000001" },
+              },
+            },
+          ],
+        },
+      })
+    );
+    expect(m?.bodyAttributes).toEqual([
+      {
+        start: 7,
+        length: 12,
+        type: { entity: { urn: "urn:li:fsd_profile:ACoSYNTHMENTION0000000000000000001" } },
+      },
+    ]);
+  });
+
+  it("drops malformed attribute spans instead of failing the message", () => {
+    const m = parseMessageRaw(
+      MSG,
+      included({
+        deliveredAt: 1,
+        body: { text: "hi", attributes: [{ start: 0 }, null, "nope", { start: 0, length: 2 }] },
+      })
+    );
+    expect(m?.bodyAttributes).toEqual([{ start: 0, length: 2, type: null }]);
+  });
+
+  it("defaults the new fields to null/[] on an ordinary DM", () => {
+    const m = parseMessageRaw(MSG, included({ deliveredAt: 1, body: { text: "hi" } }));
+    expect(m?.subject).toBeNull();
+    expect(m?.renderFormat).toBeNull();
+    expect(m?.fallbackText).toBeNull();
+    expect(m?.conversationUrn).toBeNull();
+    expect(m?.bodyAttributes).toEqual([]);
+  });
+});

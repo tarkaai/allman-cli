@@ -188,3 +188,49 @@ describe("recordInvitation", () => {
     expect(await readlink(join(accountDir, "invitations", "user-a"))).toBe(`${ID_A}.json`);
   });
 });
+
+describe("upsertConnection: merge semantics", () => {
+  it("does not let a connections sweep wipe enrichment", async () => {
+    // Regression: `upsertConnection` used to write `{...c}` and drop everything
+    // the sweep does not carry. Re-running `allman connections` after a long
+    // `enrich` pass silently undid the entire enrichment.
+    await seed(ID_A, "user-a");
+    await cstore.enrichConnection(
+      ID_A,
+      { title: "CEO", company: "Example Co", about: "About text." },
+      "core",
+      "2026-05-02T00:00:00.000Z"
+    );
+    await seed(ID_A, "user-a"); // a second sweep over the same person
+    const rec = await cstore.readConnection(ID_A);
+    expect(rec?.title).toBe("CEO");
+    expect(rec?.company).toBe("Example Co");
+    expect(rec?.about).toBe("About text.");
+    expect(rec?.enrichedAt).toBe("2026-05-02T00:00:00.000Z");
+    // ...while the sweep's own bookkeeping still advances.
+    expect(rec?.firstSeenAt).toBe("2026-05-01T00:00:00.000Z");
+    expect(rec?.lastSeenAt).toBe("2026-05-01T00:00:00.000Z");
+  });
+
+  it("a sweep still updates the identity fields it does carry", async () => {
+    await seed(ID_A, "user-a");
+    await cstore.upsertConnection(
+      {
+        memberUrn: `urn:li:fsd_profile:${ID_A}`,
+        flagshipId: ID_A,
+        publicIdentifier: "renamed-slug",
+        source: "connections",
+        firstName: "Updated",
+        lastName: "User",
+        headline: "New headline",
+        connectedAt: null,
+      },
+      "2026-06-01T00:00:00.000Z"
+    );
+    const rec = await cstore.readConnection(ID_A);
+    expect(rec?.firstName).toBe("Updated");
+    expect(rec?.headline).toBe("New headline");
+    expect(rec?.publicIdentifier).toBe("renamed-slug");
+    expect(rec?.lastSeenAt).toBe("2026-06-01T00:00:00.000Z");
+  });
+});

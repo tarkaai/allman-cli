@@ -12,6 +12,7 @@
  */
 
 import { Command } from "commander";
+import { companiesCommand } from "./commands/companies.js";
 import { connectCommand } from "./commands/connect.js";
 import { connectionsCommand } from "./commands/connections.js";
 import { connectionsOfCommand } from "./commands/connections-of.js";
@@ -466,6 +467,10 @@ program
   .option("-a, --account <slug>", "account to use")
   .option("-s, --store <path>", "store directory")
   .option("--deep", "also fetch work history, education, and skills")
+  .option(
+    "--raw",
+    "also store LinkedIn's untouched payloads on each record (large — sampling aid, not for bulk runs)"
+  )
   .option("--force", "re-fetch even connections already enriched")
   .option("-n, --limit <n>", "max profiles to fetch this run (default: all)")
   .option("--json", "stream enriched records to stdout as NDJSON")
@@ -476,6 +481,36 @@ program
       store: opts.store ?? globalOpts.store,
       json: opts.json ?? globalOpts.json,
       deep: opts.deep === true,
+      raw: opts.raw === true,
+      force: opts.force === true,
+      limit: opts.limit ? parseInt(opts.limit, 10) : undefined,
+    });
+  });
+
+// ---------------------------------------------------------------------------
+// companies — resolve employers referenced by stored work history
+// ---------------------------------------------------------------------------
+
+program
+  .command("companies [target]")
+  .description(
+    "Resolve the companies behind stored positions (website, headcount, industry).\n" +
+      "  With no <target>, resolves every employer referenced by stored connections.\n" +
+      "  <target> can be a company URN, numeric id, or LinkedIn company slug."
+  )
+  .option("-a, --account <slug>", "account to use")
+  .option("-s, --store <path>", "store directory")
+  .option("--current-only", "only resolve employers of people's current roles")
+  .option("--force", "re-fetch companies already stored")
+  .option("-n, --limit <n>", "max companies to fetch this run (default: all)")
+  .option("--json", "stream resolved companies to stdout as NDJSON")
+  .action(async (target: string | undefined, opts, cmd) => {
+    const globalOpts = cmd.parent?.opts() ?? {};
+    await companiesCommand(target, {
+      account: opts.account ?? globalOpts.account,
+      store: opts.store ?? globalOpts.store,
+      json: opts.json ?? globalOpts.json,
+      currentOnly: opts.currentOnly === true,
       force: opts.force === true,
       limit: opts.limit ? parseInt(opts.limit, 10) : undefined,
     });

@@ -16,9 +16,11 @@
  *
  * Each fsd_connection has a `connectedMember` field pointing at the
  * fsd_profile URN, which is the actual person. The fsd_profile entry holds
- * `publicIdentifier` (the slug), firstName/lastName, and headline.
+ * `publicIdentifier` (the slug), firstName/lastName, headline, the profile
+ * photo, and a `memorialized` flag.
  */
 import type { LinkedInApiClient } from "../client.js";
+import { bestImageUrl } from "./profile-detail.js";
 
 const REST_URL = "https://www.linkedin.com/voyager/api/relationships/dash/connections";
 
@@ -42,6 +44,12 @@ export interface ConnectionRecord {
   headline: string | null;
   /** ms-since-epoch when the connection was created (if reported). */
   connectedAt: number | null;
+  /** Largest profile photo URL. Signed and expiring — a cache, not a permalink. */
+  profilePictureUrl: string | null;
+  /** True for a memorialized (deceased) member — exclude from outreach. */
+  memorialized: boolean;
+  /** `urn:li:fsd_connection:<id>` — the edge itself, distinct from the person. */
+  connectionUrn: string | null;
 }
 
 export interface ConnectionsPage {
@@ -115,6 +123,9 @@ export function parseConnectionsResponse(
       lastName: extractText(profile?.lastName),
       headline: extractText(profile?.headline),
       connectedAt: typeof conn.createdAt === "number" ? conn.createdAt : null,
+      profilePictureUrl: bestImageUrl(profile?.profilePicture),
+      memorialized: profile?.memorialized === true,
+      connectionUrn: typeof conn.entityUrn === "string" ? conn.entityUrn : null,
     });
   }
 

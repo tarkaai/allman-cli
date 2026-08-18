@@ -79,6 +79,9 @@ describe("parseConnectionsResponse", () => {
         lastName: "Tester",
         headline: "Synthetic Headline A",
         connectedAt: 1700000000000,
+        profilePictureUrl: null,
+        memorialized: false,
+        connectionUrn: CONN_A,
       },
       {
         memberUrn: PROFILE_B,
@@ -87,6 +90,9 @@ describe("parseConnectionsResponse", () => {
         lastName: "Tester",
         headline: null,
         connectedAt: 1700100000000,
+        profilePictureUrl: null,
+        memorialized: false,
+        connectionUrn: CONN_B,
       },
     ]);
     expect(isLastPage).toBe(false);
@@ -115,6 +121,31 @@ describe("parseConnectionsResponse", () => {
     expect(records.map((r) => r.memberUrn)).toEqual([PROFILE_A, PROFILE_B]);
     expect(records[1]?.publicIdentifier).toBeNull();
     expect(records[1]?.firstName).toBeNull();
+  });
+
+  it("keeps the profile photo and the memorialized flag from the profile entry", () => {
+    const resp = makeResponse({
+      connections: [{ connUrn: CONN_A, memberUrn: PROFILE_A }],
+      profiles: [{ urn: PROFILE_A, publicIdentifier: "example-user-1" }],
+    });
+    const profileEntry = resp.included.find(
+      (i) => (i as { entityUrn?: string }).entityUrn === PROFILE_A
+    ) as Record<string, unknown>;
+    profileEntry.memorialized = true;
+    profileEntry.profilePicture = {
+      displayImageReference: {
+        vectorImage: {
+          rootUrl: "https://media.example/photo-shrink_",
+          artifacts: [
+            { width: 100, height: 100, fileIdentifyingUrlPathSegment: "100_100/a.jpg" },
+            { width: 400, height: 400, fileIdentifyingUrlPathSegment: "400_400/b.jpg" },
+          ],
+        },
+      },
+    };
+    const { records } = parseConnectionsResponse(resp, 1);
+    expect(records[0]?.memorialized).toBe(true);
+    expect(records[0]?.profilePictureUrl).toBe("https://media.example/photo-shrink_400_400/b.jpg");
   });
 
   it("handles {text} wrapped name fields (graphql-style)", () => {

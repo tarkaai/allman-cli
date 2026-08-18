@@ -18,6 +18,8 @@
  */
 import { mkdir, readdir, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
+import type { ProfileRaw as ProfileRawPayload } from "../linkedin/api/endpoints/profile-detail.js";
+import type { SalesnavPosition, SalesnavSpotlight } from "../linkedin/api/endpoints/salesnav.js";
 import { forceAlias } from "./alias.js";
 import type { StoreGit } from "./git.js";
 
@@ -27,6 +29,20 @@ export interface StoredPosition {
   company: string | null;
   /** True for the person's current role(s). */
   current: boolean;
+  /** `urn:li:fsd_company:<id>` — stable company identity for joins/lookups. */
+  companyUrn: string | null;
+  /** `YYYY-MM` (or `YYYY` when LinkedIn omits the month). */
+  startDate: string | null;
+  /** `YYYY-MM`; null while the role is current. */
+  endDate: string | null;
+  location: string | null;
+  description: string | null;
+  /** `urn:li:fsd_profilePosition:(<profileId>,<posId>)` */
+  positionUrn: string | null;
+  /** `urn:li:fsd_employmentType:<id>` — self-employed/freelance identify solos. */
+  employmentTypeUrn: string | null;
+  /** `urn:li:fsd_geo:<id>` for the role's location. */
+  geoUrn: string | null;
 }
 
 /** A single education entry. */
@@ -39,6 +55,16 @@ export interface StoredEducation {
   schoolUrn: string | null;
   /** `urn:li:fsd_company:<id>` — the id `schoolFilter` searches match on. */
   companyUrn: string | null;
+  /** `YYYY-MM` or `YYYY` — education dates are usually year-only. */
+  startDate: string | null;
+  endDate: string | null;
+  activities: string | null;
+  description: string | null;
+  grade: string | null;
+  degreeUrn: string | null;
+  fieldOfStudyUrn: string | null;
+  /** `urn:li:fsd_profileEducation:(<profileId>,<eduId>)` */
+  educationUrn: string | null;
 }
 
 export interface StoredConnection {
@@ -46,6 +72,15 @@ export interface StoredConnection {
   memberUrn: string;
   /** Flagship profile id (the `ACo…` filename key). */
   flagshipId: string;
+  /**
+   * `urn:li:member:<numericId>` — LinkedIn's `objectUrn`, the id Sales
+   * Navigator keys on. Only the profile-detail fetch returns it, which is what
+   * makes the flagship and SalesNav namespaces joinable at all. (Distinct from
+   * `memberUrn` above, which is the `fsd_profile` URN.)
+   */
+  objectUrn?: string | null;
+  /** The numeric member id alone. */
+  memberId?: string | null;
   publicIdentifier: string | null;
   firstName?: string | null;
   lastName?: string | null;
@@ -69,16 +104,49 @@ export interface StoredConnection {
   title?: string | null;
   /** Current employer name. */
   company?: string | null;
+  /** `urn:li:fsd_company:<id>` of the current employer. */
+  companyUrn?: string | null;
   /** Human-readable location (e.g. "San Francisco Bay Area"). */
   location?: string | null;
+  /** ISO-3166 alpha-2 country code. */
+  country?: string | null;
+  /** `urn:li:fsd_geo:<id>` — stable location identity, unlike the label. */
+  geoUrn?: string | null;
   /** The profile's "About" summary. */
   about?: string | null;
+  /** LinkedIn's standardized industry label, e.g. "Management Consulting". */
+  industry?: string | null;
+  /** `urn:li:fsd_industry:<id>` */
+  industryUrn?: string | null;
+  /** The profile's free-text website/address contact field — often a real URL. */
+  address?: string | null;
+  /** True when the member holds a Premium subscription. */
+  premium?: boolean | null;
+  /** True for a memorialized (deceased) member — exclude from outreach. */
+  memorialized?: boolean | null;
+  /** Standardized pronoun, e.g. "SHE_HER". */
+  pronoun?: string | null;
+  /** Largest profile photo URL. Signed and expiring — a cache, not a permalink. */
+  profilePictureUrl?: string | null;
+  /** Locale tag like "en_US". */
+  primaryLocale?: string | null;
+  /** Opaque edit stamp — differs from the stored value iff the profile changed. */
+  versionTag?: string | null;
   /** Full work history — only populated by `enrich --deep`. */
   positions?: StoredPosition[] | null;
   /** Education history — only populated by `enrich --deep`. */
   education?: StoredEducation[] | null;
   /** Listed skills — only populated by `enrich --deep`. */
   skills?: string[] | null;
+  /**
+   * Untouched LinkedIn entity payloads, written only by `enrich --raw`.
+   *
+   * Opt-in on purpose: at ~8,900 connections an always-on raw copy would add
+   * roughly a third of a gigabyte to a git-versioned store and rewrite all of
+   * it on every re-enrichment pass. Turn it on for a sample when you suspect a
+   * field is being dropped, not for the whole network.
+   */
+  raw?: ProfileRawPayload | null;
   /** ISO timestamp of the last successful enrichment (null if never enriched). */
   enrichedAt?: string | null;
   /** Depth of the last enrichment. */
@@ -90,16 +158,31 @@ export interface StoredConnection {
 /** The enrichable subset of a connection record — everything `enrich` may fill in. */
 export type ConnectionEnrichment = Pick<
   StoredConnection,
+  | "objectUrn"
+  | "memberId"
   | "firstName"
   | "lastName"
   | "headline"
   | "title"
   | "company"
+  | "companyUrn"
   | "location"
+  | "country"
+  | "geoUrn"
   | "about"
+  | "industry"
+  | "industryUrn"
+  | "address"
+  | "premium"
+  | "memorialized"
+  | "pronoun"
+  | "profilePictureUrl"
+  | "primaryLocale"
+  | "versionTag"
   | "positions"
   | "education"
   | "skills"
+  | "raw"
 >;
 
 /**
@@ -123,8 +206,70 @@ export interface StoredSalesnavConnection {
   degree: number | null;
   title: string | null;
   company: string | null;
+  /** `urn:li:fs_salesCompany:<id>` of the current employer. */
+  companyUrn: string | null;
+  /** Standardized industry of the current employer — SalesNav-only data. */
+  companyIndustry: string | null;
+  /** Current employer's HQ location — SalesNav-only data. */
+  companyLocation: string | null;
   about: string | null;
   pendingInvitation: boolean;
+  premium: boolean;
+  /** True when the member accepts InMail from outside their network. */
+  openLink: boolean;
+  memorialized: boolean;
+  saved: boolean;
+  viewed: boolean;
+  profilePictureUrl: string | null;
+  /** Every ongoing role, with employer industry and tenure folded in. */
+  currentPositions: SalesnavPosition[];
+  /** Work history SalesNav resolved for free — no per-profile fetch needed. */
+  pastPositions: SalesnavPosition[];
+  /** Search-hit badges: mutual connections, recent posts, job changes. */
+  spotlights: SalesnavSpotlight[];
+  firstSeenAt: string;
+  lastSeenAt: string;
+}
+
+/**
+ * A company resolved from a position's `companyUrn`.
+ *
+ * Lives in its own `companies/` namespace keyed by the numeric LinkedIn company
+ * id, so many people can point at one record rather than each carrying a copy.
+ * This is what makes employer facts (website, headcount band, industry)
+ * available without guessing a domain from the company name.
+ */
+export interface StoredCompany {
+  /** Numeric LinkedIn company id — the filename key. */
+  id: string;
+  companyUrn: string;
+  name: string | null;
+  universalName: string | null;
+  /** The company's own website, straight from LinkedIn — not a guess. */
+  website: string | null;
+  linkedinUrl: string | null;
+  tagline: string | null;
+  description: string | null;
+  industries: string[];
+  staffCount: number | null;
+  /** Banded headcount, e.g. `{ start: 2, end: 10 }`. */
+  staffCountRange: { start: number | null; end: number | null } | null;
+  companyType: string | null;
+  foundedYear: number | null;
+  specialties: string[];
+  headquarters: {
+    city: string | null;
+    country: string | null;
+    line1: string | null;
+    postalCode: string | null;
+    headquarters: boolean;
+  } | null;
+  followerCount: number | null;
+  /** Signed CDN URL — expires; treat as a cache, not a permalink. */
+  logoUrl: string | null;
+  /** LinkedIn machine-generated stub page: weak evidence about the firm. */
+  autoGenerated: boolean;
+  fetchedAt: string;
   firstSeenAt: string;
   lastSeenAt: string;
 }
@@ -162,6 +307,20 @@ export interface StoredConnectionOfResult {
   memberId: string | null;
   memberUrn: string | null;
   publicIdentifier: string | null;
+  // The SalesNav backend returns decorated hits, so these come free with the
+  // search. The flagship backend leaves them null.
+  firstName?: string | null;
+  lastName?: string | null;
+  fullName?: string | null;
+  headline?: string | null;
+  location?: string | null;
+  /** Network distance; 2 for a 2nd-degree result. */
+  degree?: number | null;
+  title?: string | null;
+  company?: string | null;
+  companyUrn?: string | null;
+  companyIndustry?: string | null;
+  profilePictureUrl?: string | null;
   firstSeenAt: string;
   lastSeenAt: string;
 }
@@ -192,9 +351,58 @@ export class ConnectionsStore {
     return join(this.accountDir, "connections-of");
   }
 
+  private companiesDir(): string {
+    return join(this.accountDir, "companies");
+  }
+
+  /** Every company id already resolved into the store. */
+  async listCompanyIds(): Promise<string[]> {
+    try {
+      const names = await readdir(this.companiesDir());
+      return names.filter((n) => n.endsWith(".json")).map((n) => n.slice(0, -5));
+    } catch {
+      return [];
+    }
+  }
+
+  async readCompany(id: string): Promise<StoredCompany | null> {
+    return readJson<StoredCompany>(join(this.companiesDir(), `${id}.json`));
+  }
+
+  /**
+   * Upsert one company record (+ `{universalName} -> {id}.json` symlink).
+   *
+   * Merges like `upsertConnection` — a later fetch never downgrades a known
+   * value to null — so a partial response can't erase good data.
+   */
+  async upsertCompany(c: Omit<StoredCompany, "firstSeenAt" | "lastSeenAt">): Promise<void> {
+    const dir = this.companiesDir();
+    await mkdir(dir, { recursive: true });
+    const nowIso = new Date().toISOString();
+    const file = `${c.id}.json`;
+    const path = join(dir, file);
+    const prev = await this.readCompany(c.id);
+    const merged = { ...(prev ?? {}) } as Record<string, unknown>;
+    for (const [k, v] of Object.entries(c)) {
+      if (v !== undefined && v !== null) merged[k] = v;
+    }
+    merged.firstSeenAt = prev?.firstSeenAt ?? nowIso;
+    merged.lastSeenAt = nowIso;
+    await writeFile(path, `${JSON.stringify(merged, null, 2)}\n`, "utf8");
+    if (c.universalName) await forceAlias(dir, c.universalName, file);
+  }
+
   /**
    * Upsert one 1st-degree connection record + slug symlink.
-   * Preserves the existing `firstSeenAt` if the record already exists.
+   *
+   * Merges onto the existing record rather than replacing it. This matters: a
+   * `connections` sweep only carries identity (ids, name, headline), so a plain
+   * overwrite silently threw away every enrichment field — title, company,
+   * about, positions, education, skills — on the next sweep. Re-running
+   * `connections` after a long `enrich` pass used to undo the whole thing.
+   *
+   * Like `enrichConnection`, a writer never downgrades a known value to null;
+   * it can only add or replace with something real. `firstSeenAt` is preserved.
    */
   async upsertConnection(
     c: Omit<StoredConnection, "firstSeenAt" | "lastSeenAt">,
@@ -205,13 +413,17 @@ export class ConnectionsStore {
     const file = `${c.flagshipId}.json`;
     const path = join(dir, file);
     const prev = await this.readConnection(c.flagshipId);
-    const firstSeenAt = prev?.firstSeenAt ?? nowIso;
+    const merged = { ...(prev ?? {}) } as Record<string, unknown>;
+    for (const [k, v] of Object.entries(c)) {
+      if (v !== undefined && v !== null) merged[k] = v;
+    }
     // A confirmed connection never gets downgraded to "enrich" by a later
     // ad-hoc enrichment of the same person.
-    const source =
+    merged.source =
       prev && (prev.source ?? "connections") === "connections" ? "connections" : c.source;
-    const rec: StoredConnection = { ...c, source, firstSeenAt, lastSeenAt: nowIso };
-    await writeFile(path, `${JSON.stringify(rec, null, 2)}\n`, "utf8");
+    merged.firstSeenAt = prev?.firstSeenAt ?? nowIso;
+    merged.lastSeenAt = nowIso;
+    await writeFile(path, `${JSON.stringify(merged, null, 2)}\n`, "utf8");
     if (c.publicIdentifier) await forceAlias(dir, c.publicIdentifier, file);
   }
 
@@ -341,7 +553,13 @@ export class ConnectionsStore {
     if (meta.targetSlug) await forceAlias(this.connectionsOfRoot(), meta.targetSlug, targetKey);
   }
 
-  /** Upsert one connections-of result record (+ slug symlink when present). */
+  /**
+   * Upsert one connections-of result record (+ slug symlink when present).
+   *
+   * Merged, not replaced: the two backends return disjoint halves of the same
+   * person (flagship has the slug, SalesNav has name/role/employer), so a
+   * re-run on the other backend would otherwise null out what the first found.
+   */
   async upsertConnectionOfResult(
     targetKey: string,
     r: Omit<StoredConnectionOfResult, "firstSeenAt" | "lastSeenAt">,
@@ -351,9 +569,14 @@ export class ConnectionsStore {
     await mkdir(dir, { recursive: true });
     const file = `${resultKey(r)}.json`;
     const path = join(dir, file);
-    const firstSeenAt = (await readFirstSeen(path)) ?? nowIso;
-    const rec: StoredConnectionOfResult = { ...r, firstSeenAt, lastSeenAt: nowIso };
-    await writeFile(path, `${JSON.stringify(rec, null, 2)}\n`, "utf8");
+    const prev = await readJson<StoredConnectionOfResult>(path);
+    const merged = { ...(prev ?? {}) } as Record<string, unknown>;
+    for (const [k, v] of Object.entries(r)) {
+      if (v !== undefined && v !== null) merged[k] = v;
+    }
+    merged.firstSeenAt = prev?.firstSeenAt ?? nowIso;
+    merged.lastSeenAt = nowIso;
+    await writeFile(path, `${JSON.stringify(merged, null, 2)}\n`, "utf8");
     if (r.publicIdentifier) await forceAlias(dir, r.publicIdentifier, file);
   }
 
@@ -364,9 +587,12 @@ export class ConnectionsStore {
 }
 
 async function readFirstSeen(path: string): Promise<string | null> {
+  return (await readJson<{ firstSeenAt?: string }>(path))?.firstSeenAt ?? null;
+}
+
+async function readJson<T>(path: string): Promise<T | null> {
   try {
-    const prev = JSON.parse(await readFile(path, "utf8")) as { firstSeenAt?: string };
-    return prev.firstSeenAt ?? null;
+    return JSON.parse(await readFile(path, "utf8")) as T;
   } catch {
     return null;
   }

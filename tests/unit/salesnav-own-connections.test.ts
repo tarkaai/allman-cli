@@ -81,9 +81,140 @@ describe("parseOwnConnectionsResponse", () => {
         degree: 1,
         title: "Chief Strategy Officer",
         company: "Example Co",
+        companyUrn: null,
+        companyIndustry: null,
+        companyLocation: null,
         about: "About text.",
         pendingInvitation: false,
+        premium: false,
+        openLink: false,
+        memorialized: false,
+        saved: false,
+        viewed: false,
+        profilePictureUrl: null,
+        currentPositions: [
+          {
+            title: "Chief Strategy Officer",
+            company: "Example Co",
+            companyUrn: null,
+            companyIndustry: null,
+            companyLocation: null,
+            companyLogoUrl: null,
+            startDate: null,
+            endDate: null,
+            current: true,
+            tenureMonths: null,
+            companyTenureMonths: null,
+          },
+        ],
+        pastPositions: [],
+        spotlights: [],
       },
+    ]);
+  });
+
+  it("folds the employer's industry, HQ and logo in from the sibling Company entity", () => {
+    // SalesNav is the only surface that hands back the employer's industry
+    // inline — the flagship position resource carries a bare companyUrn.
+    const resp = {
+      data: { paging: { total: 1 } },
+      included: [
+        {
+          $type: "com.linkedin.sales.company.Company",
+          entityUrn: "urn:li:fs_salesCompany:3602865",
+          name: "Example AI",
+          industry: "Technology, Information and Internet",
+          location: "San Mateo, California, United States",
+          companyPictureDisplayImage: {
+            rootUrl: "https://media.example/company-logo_",
+            artifacts: [
+              { width: 100, height: 100, fileIdentifyingUrlPathSegment: "100_100/logo.png" },
+              { width: 400, height: 400, fileIdentifyingUrlPathSegment: "400_400/logo.png" },
+            ],
+          },
+        },
+        {
+          $type: HIT,
+          entityUrn: "urn:li:fs_salesProfile:(ACwSYNTH02,NAME_SEARCH,abcd)",
+          objectUrn: "urn:li:member:3069247",
+          firstName: "Bravo",
+          lastName: "Tester",
+          fullName: "Bravo Tester",
+          degree: 1,
+          premium: true,
+          openLink: true,
+          saved: true,
+          viewed: true,
+          memorialized: false,
+          profilePictureDisplayImage: {
+            rootUrl: "https://media.example/photo-",
+            artifacts: [
+              { width: 200, height: 200, fileIdentifyingUrlPathSegment: "200_200/p.jpg" },
+              { width: 800, height: 800, fileIdentifyingUrlPathSegment: "800_800/p.jpg" },
+            ],
+          },
+          spotlightBadges: [
+            { id: "SECOND_DEGREE_CONNECTION", displayValue: "23 mutual connections" },
+            { id: "POSTED_ON_LINKEDIN", displayValue: "2 recent posts on Linkedin" },
+            { displayValue: "no id — dropped" },
+          ],
+          currentPositions: [
+            {
+              title: "Chief Strategy Officer",
+              companyName: "Example AI",
+              companyUrn: "urn:li:fs_salesCompany:3602865",
+              current: true,
+              startedOn: { year: 2024 },
+              tenureAtPosition: { numYears: 2, numMonths: 8 },
+              tenureAtCompany: { numYears: 2, numMonths: 8 },
+            },
+          ],
+          pastPositions: [
+            {
+              title: "VP Sales",
+              companyName: "Old Co",
+              startedOn: { year: 2018, month: 3 },
+              endedOn: { year: 2024, month: 1 },
+            },
+          ],
+        },
+      ],
+    };
+    const [c] = parseOwnConnectionsResponse(resp, 100).connections;
+    expect(c?.companyUrn).toBe("urn:li:fs_salesCompany:3602865");
+    expect(c?.companyIndustry).toBe("Technology, Information and Internet");
+    expect(c?.companyLocation).toBe("San Mateo, California, United States");
+    expect(c?.premium).toBe(true);
+    expect(c?.openLink).toBe(true);
+    expect(c?.saved).toBe(true);
+    expect(c?.viewed).toBe(true);
+    expect(c?.profilePictureUrl).toBe("https://media.example/photo-800_800/p.jpg");
+    expect(c?.currentPositions[0]?.companyLogoUrl).toBe(
+      "https://media.example/company-logo_400_400/logo.png"
+    );
+    // 2y8m -> 32 months.
+    expect(c?.currentPositions[0]?.tenureMonths).toBe(32);
+    expect(c?.currentPositions[0]?.companyTenureMonths).toBe(32);
+    expect(c?.currentPositions[0]?.startDate).toBe("2024");
+    expect(c?.pastPositions).toEqual([
+      {
+        title: "VP Sales",
+        company: "Old Co",
+        companyUrn: null,
+        companyIndustry: null,
+        companyLocation: null,
+        companyLogoUrl: null,
+        startDate: "2018-03",
+        endDate: "2024-01",
+        current: false,
+        tenureMonths: null,
+        companyTenureMonths: null,
+      },
+    ]);
+    // Badges without an id carry nothing joinable, so they are dropped.
+    expect(c?.spotlights).toEqual([
+      { id: "SECOND_DEGREE_CONNECTION", label: "23 mutual connections" },
+      { id: "POSTED_ON_LINKEDIN", label: "2 recent posts on Linkedin" },
     ]);
   });
 
