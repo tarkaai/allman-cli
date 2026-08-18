@@ -46,6 +46,7 @@ export interface AccountRateState {
    * Persisted so per-day/per-hour caps survive process restarts.
    */
   enrichmentTimestamps?: number[];
+  companyTimestamps?: number[];
   inviteTimestamps?: number[];
 }
 
@@ -82,6 +83,14 @@ export interface AccountConfig {
     maxEnrichments?: number;
     /** Window for `maxEnrichments`, in ms (default: 1h with a seat, 24h without). */
     enrichmentWindowMs?: number;
+    /**
+     * Max `allman companies` lookups per window. Metered separately from
+     * enrichment: it reads org pages on a different resource, so it should not
+     * compete with the budget for enriching people.
+     */
+    maxCompanyLookups?: number;
+    /** Window for `maxCompanyLookups`, in ms (default: 1h with a seat, 24h without). */
+    companyWindowMs?: number;
     maxInvitesPerDay?: number;
   };
   /** Optional git remote for message history backup */

@@ -17,6 +17,7 @@
  *
  *                     with seat        without seat
  *   enrichment        100 / hour       25 / day
+ *   companies         500 / hour      100 / day
  *   invitations        40 / day        10 / day
  *
  * Every value is overridable per account in `config.json` under `rateLimit`.
@@ -35,6 +36,17 @@ export const DAY_MS = 24 * HOUR_MS;
 /** Seat-aware default quotas. */
 export function defaultEnrichmentQuota(hasSalesNavSeat: boolean): QuotaWindow {
   return hasSalesNavSeat ? { max: 100, windowMs: HOUR_MS } : { max: 25, windowMs: DAY_MS };
+}
+
+/**
+ * Company lookups hit a different resource (`/organization/companies`) than
+ * profile enrichment (`/identity/dash/profiles`), so LinkedIn meters them
+ * separately. They also read org pages rather than people, which is the less
+ * sensitive of the two. Given its own, more generous ledger so that resolving
+ * employers never eats the budget for enriching people.
+ */
+export function defaultCompanyQuota(hasSalesNavSeat: boolean): QuotaWindow {
+  return hasSalesNavSeat ? { max: 500, windowMs: HOUR_MS } : { max: 100, windowMs: DAY_MS };
 }
 
 export function defaultInviteQuota(hasSalesNavSeat: boolean): QuotaWindow {

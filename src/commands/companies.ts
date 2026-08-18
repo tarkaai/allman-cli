@@ -16,9 +16,10 @@
  * works there, with a `{universalName} -> {id}.json` symlink for lookup by
  * vanity slug.
  *
- * Paced with the same random 2–8s delay as the other bulk readers, and billed
- * against the enrichment quota — it is the same class of bulk profile-adjacent
- * fetching, and one shared ledger is easier to reason about than two.
+ * Paced with the same random 2–8s delay as the other bulk readers, and metered
+ * on its own `company` quota rather than the enrichment one: this reads org
+ * pages on a different LinkedIn resource, so resolving employers should never
+ * eat the budget for enriching people.
  */
 
 import { type Company, companyId, fetchCompany } from "../linkedin/api/endpoints/companies.js";
@@ -108,14 +109,14 @@ export async function companiesCommand(
   const cstore = store.connectionsFor(session.profileId);
   const config = await store.accounts.readConfig(session.profileId);
   const hasSeat = hasSalesNavSeat(session.accountRecord.cookieJar);
-  const quota = await AccountQuota.load(store, session.profileId, "enrichment", config, hasSeat);
+  const quota = await AccountQuota.load(store, session.profileId, "company", config, hasSeat);
   const delayConfig = opts.delayConfig ?? DEFAULT_PAGE_DELAY;
 
   // Single-company mode.
   if (target) {
     if (!(await quota.tryConsume())) {
       output.error(
-        `Enrichment limit reached (${describeWindow(quota.window)}). ` +
+        `Company lookup limit reached (${describeWindow(quota.window)}). ` +
           `Capacity returns in ${describeWait(quota.status().nextFreeAt)}.`,
         1
       );
@@ -155,7 +156,7 @@ export async function companiesCommand(
   for (const id of todo) {
     if (!(await quota.tryConsume())) {
       output.info(
-        `Stopped early: enrichment limit reached. ` +
+        `Stopped early: company lookup limit reached. ` +
           `Capacity returns in ${describeWait(quota.status().nextFreeAt)} — re-run then to continue.`
       );
       break;

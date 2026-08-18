@@ -10,13 +10,14 @@ import type { Store } from "../store/index.js";
 import type { AccountConfig, AccountRateState } from "../store/types.js";
 import {
   DAY_MS,
+  defaultCompanyQuota,
   defaultEnrichmentQuota,
   defaultInviteQuota,
   Quota,
   type QuotaWindow,
 } from "./quota.js";
 
-export type QuotaKind = "enrichment" | "invite";
+export type QuotaKind = "enrichment" | "company" | "invite";
 
 /** Resolve the effective quota window for a kind, honoring config overrides. */
 export function resolveQuotaWindow(
@@ -32,12 +33,23 @@ export function resolveQuotaWindow(
       windowMs: rl?.enrichmentWindowMs ?? base.windowMs,
     };
   }
+  if (kind === "company") {
+    const base = defaultCompanyQuota(hasSeat);
+    return {
+      max: rl?.maxCompanyLookups ?? base.max,
+      windowMs: rl?.companyWindowMs ?? base.windowMs,
+    };
+  }
   const base = defaultInviteQuota(hasSeat);
   return { max: rl?.maxInvitesPerDay ?? base.max, windowMs: DAY_MS };
 }
 
-const LEDGER_KEY: Record<QuotaKind, "enrichmentTimestamps" | "inviteTimestamps"> = {
+const LEDGER_KEY: Record<
+  QuotaKind,
+  "enrichmentTimestamps" | "companyTimestamps" | "inviteTimestamps"
+> = {
   enrichment: "enrichmentTimestamps",
+  company: "companyTimestamps",
   invite: "inviteTimestamps",
 };
 

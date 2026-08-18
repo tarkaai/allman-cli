@@ -6,6 +6,7 @@ import { describe, expect, it } from "vitest";
 import { resolveQuotaWindow } from "@/utils/account-quota.js";
 import {
   DAY_MS,
+  defaultCompanyQuota,
   defaultEnrichmentQuota,
   defaultInviteQuota,
   describeWait,
@@ -101,5 +102,33 @@ describe("formatting helpers", () => {
     expect(describeWait(T0 + 5 * 60_000, T0)).toBe("5 minutes");
     expect(describeWait(T0 + 2 * HOUR_MS, T0)).toBe("2 hours");
     expect(describeWait(null, T0)).toBe("now");
+  });
+});
+
+describe("company quota", () => {
+  it("is metered separately from enrichment and is more generous", () => {
+    const seat = defaultCompanyQuota(true);
+    expect(seat).toEqual({ max: 500, windowMs: HOUR_MS });
+    expect(seat.max).toBeGreaterThan(defaultEnrichmentQuota(true).max);
+  });
+
+  it("falls back to a daily window without a SalesNav seat", () => {
+    expect(defaultCompanyQuota(false)).toEqual({ max: 100, windowMs: DAY_MS });
+  });
+
+  it("resolves to its own ledger key, not enrichment's", () => {
+    const w = resolveQuotaWindow(
+      "company",
+      { rateLimit: { minMessageIntervalMs: 3000, maxCompanyLookups: 7 } },
+      true
+    );
+    expect(w.max).toBe(7);
+    // An enrichment override must not leak into the company window.
+    const w2 = resolveQuotaWindow(
+      "company",
+      { rateLimit: { minMessageIntervalMs: 3000, maxEnrichments: 3 } },
+      true
+    );
+    expect(w2.max).toBe(500);
   });
 });
