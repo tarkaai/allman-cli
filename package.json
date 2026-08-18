@@ -1,6 +1,6 @@
 {
   "name": "allman-cli",
-  "version": "0.3.0",
+  "version": "0.3.1",
   "description": "LinkedIn messenger from the CLI",
   "type": "module",
   "bin": {
