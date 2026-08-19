@@ -10,9 +10,9 @@
 #   curl -fsSL .../install.sh | VERSION=2026-04-20.1-alpha bash
 #   curl -fsSL .../install.sh | PREFIX=/usr/local bash        # system-wide
 #
-# While the repo is still private, pass a GitHub token so curl can
-# auth against release assets and raw.githubusercontent.com:
-#   GH_TOKEN=$(gh auth token) bash -c 'curl -fsSL -H "Authorization: Bearer $GH_TOKEN" \
+# The repo is public, so no token is needed. Setting GH_TOKEN is optional and
+# only raises GitHub's anonymous API rate limit:
+#   GH_TOKEN=$(gh auth token) bash -c 'curl -fsSL \
 #     https://raw.githubusercontent.com/tarkaai/allman-cli/main/install.sh | bash'
 set -euo pipefail
 
@@ -21,11 +21,20 @@ VERSION="${VERSION:-latest}"
 PREFIX="${PREFIX:-$HOME/.local}"
 BIN_DIR="$PREFIX/bin"
 
-# Optional bearer auth — needed while the repo is private; harmless once public.
-auth_args=()
-if [ -n "${GH_TOKEN:-}" ]; then
-  auth_args=(-H "Authorization: Bearer $GH_TOKEN")
-fi
+# Optional bearer auth. The repo is public, so a token is never required — it
+# only raises GitHub's anonymous API rate limit.
+#
+# Written as a wrapper rather than an `auth_args=()` array on purpose: macOS
+# ships Bash 3.2, where expanding an empty array under `set -u` aborts with
+# "unbound variable". That broke the documented unauthenticated install on
+# every stock macOS.
+curl_with_auth() {
+  if [ -n "${GH_TOKEN:-}" ]; then
+    curl -fsSL -H "Authorization: Bearer $GH_TOKEN" "$@"
+  else
+    curl -fsSL "$@"
+  fi
+}
 
 case "$(uname -s)" in
   Linux)  os="linux"  ;;
@@ -55,7 +64,7 @@ fi
 
 if [ "$VERSION" = "latest" ]; then
   release_url="https://api.github.com/repos/$REPO/releases?per_page=1"
-  release_json="$(curl -fsSL "${auth_args[@]}" "$release_url")"
+  release_json="$(curl_with_auth "$release_url")"
   release_json="$(echo "$release_json" | python3 -c 'import json,sys; d=json.load(sys.stdin); print(json.dumps(d[0]) if d else "")')"
   if [ -z "$release_json" ]; then
     echo "could not resolve latest release for $REPO" >&2
@@ -64,7 +73,7 @@ if [ "$VERSION" = "latest" ]; then
   VERSION="$(echo "$release_json" | python3 -c 'import json,sys;print(json.load(sys.stdin)["tag_name"])')"
   echo "resolved latest release: $VERSION"
 else
-  release_json="$(curl -fsSL "${auth_args[@]}" "https://api.github.com/repos/$REPO/releases/tags/$VERSION")"
+  release_json="$(curl_with_auth "https://api.github.com/repos/$REPO/releases/tags/$VERSION")"
 fi
 
 resolve_asset_id() {
@@ -85,11 +94,11 @@ tmp="$(mktemp -d)"
 trap 'rm -rf "$tmp"' EXIT
 
 echo "downloading $asset from $VERSION..."
-curl -fsSL "${auth_args[@]}" -H "Accept: application/octet-stream" \
+curl_with_auth -H "Accept: application/octet-stream" \
   -o "$tmp/allman" \
   "https://api.github.com/repos/$REPO/releases/assets/$bin_id"
 if [ -n "$sha_id" ]; then
-  curl -fsSL "${auth_args[@]}" -H "Accept: application/octet-stream" \
+  curl_with_auth -H "Accept: application/octet-stream" \
     -o "$tmp/allman.sha256" \
     "https://api.github.com/repos/$REPO/releases/assets/$sha_id"
 fi
