@@ -25,6 +25,7 @@ import { loginCommand } from "./commands/login.js";
 import { logoutCommand } from "./commands/logout.js";
 import { messagesCommand } from "./commands/messages.js";
 import { reactCommand } from "./commands/react.js";
+import { readCommand } from "./commands/read.js";
 import { searchCommand } from "./commands/search.js";
 import { sendCommand } from "./commands/send.js";
 import { startCommand } from "./commands/start.js";
@@ -275,6 +276,24 @@ program
       json: opts.json ?? globalOpts.json,
       message: opts.message,
       unreact: opts.unreact,
+    });
+  });
+
+program
+  .command("read <target>")
+  .description(
+    "Mark a conversation as read on LinkedIn\n" +
+      "  <target> can be: slug, LinkedIn URL, or conversation URN"
+  )
+  .option("-a, --account <slug>", "account to use")
+  .option("-s, --store <path>", "store directory")
+  .option("--json", "output as JSON")
+  .action(async (target: string, opts, cmd) => {
+    const globalOpts = cmd.parent?.opts() ?? {};
+    await readCommand(target, {
+      account: opts.account ?? globalOpts.account,
+      store: opts.store ?? globalOpts.store,
+      json: opts.json ?? globalOpts.json,
     });
   });
 

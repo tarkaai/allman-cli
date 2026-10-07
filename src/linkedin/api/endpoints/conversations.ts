@@ -16,6 +16,8 @@ import { encodeUrn } from "../../../utils/urn.js";
 import type { LinkedInApiClient } from "../client.js";
 
 const GRAPHQL_URL = "https://www.linkedin.com/voyager/api/voyagerMessagingGraphQL/graphql";
+const CONVERSATIONS_REST_URL =
+  "https://www.linkedin.com/voyager/api/voyagerMessagingDashMessengerConversations";
 
 const QUERY_ID_LIST = "messengerConversations.45338e053010d1c19147f92de6de3ae6";
 const QUERY_ID_BY_RECIPIENTS = "messengerConversations.44030325d8f59d8cebbb804f16d6b0a3";
@@ -329,4 +331,28 @@ function parseParticipant(
     isVerified: raw.showVerificationBadge === true || badge === "VERIFIED_PROFILE",
     backendUrn: raw.backendUrn ?? null,
   };
+}
+
+/**
+ * Mark a conversation as read on LinkedIn.
+ *
+ * Verified live 2026-10-07: the web client's partial update works —
+ *   POST voyagerMessagingDashMessengerConversations/{msg_conversation urn}
+ *   { "patch": { "$set": { "read": true } } }
+ * — while `?action=markAllMessagesAsSeen` returns HTTP 400 for both the
+ * msg_conversation and messagingThread URN forms.
+ *
+ * Takes the `msg_conversation` URN (RECORD.json `convUrn`), one call per thread.
+ */
+export async function markConversationsRead(
+  client: LinkedInApiClient,
+  conversationUrns: string[]
+): Promise<void> {
+  for (const urn of conversationUrns) {
+    await client.request<unknown>({
+      method: "POST",
+      url: `${CONVERSATIONS_REST_URL}/${encodeURIComponent(urn)}`,
+      data: { patch: { $set: { read: true } } },
+    });
+  }
 }
