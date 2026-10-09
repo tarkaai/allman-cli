@@ -242,6 +242,7 @@ program
   )
   .option("-a, --account <slug>", "account to send from")
   .option("-s, --store <path>", "store directory")
+  .option("--reply-to <messageUrn>", "quote a message in this thread as the one you're replying to")
   .option("--json", "output as JSON")
   .action(async (to: string, text: string, opts, cmd) => {
     const globalOpts = cmd.parent?.opts() ?? {};
@@ -249,6 +250,7 @@ program
       account: opts.account ?? globalOpts.account,
       store: opts.store ?? globalOpts.store,
       json: opts.json ?? globalOpts.json,
+      replyTo: opts.replyTo,
     });
   });
 

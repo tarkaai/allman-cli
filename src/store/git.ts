@@ -73,8 +73,26 @@ export class StoreGit {
       return;
     }
 
-    await git.add("-A");
-    await git.commit(this.pendingMessage);
+    // Two allman processes (e.g. `react` while `listen` persists a message) can
+    // race on .git/index.lock. Back off briefly and retry instead of surfacing
+    // a raw git error to the caller.
+    const maxAttempts = 6;
+    for (let attempt = 1; ; attempt++) {
+      try {
+        await git.add("-A");
+        await git.commit(this.pendingMessage);
+        break;
+      } catch (err: unknown) {
+        const msg = String(err);
+        const locked = /index\.lock|\.lock['"]?: File exists|another git process/i.test(msg);
+        if (!locked || attempt >= maxAttempts) throw err;
+        const delay = 150 * attempt;
+        output.debug(
+          `Git: index locked, retrying in ${delay}ms (attempt ${attempt}/${maxAttempts})`
+        );
+        await new Promise((r) => setTimeout(r, delay));
+      }
+    }
     output.debug(`Git: committed "${this.pendingMessage}" (${status.files.length} files)`);
     this.pendingMessage = "chore: update store";
   }

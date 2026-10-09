@@ -6,6 +6,7 @@ import { type LinkedInApiClient, LinkedInError } from "../linkedin/api/client.js
 import { findConversationByRecipient } from "../linkedin/api/endpoints/conversations.js";
 import {
   fetchMessages,
+  type ReplyTarget,
   sendFirstMessage,
   sendMessage,
 } from "../linkedin/api/endpoints/messages.js";
@@ -22,6 +23,8 @@ export interface SendOptions {
   account?: string;
   store?: string;
   json?: boolean;
+  /** URN of a message in this thread to quote as the one being replied to. */
+  replyTo?: string;
 }
 
 export async function sendCommand(
@@ -74,6 +77,36 @@ export async function sendCommand(
     }
   }
 
+  // Resolve the quoted message for --reply-to from the local store.
+  let replyTarget: ReplyTarget | undefined;
+  let replyFromName: string | null = null;
+  if (options.replyTo) {
+    if (!bareConvId || isNewConversation) {
+      output.error(
+        "--reply-to needs an existing conversation with that message synced locally.",
+        1
+      );
+      return;
+    }
+    const wanted = bareMessageId(options.replyTo);
+    const recent = await conversations.readMessages(bareConvId, { limit: 500 });
+    const original = recent.find((m) => bareMessageId(m.urn) === wanted);
+    if (!original) {
+      output.error(
+        `Message "${options.replyTo}" not found in this conversation. Run \`allman sync\` first.`,
+        1
+      );
+      return;
+    }
+    replyTarget = {
+      messageUrn: original.urn,
+      senderUrn: original.fromUrn,
+      sentAt: original.timestamp,
+      text: original.body,
+    };
+    replyFromName = original.fromName || null;
+  }
+
   // Send (rate limiting enforced by the API client)
   let result: {
     messageUrn: string;
@@ -89,7 +122,7 @@ export async function sendCommand(
     } else if (bareConvId) {
       const convRecord = await conversations.read(bareConvId);
       const convUrn = convRecord?.backendUrn ?? convRecord?.convUrn ?? bareConvId;
-      result = await sendMessage(apiClient, convUrn, myProfileUrn, text);
+      result = await sendMessage(apiClient, convUrn, myProfileUrn, text, replyTarget);
     } else {
       output.error("Could not determine conversation to send to.", 1);
       return;
@@ -114,7 +147,15 @@ export async function sendCommand(
     isFromMe: true,
     body: text,
     reactions: [],
-    attachments: [],
+    attachments: replyTarget
+      ? [
+          {
+            type: "replied",
+            originalText: replyTarget.text,
+            authorName: replyFromName ?? undefined,
+          },
+        ]
+      : [],
     originToken: null,
   };
 
@@ -192,6 +233,14 @@ export async function sendCommand(
     output.success(`Message sent (${new Date(result.deliveredAt).toLocaleTimeString()})`);
     if (isNewConversation) output.info("  New conversation created.");
   }
+}
+
+/** Bare message id from any URN form: composite `(…,2-id)`, backend `…:2-id`, or bare. */
+function bareMessageId(urn: string): string {
+  const comma = urn.lastIndexOf(",");
+  if (comma !== -1) return urn.slice(comma + 1).replace(/\)$/, "");
+  const colon = urn.lastIndexOf(":");
+  return colon !== -1 ? urn.slice(colon + 1) : urn;
 }
 
 // ---------------------------------------------------------------------------

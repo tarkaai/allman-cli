@@ -264,12 +264,42 @@ async function handleEvent(
     }
 
     case "reaction": {
+      // Persist the new summary on the stored message. The event carries the
+      // message URN (composite or backend form) and sometimes the conversation.
+      let reactionConvId: string | null = null;
+      if (event.messageUrn && event.reactions) {
+        const bare = bareMessageId(event.messageUrn);
+        const backendUrn = `urn:li:messagingMessage:${bare}`;
+        const reactions = event.reactions;
+        const tryUpdate = (id: string) =>
+          conversations.updateMessage(id, backendUrn, { reactions }).catch(() => false);
+        if (event.conversationUrn) {
+          const info = await conversations.findByUrn(event.conversationUrn);
+          if (info && (await tryUpdate(info.convId))) reactionConvId = info.convId;
+        }
+        if (!reactionConvId) {
+          // No usable conversation on the event: the message is almost always in
+          // one of the recently active threads.
+          for (const id of await recentConversationIds(conversations, 30)) {
+            if (await tryUpdate(id)) {
+              reactionConvId = id;
+              break;
+            }
+          }
+        }
+        if (reactionConvId) {
+          store.git.scheduleCommit(`listen: reaction in ${reactionConvId.slice(0, 20)}`);
+        } else {
+          debug(`listen: reaction for unknown message ${event.messageUrn}`);
+        }
+      }
       emitEvent({
         event: "reaction",
         account: profileId,
         timestamp,
         messageUrn: event.messageUrn,
         reactions: event.reactions,
+        conversation: { urn: event.conversationUrn ?? null, convId: reactionConvId },
       });
       return;
     }
@@ -360,6 +390,35 @@ async function fetchAndUpsertConversation(
   } catch (err) {
     debug(`listen: failed to fetch conversation: ${String(err)}`);
   }
+}
+
+/** Bare message id from any URN form: composite `(…,2-id)`, backend `…:2-id`, or bare. */
+function bareMessageId(urn: string): string {
+  const comma = urn.lastIndexOf(",");
+  if (comma !== -1) return urn.slice(comma + 1).replace(/\)$/, "");
+  const colon = urn.lastIndexOf(":");
+  return colon !== -1 ? urn.slice(colon + 1) : urn;
+}
+
+/** Conversation ids ordered by newest stored message, capped. */
+async function recentConversationIds(
+  conversations: ConversationStore,
+  limit: number
+): Promise<string[]> {
+  const ids = await conversations.list();
+  const stamped = await Promise.all(
+    ids.map(async (id) => {
+      const rec = await conversations.read(id);
+      const at =
+        rec?.syncState?.newestMessageAt ??
+        (rec?.lastActivityAt ? new Date(rec.lastActivityAt).getTime() : 0);
+      return { id, at };
+    })
+  );
+  return stamped
+    .sort((a, b) => b.at - a.at)
+    .slice(0, limit)
+    .map((x) => x.id);
 }
 
 function splitName(name: string): { firstName: string; lastName: string } {
