@@ -24,6 +24,7 @@ import { listenCommand } from "./commands/listen.js";
 import { loginCommand } from "./commands/login.js";
 import { logoutCommand } from "./commands/logout.js";
 import { messagesCommand } from "./commands/messages.js";
+import { peopleCommand } from "./commands/people.js";
 import { reactCommand } from "./commands/react.js";
 import { readCommand } from "./commands/read.js";
 import { searchCommand } from "./commands/search.js";
@@ -278,6 +279,25 @@ program
       json: opts.json ?? globalOpts.json,
       message: opts.message,
       unreact: opts.unreact,
+    });
+  });
+
+program
+  .command("people <query>")
+  .description(
+    "Search LinkedIn for people by name or keywords (results carry the slug for send/connect)"
+  )
+  .option("-a, --account <slug>", "account to search with")
+  .option("-s, --store <path>", "store directory")
+  .option("-n, --limit <n>", "max results (default 10, max 50)", (v: string) => parseInt(v, 10))
+  .option("--json", "output as JSON")
+  .action(async (query: string, opts, cmd) => {
+    const globalOpts = cmd.parent?.opts() ?? {};
+    await peopleCommand(query, {
+      account: opts.account ?? globalOpts.account,
+      store: opts.store ?? globalOpts.store,
+      json: opts.json ?? globalOpts.json,
+      limit: opts.limit,
     });
   });
 
