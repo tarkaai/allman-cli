@@ -254,11 +254,34 @@ async function handleEvent(
     }
 
     case "read_receipt": {
+      // Seen receipts arrive for both sides. When it's *our* read (e.g. the user
+      // opened the thread on linkedin.com or their phone), mirror it onto the
+      // RECORD so front-ends drop the unread state without waiting for a sync.
+      const myId = profileId;
+      const isMine = Boolean(event.fromUrn?.includes(myId));
+      let convId: string | null = null;
+      if (event.conversationUrn) {
+        const info = await conversations.findByUrn(event.conversationUrn);
+        convId = info?.convId ?? null;
+        if (isMine && info?.record) {
+          const seenAt = new Date(event.timestamp ?? timestamp).toISOString();
+          await conversations
+            .upsert(info.convId, {
+              ...info.record,
+              read: true,
+              unreadCount: 0,
+              lastReadAt: seenAt,
+            })
+            .catch((err) => debug(`Failed to apply read receipt: ${String(err)}`));
+          store.git.scheduleCommit(`listen: read ${info.convId.slice(0, 20)}`);
+        }
+      }
       emitEvent({
         event: "read_receipt",
         account: profileId,
         timestamp: event.timestamp ?? timestamp,
-        conversation: { urn: event.conversationUrn },
+        conversation: { urn: event.conversationUrn, convId },
+        from: { urn: event.fromUrn, isMe: isMine },
       });
       return;
     }
