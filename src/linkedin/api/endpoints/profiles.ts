@@ -164,6 +164,64 @@ export async function getProfileSlugById(
   }
 }
 
+const ME_URL = "https://www.linkedin.com/voyager/api/me";
+
+export interface MyProfile {
+  /** `urn:li:fsd_profile:<id>` of the logged-in member. */
+  urn: string;
+  publicIdentifier: string | null;
+  firstName: string | null;
+  lastName: string | null;
+}
+
+interface MeResponse {
+  miniProfile?: {
+    entityUrn?: string;
+    publicIdentifier?: string;
+    firstName?: string;
+    lastName?: string;
+  };
+}
+
+/**
+ * Identify the logged-in member from the session cookies alone.
+ *
+ * `voyager/api/me` returns a miniProfile whose entityUrn is
+ * `urn:li:fs_miniProfile:<ACo…>` — the same profile id that fsd_profile URNs
+ * carry. This is the fallback for `allman login` when the browser flow didn't
+ * expose the profile id (the response sniff and the /in/ redirect both missed).
+ * Never throws; returns null when the session can't be identified.
+ */
+export async function getMyProfile(client: LinkedInApiClient): Promise<MyProfile | null> {
+  try {
+    const body = await client.request<MeResponse>({ method: "GET", url: ME_URL });
+    if (!body || typeof body !== "object") return null;
+    const mini = body.miniProfile;
+
+    let id: string | null = null;
+    const miniMatch = mini?.entityUrn?.match(/urn:li:fs_miniProfile:([^,)"]+)/);
+    if (miniMatch?.[1]) id = miniMatch[1];
+    if (!id) {
+      const anyMatch = JSON.stringify(body).match(/urn:li:fsd_profile:([^,)"]+)/);
+      if (anyMatch?.[1]) id = anyMatch[1];
+    }
+    if (!id) return null;
+
+    const publicIdentifier =
+      typeof mini?.publicIdentifier === "string" && mini.publicIdentifier.length > 0
+        ? mini.publicIdentifier.toLowerCase()
+        : null;
+    return {
+      urn: `urn:li:fsd_profile:${id}`,
+      publicIdentifier,
+      firstName: typeof mini?.firstName === "string" ? mini.firstName : null,
+      lastName: typeof mini?.lastName === "string" ? mini.lastName : null,
+    };
+  } catch {
+    return null;
+  }
+}
+
 /** Extract urn:li:fsd_profile:{id} from a string that may be the full URN or contain it. */
 function extractProfileUrn(value: string): string | null {
   const match = value.match(/urn:li:fsd_profile:([^,)]+)/);
