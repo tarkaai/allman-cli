@@ -33,13 +33,26 @@ import {
   type RandomDelayConfig,
   randomPageSleep,
 } from "../utils/random-delay.js";
+import {
+  hasFilters,
+  type LeadSearchFilters,
+  mergeFilters,
+  SLICE_PLANS,
+} from "../utils/salesnav-filters.js";
 import { isUrn, profileUrnId } from "../utils/urn.js";
 
 const SALESNAV_PAGE_SIZE = 25;
 const FLAGSHIP_PAGE_SIZE = 10;
-/** SalesNav caps a search at ~2,500 results; flagship at ~1,000. */
-const SALESNAV_SAFETY_MAX = 2_500;
+/**
+ * A single SalesNav search returns at most 1,000 results: pages past
+ * start=1000 come back empty even when `paging.total` is larger (verified
+ * live against a 3,611-connection network). `--slice` partitions the search
+ * by region and seniority to get past it. Flagship caps at ~1,000 too.
+ */
+const SALESNAV_SAFETY_MAX = 1_000;
 const FLAGSHIP_SAFETY_MAX = 1_000;
+/** A count=1 request is a cheap way to read a slice's `paging.total`. */
+const PROBE_COUNT = 1;
 
 export interface ConnectionsOfOptions {
   account?: string;
@@ -55,6 +68,16 @@ export interface ConnectionsOfOptions {
   flagship?: boolean;
   /** Force the SalesNav backend (no fallback; errors if no seat). */
   salesnav?: boolean;
+  /**
+   * Extra SalesNav facets (REGION / SENIORITY_LEVEL) applied to every page.
+   * SalesNav-only: the flagship backend has no such facets.
+   */
+  filters?: LeadSearchFilters | null;
+  /**
+   * Partition the search by region, then seniority, so that every slice fits
+   * under the 1,000-result cap, and merge the slices. SalesNav-only.
+   */
+  slice?: boolean;
   /** For tests: skip the inter-page delay. */
   noDelay?: boolean;
   delayConfig?: RandomDelayConfig;
@@ -130,8 +153,24 @@ export async function connectionsOfCommand(
   const flagship = () => runFlagship(session, store, flagshipProfileId, slug, opts, delayConfig);
   let result: BackendResult | null = null;
 
+  // Facets and slicing exist only on the SalesNav lead search; the flagship
+  // people search has no REGION/SENIORITY facets, so refuse rather than
+  // silently return an unfiltered list.
+  const salesnavOnly = hasFilters(opts.filters) || opts.slice === true;
+  const salesnavOnlyWhy = hasFilters(opts.filters) ? "--region/--seniority filters" : "--slice";
+  const refuseFlagship = (why: string) =>
+    output.error(
+      `${salesnavOnlyWhy} need the Sales Navigator backend (${why}). ` +
+        "Re-run `allman login` to capture a seat, or drop the flags.",
+      1
+    );
+
   if (opts.flagship) {
     // Forced flagship — never touches SalesNav, never falls back.
+    if (salesnavOnly) {
+      refuseFlagship("--flagship was given");
+      return;
+    }
     const r = await flagship();
     if (r) result = { ...r, backend: "flagship" };
   } else if (opts.salesnav) {
@@ -153,7 +192,7 @@ export async function connectionsOfCommand(
       slug,
       opts,
       delayConfig,
-      true
+      !salesnavOnly
     );
     if (r === FALLBACK) {
       output.info("SalesNav seat unavailable — falling back to flagship.");
@@ -162,6 +201,9 @@ export async function connectionsOfCommand(
     } else if (r) {
       result = { ...r, backend: "salesnav" };
     }
+  } else if (salesnavOnly) {
+    refuseFlagship("this session has no SalesNav seat");
+    return;
   } else {
     // Auto + no seat: flagship.
     output.info("No SalesNav seat in this session — using flagship search.");
@@ -212,13 +254,63 @@ async function runSalesnav(
   }
 
   const limit = Math.min(opts.limit ?? SALESNAV_SAFETY_MAX, SALESNAV_SAFETY_MAX);
-  output.info(`Searching SalesNav for connections of "${slug}" (limit ${limit})...`);
+  const base = hasFilters(opts.filters) ? (opts.filters as LeadSearchFilters) : undefined;
+  const search: SalesnavSearch = { client, salesnavId, slug, opts, delayConfig };
 
+  // A limit at or under the cap never needs slicing — one search covers it.
+  if (opts.slice && (opts.limit === undefined || opts.limit > SALESNAV_SAFETY_MAX)) {
+    return runSalesnavSliced(search, base, allowFallback);
+  }
+
+  output.info(
+    `Searching SalesNav for connections of "${slug}" (limit ${limit}${base ? ", filtered" : ""})...`
+  );
+  const r = await pullSalesnavPages(search, {
+    filters: base,
+    limit,
+    allowFallback,
+    abortOnEmptyFirstPage: true,
+    label: null,
+  });
+  if (r === FALLBACK || r === null) return r;
+  if (r.total !== null && r.total > r.rows.length && r.rows.length >= SALESNAV_SAFETY_MAX) {
+    output.warn(
+      `Sales Navigator reports ${r.total} results but a single search returns at most ` +
+        `${SALESNAV_SAFETY_MAX}. Re-run with --slice to fetch the rest.`
+    );
+  }
+  return r;
+}
+
+/** Everything a SalesNav page or probe request needs, bundled once per run. */
+interface SalesnavSearch {
+  client: Parameters<typeof leadSearchConnectionOf>[0];
+  salesnavId: string;
+  slug: string;
+  opts: ConnectionsOfOptions;
+  delayConfig: RandomDelayConfig;
+}
+
+interface PullOptions {
+  filters: LeadSearchFilters | undefined;
+  limit: number;
+  /** Only the very first request of a run may trigger the flagship fallback. */
+  allowFallback: boolean;
+  /** Treat an empty first page as "network not visible" and abort. Off for slices. */
+  abortOnEmptyFirstPage: boolean;
+  /** Slice name for log lines, or null for an unsliced run. */
+  label: string | null;
+}
+
+/** Paginate one CONNECTION_OF search (optionally filtered) up to `limit` rows. */
+async function pullSalesnavPages(search: SalesnavSearch, pull: PullOptions): Promise<SalesnavRun> {
+  const { client, salesnavId, slug, opts, delayConfig } = search;
+  const prefix = pull.label ? `  [${pull.label}]` : " ";
   const rows: ResultRow[] = [];
   let start = 0;
   let pageNum = 0;
   let serverTotal: number | null = null;
-  while (rows.length < limit) {
+  while (rows.length < pull.limit) {
     pageNum += 1;
     let page: Awaited<ReturnType<typeof leadSearchConnectionOf>>;
     try {
@@ -226,10 +318,11 @@ async function runSalesnav(
         salesnavId,
         start,
         count: SALESNAV_PAGE_SIZE,
+        ...(pull.filters ? { filters: pull.filters } : {}),
       });
     } catch (err) {
       // A first-page failure (e.g. seat expired) in auto mode → fall back.
-      if (allowFallback && pageNum === 1) return FALLBACK;
+      if (pull.allowFallback && pageNum === 1) return FALLBACK;
       output.error(
         `Page ${pageNum} failed: ${(err as Error).message}. ` +
           "If this is a 403, re-run `allman login` to refresh the SalesNav seat.",
@@ -238,28 +331,11 @@ async function runSalesnav(
       return null;
     }
     if (serverTotal === null) serverTotal = page.total;
-    for (const lead of page.leads) {
-      rows.push({
-        salesnavId: lead.salesnavId,
-        memberId: lead.memberId || null,
-        memberUrn: lead.memberUrn || null,
-        publicIdentifier: null,
-        firstName: lead.firstName,
-        lastName: lead.lastName,
-        fullName: lead.fullName,
-        location: lead.location,
-        degree: lead.degree,
-        title: lead.title,
-        company: lead.company,
-        companyUrn: lead.companyUrn,
-        companyIndustry: lead.companyIndustry,
-        profilePictureUrl: lead.profilePictureUrl,
-      });
-    }
+    for (const lead of page.leads) rows.push(leadToRow(lead));
     output.info(
-      `  page ${pageNum}: +${page.leads.length} (total ${rows.length}${serverTotal !== null ? ` / ${serverTotal}` : ""})${page.isLastPage ? " [last]" : ""}`
+      `${prefix} page ${pageNum}: +${page.leads.length} (total ${rows.length}${serverTotal !== null ? ` / ${serverTotal}` : ""})${page.isLastPage ? " [last]" : ""}`
     );
-    if (pageNum === 1 && page.leads.length === 0) {
+    if (pull.abortOnEmptyFirstPage && pageNum === 1 && page.leads.length === 0) {
       output.error(
         `Search returned 0 results for "${slug}" — they may not be in your network, ` +
           "or you are not connected to them. Aborting before further requests.",
@@ -267,11 +343,162 @@ async function runSalesnav(
       );
       return null;
     }
-    if (page.isLastPage || rows.length >= limit) break;
+    if (page.isLastPage || page.leads.length === 0 || rows.length >= pull.limit) break;
     start += page.leads.length;
     if (!opts.noDelay) await randomPageSleep(delayConfig);
   }
-  return { rows: rows.slice(0, limit), total: serverTotal };
+  return { rows: rows.slice(0, pull.limit), total: serverTotal };
+}
+
+function leadToRow(
+  lead: Awaited<ReturnType<typeof leadSearchConnectionOf>>["leads"][number]
+): ResultRow {
+  return {
+    salesnavId: lead.salesnavId,
+    memberId: lead.memberId || null,
+    memberUrn: lead.memberUrn || null,
+    publicIdentifier: null,
+    firstName: lead.firstName,
+    lastName: lead.lastName,
+    fullName: lead.fullName,
+    location: lead.location,
+    degree: lead.degree,
+    title: lead.title,
+    company: lead.company,
+    companyUrn: lead.companyUrn,
+    companyIndustry: lead.companyIndustry,
+    profilePictureUrl: lead.profilePictureUrl,
+  };
+}
+
+/**
+ * Read a (filtered) search's server total with a count=1 request.
+ * Returns FALLBACK only when `allowFallback` is set and the request fails.
+ */
+async function probeSalesnavTotal(
+  search: SalesnavSearch,
+  filters: LeadSearchFilters | undefined,
+  allowFallback: boolean
+): Promise<number | null | typeof FALLBACK> {
+  try {
+    const page = await leadSearchConnectionOf(search.client, {
+      salesnavId: search.salesnavId,
+      start: 0,
+      count: PROBE_COUNT,
+      ...(filters ? { filters } : {}),
+    });
+    // A server that omits `total` still tells us something: no leads means 0.
+    return page.total ?? (page.leads.length === 0 ? 0 : null);
+  } catch (err) {
+    if (allowFallback) return FALLBACK;
+    output.error(
+      `Probe failed: ${(err as Error).message}. ` +
+        "If this is a 403, re-run `allman login` to refresh the SalesNav seat.",
+      1
+    );
+    return null;
+  }
+}
+
+/** Probes are tiny requests; pace them at half the page delay. */
+function probeDelay(delayConfig: RandomDelayConfig): RandomDelayConfig {
+  return { minMs: Math.floor(delayConfig.minMs / 2), maxMs: Math.floor(delayConfig.maxMs / 2) };
+}
+
+/**
+ * `--slice`: probe the unfiltered total; when it exceeds the cap, walk
+ * SLICE_PLANS (region, then seniority) so every pulled slice fits under it,
+ * and merge the slices by salesnavId. Explicit filters form the base of every
+ * slice. Slices overlap a little on LinkedIn's side and the unfiltered total
+ * undercounts, so the merged count can exceed the reported total.
+ */
+async function runSalesnavSliced(
+  search: SalesnavSearch,
+  base: LeadSearchFilters | undefined,
+  allowFallback: boolean
+): Promise<SalesnavRun> {
+  const { slug, opts, delayConfig } = search;
+  output.info(`Probing SalesNav total for connections of "${slug}"${base ? " (filtered)" : ""}...`);
+  const total = await probeSalesnavTotal(search, base, allowFallback);
+  if (total === FALLBACK) return FALLBACK;
+  if (total === null) {
+    output.warn("Sales Navigator did not report a total — running a single unsliced search.");
+  } else if (total <= SALESNAV_SAFETY_MAX) {
+    output.info(
+      `${total} results fit under the ${SALESNAV_SAFETY_MAX}-result cap — no slicing needed.`
+    );
+  }
+  if (total === null || total <= SALESNAV_SAFETY_MAX) {
+    if (!opts.noDelay) await randomPageSleep(probeDelay(delayConfig));
+    return pullSalesnavPages(search, {
+      filters: base,
+      limit: SALESNAV_SAFETY_MAX,
+      allowFallback: false,
+      abortOnEmptyFirstPage: true,
+      label: null,
+    });
+  }
+
+  output.info(
+    `${total} results exceed the ${SALESNAV_SAFETY_MAX}-result cap — slicing by region, then seniority.`
+  );
+  const merged = new Map<string, ResultRow>();
+
+  const walk = async (
+    filters: LeadSearchFilters | undefined,
+    level: number,
+    parentLabel: string | null
+  ): Promise<boolean> => {
+    const plan = SLICE_PLANS[level];
+    if (!plan) return true;
+    for (const entry of plan) {
+      const label = parentLabel ? `${parentLabel}/${entry.label}` : entry.label;
+      const sliceFilters = mergeFilters(filters, entry.filters);
+      if (!opts.noDelay) await randomPageSleep(probeDelay(delayConfig));
+      const probed = await probeSalesnavTotal(search, sliceFilters, false);
+      if (probed === FALLBACK) return false;
+      // An unreported total is treated as "fits": pull up to the cap and move on.
+      const t = probed ?? 0;
+      if (probed === null)
+        output.warn(`  slice ${label}: total not reported — pulling up to the cap`);
+      else if (t === 0) {
+        output.info(`  slice ${label}: 0 — skipped`);
+        continue;
+      }
+      if (t > SALESNAV_SAFETY_MAX && level + 1 < SLICE_PLANS.length) {
+        output.info(`  slice ${label}: ${t} — over the cap, splitting`);
+        if (!(await walk(sliceFilters, level + 1, label))) return false;
+        continue;
+      }
+      if (t > SALESNAV_SAFETY_MAX) {
+        output.warn(
+          `  slice ${label}: ${t} exceeds the ${SALESNAV_SAFETY_MAX}-result cap at the deepest ` +
+            `split — only the first ${SALESNAV_SAFETY_MAX} will be fetched.`
+        );
+      }
+      if (!opts.noDelay) await randomPageSleep(probeDelay(delayConfig));
+      const r = await pullSalesnavPages(search, {
+        filters: sliceFilters,
+        limit: SALESNAV_SAFETY_MAX,
+        allowFallback: false,
+        abortOnEmptyFirstPage: false,
+        label,
+      });
+      if (r === FALLBACK || r === null) return false;
+      for (const row of r.rows) {
+        if (row.salesnavId && !merged.has(row.salesnavId)) merged.set(row.salesnavId, row);
+      }
+      output.info(`  slice ${label}: ${r.rows.length} / ${t} (merged ${merged.size})`);
+    }
+    return true;
+  };
+
+  if (!(await walk(base, 0, null))) return null;
+
+  const rows = [...merged.values()];
+  output.info(`Merged ${rows.length} unique results across slices (server total ${total}).`);
+  const limit = opts.limit ?? rows.length;
+  return { rows: rows.slice(0, limit), total };
 }
 
 // ---------------------------------------------------------------------------
