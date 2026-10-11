@@ -285,6 +285,7 @@ allman send jamie-rivera "Thursday works" --reply-to urn:li:messagingMessage:2-�
 ```
 
 The message must already be synced locally; any URN form from `allman messages --json` works.
+Verified live: the quoted original renders on linkedin.com exactly as a reply sent from the web client.
 
 ### `allman search <query>`
 
@@ -316,6 +317,21 @@ allman search --json "sarah"
 | `-n, --limit <n>` | 10 | Max results |
 
 ---
+
+### `allman media <conversation>`
+
+Download a conversation's attachments — images, files, voice notes, video — into the store.
+
+```bash
+allman media jamie-rivera                      # everything in the newest 200 messages
+allman media jamie-rivera --message <urn> --json
+```
+
+Files land in `{account}/{convId}/media/{messageId}-{index}.{ext}` and are **gitignored** (binary
+blobs don't belong in the store's history). Already-present files are skipped, so front-ends can
+call this every time a thread opens. The private `dms/prv/…` CDN URLs only work with the session
+cookies, which is why the download goes through the CLI rather than a front-end fetching them.
+Records synced before the parser captured media URLs are handled by reading the raw payload.
 
 ### `allman people <query>`
 

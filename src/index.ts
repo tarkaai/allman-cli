@@ -23,6 +23,7 @@ import { inboxCommand } from "./commands/inbox.js";
 import { listenCommand } from "./commands/listen.js";
 import { loginCommand } from "./commands/login.js";
 import { logoutCommand } from "./commands/logout.js";
+import { mediaCommand } from "./commands/media.js";
 import { messagesCommand } from "./commands/messages.js";
 import { peopleCommand } from "./commands/people.js";
 import { reactCommand } from "./commands/react.js";
@@ -40,7 +41,7 @@ const program = new Command();
 program
   .name("allman")
   .description("LinkedIn messenger from the CLI")
-  .version("0.3.2")
+  .version("0.4.0")
   .option("-a, --account <slug>", "account to use ($ALLMAN_ACCOUNT)")
   .option("-s, --store <path>", "store directory ($ALLMAN_STORE)")
   .option("--json", "output as JSON")
@@ -297,6 +298,30 @@ program
       account: opts.account ?? globalOpts.account,
       store: opts.store ?? globalOpts.store,
       json: opts.json ?? globalOpts.json,
+      limit: opts.limit,
+    });
+  });
+
+program
+  .command("media <conversation>")
+  .description(
+    "Download a conversation's attachments (images, files, voice, video) into the store\n" +
+      "  <conversation> can be: slug, LinkedIn URL, or conversation URN"
+  )
+  .option("-a, --account <slug>", "account to use")
+  .option("-s, --store <path>", "store directory")
+  .option("-m, --message <urn>", "only this message")
+  .option("-n, --limit <n>", "max messages to scan, newest first (default 200)", (v: string) =>
+    parseInt(v, 10)
+  )
+  .option("--json", "output as JSON")
+  .action(async (conversation: string, opts, cmd) => {
+    const globalOpts = cmd.parent?.opts() ?? {};
+    await mediaCommand(conversation, {
+      account: opts.account ?? globalOpts.account,
+      store: opts.store ?? globalOpts.store,
+      json: opts.json ?? globalOpts.json,
+      message: opts.message,
       limit: opts.limit,
     });
   });
