@@ -1,9 +1,11 @@
 import { buildApiClient } from "../linkedin/api/client.js";
 import { loadCookieJar } from "../linkedin/api/cookies.js";
 import { getProfileUrnBySlug } from "../linkedin/api/endpoints/profiles.js";
+import { loadSession } from "../linkedin/api/session.js";
 import { runLogin } from "../linkedin/auth/playwright-auth.js";
 import { resolveStorePath, Store } from "../store/index.js";
 import * as output from "../utils/output.js";
+import { fetchOwnProfile } from "./whoami.js";
 
 export interface LoginOptions {
   account?: string;
@@ -144,20 +146,38 @@ export async function loginCommand(options: LoginOptions): Promise<void> {
     output.debug(`Created alias: ${options.account} → ${profileId}`);
   }
 
+  // The browser capture often misses the name/photo; fill them from the API.
+  let name = result.name;
+  let slug = profileSlug;
+  try {
+    const session = await loadSession(store, profileId);
+    const own = await fetchOwnProfile(session.apiClient, profileId);
+    if (own) {
+      await store.accounts.update(profileId, own, `account: profile ${profileId.slice(0, 12)}`);
+      if (own.profileSlug && own.profileSlug !== profileSlug) {
+        await store.accounts.createAlias(own.profileSlug, profileId);
+      }
+      name = own.name ?? name;
+      slug = own.profileSlug ?? slug;
+    }
+  } catch (err) {
+    output.debug(`own profile fetch failed: ${String(err)}`);
+  }
+
   await store.git.flush();
 
   if (options.json) {
     output.printData({
       profileId,
-      profileSlug,
+      profileSlug: slug,
       status: "authenticated",
-      name: result.name,
+      name,
       storePath,
     });
   } else {
-    output.success(`Logged in as: ${result.name ?? profileSlug ?? profileId}`);
+    output.success(`Logged in as: ${name ?? slug ?? profileId}`);
     output.info(`  Profile ID: ${profileId}`);
-    if (profileSlug) output.info(`  Slug:       ${profileSlug}`);
+    if (slug) output.info(`  Slug:       ${slug}`);
     output.info(`  Store:      ${storePath}`);
   }
 }

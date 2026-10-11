@@ -34,6 +34,7 @@ import { startCommand } from "./commands/start.js";
 import { statusCommand } from "./commands/status.js";
 import { storeCommitCommand, storePathCommand, storeStatusCommand } from "./commands/store-cmd.js";
 import { syncCommand } from "./commands/sync.js";
+import { whoamiCommand } from "./commands/whoami.js";
 import { setDebugMode, setJsonMode } from "./utils/output.js";
 
 const program = new Command();
@@ -41,7 +42,7 @@ const program = new Command();
 program
   .name("allman")
   .description("LinkedIn messenger from the CLI")
-  .version("0.4.0")
+  .version("0.5.0")
   .option("-a, --account <slug>", "account to use ($ALLMAN_ACCOUNT)")
   .option("-s, --store <path>", "store directory ($ALLMAN_STORE)")
   .option("--json", "output as JSON")
@@ -124,6 +125,27 @@ program
     await statusCommand({
       account: opts.account ?? globalOpts.account,
       store: opts.store ?? globalOpts.store,
+      json: opts.json ?? globalOpts.json,
+    });
+  });
+
+// ---------------------------------------------------------------------------
+// whoami — the signed-in member's own profile (cached in AUTH.json)
+// ---------------------------------------------------------------------------
+
+program
+  .command("whoami")
+  .description("Show the signed-in member's own profile (name, headline, slug, photo)")
+  .option("-a, --account <slug>", "account to inspect")
+  .option("-s, --store <path>", "store directory")
+  .option("--refresh", "re-fetch the profile from LinkedIn and update AUTH.json")
+  .option("--json", "output as JSON")
+  .action(async (opts, cmd) => {
+    const globalOpts = cmd.parent?.opts() ?? {};
+    await whoamiCommand({
+      account: opts.account ?? globalOpts.account,
+      store: opts.store ?? globalOpts.store,
+      refresh: opts.refresh,
       json: opts.json ?? globalOpts.json,
     });
   });

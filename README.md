@@ -333,6 +333,17 @@ call this every time a thread opens. The private `dms/prv/…` CDN URLs only wor
 cookies, which is why the download goes through the CLI rather than a front-end fetching them.
 Records synced before the parser captured media URLs are handled by reading the raw payload.
 
+### `allman whoami`
+
+The signed-in member's own profile — name, headline, slug and photo — cached in `AUTH.json`.
+`allman login` only captures what the browser shows, which is often incomplete, so front-ends
+call this to label the account. Fetched from LinkedIn once when the name is missing, or on demand.
+
+```bash
+allman whoami
+allman whoami --refresh --json
+```
+
 ### `allman people <query>`
 
 Find people you can message, by name — the same lookup as linkedin.com's "New message" box

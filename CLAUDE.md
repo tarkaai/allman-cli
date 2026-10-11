@@ -148,6 +148,7 @@ allman conversations [--account <slug>] [--json] [--limit N]
 allman messages <contact-slug|url|urn> [--account <slug>] [--json] [--limit N]
 allman send <contact-slug|url|urn> <text> [--reply-to <messageUrn>] [--account <slug>] [--json]
 allman read <contact-slug|url|urn> [--json]
+allman whoami [--refresh] [--json]      # own profile → AUTH.json (name/headline/slug/photo)
 allman people <query> [--limit N] [--json]
 allman media <contact-slug|url|urn> [--message <urn>] [--limit N] [--json]
 allman connections [--salesnav|--flagship] [--limit N] [--csv <path>] [--no-save] [--include-headline] [--enrich [--deep]] [--json]
