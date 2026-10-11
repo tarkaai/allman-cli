@@ -33,6 +33,8 @@ export async function statusCommand(options: StatusOptions): Promise<void> {
         profileId,
         slug: record.profileSlug,
         name: record.name,
+        headline: record.headline,
+        imageUrl: record.imageUrl,
         status: record.status,
         cookiesValid: hasValidCookies,
         cookiesUpdatedAt: record.cookiesUpdatedAt,
