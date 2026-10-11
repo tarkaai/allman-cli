@@ -24,7 +24,9 @@ import { listenCommand } from "./commands/listen.js";
 import { loginCommand } from "./commands/login.js";
 import { logoutCommand } from "./commands/logout.js";
 import { messagesCommand } from "./commands/messages.js";
+import { peopleCommand } from "./commands/people.js";
 import { reactCommand } from "./commands/react.js";
+import { readCommand } from "./commands/read.js";
 import { searchCommand } from "./commands/search.js";
 import { sendCommand } from "./commands/send.js";
 import { startCommand } from "./commands/start.js";
@@ -241,6 +243,7 @@ program
   )
   .option("-a, --account <slug>", "account to send from")
   .option("-s, --store <path>", "store directory")
+  .option("--reply-to <messageUrn>", "quote a message in this thread as the one you're replying to")
   .option("--json", "output as JSON")
   .action(async (to: string, text: string, opts, cmd) => {
     const globalOpts = cmd.parent?.opts() ?? {};
@@ -248,6 +251,7 @@ program
       account: opts.account ?? globalOpts.account,
       store: opts.store ?? globalOpts.store,
       json: opts.json ?? globalOpts.json,
+      replyTo: opts.replyTo,
     });
   });
 
@@ -275,6 +279,43 @@ program
       json: opts.json ?? globalOpts.json,
       message: opts.message,
       unreact: opts.unreact,
+    });
+  });
+
+program
+  .command("people <query>")
+  .description(
+    "Search LinkedIn for people by name or keywords (results carry the slug for send/connect)"
+  )
+  .option("-a, --account <slug>", "account to search with")
+  .option("-s, --store <path>", "store directory")
+  .option("-n, --limit <n>", "max results (default 10, max 50)", (v: string) => parseInt(v, 10))
+  .option("--json", "output as JSON")
+  .action(async (query: string, opts, cmd) => {
+    const globalOpts = cmd.parent?.opts() ?? {};
+    await peopleCommand(query, {
+      account: opts.account ?? globalOpts.account,
+      store: opts.store ?? globalOpts.store,
+      json: opts.json ?? globalOpts.json,
+      limit: opts.limit,
+    });
+  });
+
+program
+  .command("read <target>")
+  .description(
+    "Mark a conversation as read on LinkedIn\n" +
+      "  <target> can be: slug, LinkedIn URL, or conversation URN"
+  )
+  .option("-a, --account <slug>", "account to use")
+  .option("-s, --store <path>", "store directory")
+  .option("--json", "output as JSON")
+  .action(async (target: string, opts, cmd) => {
+    const globalOpts = cmd.parent?.opts() ?? {};
+    await readCommand(target, {
+      account: opts.account ?? globalOpts.account,
+      store: opts.store ?? globalOpts.store,
+      json: opts.json ?? globalOpts.json,
     });
   });
 

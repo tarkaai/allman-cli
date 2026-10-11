@@ -254,22 +254,75 @@ async function handleEvent(
     }
 
     case "read_receipt": {
+      // Seen receipts arrive for both sides. When it's *our* read (e.g. the user
+      // opened the thread on linkedin.com or their phone), mirror it onto the
+      // RECORD so front-ends drop the unread state without waiting for a sync.
+      const myId = profileId;
+      const isMine = Boolean(event.fromUrn?.includes(myId));
+      let convId: string | null = null;
+      if (event.conversationUrn) {
+        const info = await conversations.findByUrn(event.conversationUrn);
+        convId = info?.convId ?? null;
+        if (isMine && info?.record) {
+          const seenAt = new Date(event.timestamp ?? timestamp).toISOString();
+          await conversations
+            .upsert(info.convId, {
+              ...info.record,
+              read: true,
+              unreadCount: 0,
+              lastReadAt: seenAt,
+            })
+            .catch((err) => debug(`Failed to apply read receipt: ${String(err)}`));
+          store.git.scheduleCommit(`listen: read ${info.convId.slice(0, 20)}`);
+        }
+      }
       emitEvent({
         event: "read_receipt",
         account: profileId,
         timestamp: event.timestamp ?? timestamp,
-        conversation: { urn: event.conversationUrn },
+        conversation: { urn: event.conversationUrn, convId },
+        from: { urn: event.fromUrn, isMe: isMine },
       });
       return;
     }
 
     case "reaction": {
+      // Persist the new summary on the stored message. The event carries the
+      // message URN (composite or backend form) and sometimes the conversation.
+      let reactionConvId: string | null = null;
+      if (event.messageUrn && event.reactions) {
+        const bare = bareMessageId(event.messageUrn);
+        const backendUrn = `urn:li:messagingMessage:${bare}`;
+        const reactions = event.reactions;
+        const tryUpdate = (id: string) =>
+          conversations.updateMessage(id, backendUrn, { reactions }).catch(() => false);
+        if (event.conversationUrn) {
+          const info = await conversations.findByUrn(event.conversationUrn);
+          if (info && (await tryUpdate(info.convId))) reactionConvId = info.convId;
+        }
+        if (!reactionConvId) {
+          // No usable conversation on the event: the message is almost always in
+          // one of the recently active threads.
+          for (const id of await recentConversationIds(conversations, 30)) {
+            if (await tryUpdate(id)) {
+              reactionConvId = id;
+              break;
+            }
+          }
+        }
+        if (reactionConvId) {
+          store.git.scheduleCommit(`listen: reaction in ${reactionConvId.slice(0, 20)}`);
+        } else {
+          debug(`listen: reaction for unknown message ${event.messageUrn}`);
+        }
+      }
       emitEvent({
         event: "reaction",
         account: profileId,
         timestamp,
         messageUrn: event.messageUrn,
         reactions: event.reactions,
+        conversation: { urn: event.conversationUrn ?? null, convId: reactionConvId },
       });
       return;
     }
@@ -360,6 +413,35 @@ async function fetchAndUpsertConversation(
   } catch (err) {
     debug(`listen: failed to fetch conversation: ${String(err)}`);
   }
+}
+
+/** Bare message id from any URN form: composite `(…,2-id)`, backend `…:2-id`, or bare. */
+function bareMessageId(urn: string): string {
+  const comma = urn.lastIndexOf(",");
+  if (comma !== -1) return urn.slice(comma + 1).replace(/\)$/, "");
+  const colon = urn.lastIndexOf(":");
+  return colon !== -1 ? urn.slice(colon + 1) : urn;
+}
+
+/** Conversation ids ordered by newest stored message, capped. */
+async function recentConversationIds(
+  conversations: ConversationStore,
+  limit: number
+): Promise<string[]> {
+  const ids = await conversations.list();
+  const stamped = await Promise.all(
+    ids.map(async (id) => {
+      const rec = await conversations.read(id);
+      const at =
+        rec?.syncState?.newestMessageAt ??
+        (rec?.lastActivityAt ? new Date(rec.lastActivityAt).getTime() : 0);
+      return { id, at };
+    })
+  );
+  return stamped
+    .sort((a, b) => b.at - a.at)
+    .slice(0, limit)
+    .map((x) => x.id);
 }
 
 function splitName(name: string): { firstName: string; lastName: string } {

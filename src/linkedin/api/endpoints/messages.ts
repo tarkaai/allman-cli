@@ -232,6 +232,34 @@ export async function fetchMessages(
 // Send message
 // ---------------------------------------------------------------------------
 
+/** A message being quoted as the one you're replying to (LinkedIn "Reply"). */
+export interface ReplyTarget {
+  /** Any known URN form of the original message. */
+  messageUrn: string;
+  /** urn:li:fsd_profile:… of the original sender. */
+  senderUrn: string;
+  /** Unix ms the original was sent. */
+  sentAt: number;
+  /** Original body text (what LinkedIn renders in the quote). */
+  text: string;
+}
+
+/**
+ * renderContentUnions entry for a reply. Mirrors the shape LinkedIn stores on
+ * replied messages (`repliedMessageContent` with `*originalSender` /
+ * `*originalMessage` refs in normalized responses).
+ */
+export function buildReplyRenderContent(reply: ReplyTarget, mailboxProfileId: string): unknown {
+  return {
+    repliedMessageContent: {
+      originalSender: `urn:li:msg_messagingParticipant:${reply.senderUrn}`,
+      originalMessage: buildReactionMessageUrn(reply.messageUrn, mailboxProfileId),
+      originalSendAt: reply.sentAt,
+      messageBody: { attributes: [], text: reply.text },
+    },
+  };
+}
+
 interface SendMessagePayload {
   message: {
     body: { attributes: unknown[]; text: string };
@@ -280,7 +308,8 @@ export async function sendMessage(
   client: LinkedInApiClient,
   conversationUrn: string,
   senderProfileUrn: string,
-  text: string
+  text: string,
+  replyTo?: ReplyTarget
 ): Promise<SendMessageResult> {
   const senderProfileId = senderProfileUrn.replace("urn:li:fsd_profile:", "");
   const originToken = randomUUID();
@@ -294,7 +323,9 @@ export async function sendMessage(
   const payload: SendMessagePayload = {
     message: {
       body: { attributes: [], text },
-      renderContentUnions: [],
+      renderContentUnions: replyTo
+        ? [buildReplyRenderContent(replyTo, senderProfileUrn.replace("urn:li:fsd_profile:", ""))]
+        : [],
       conversationUrn: fullConvUrn,
       originToken,
     },
