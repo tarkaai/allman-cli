@@ -115,6 +115,18 @@ Stream from `https://www.linkedin.com/realtime/connect?rc=1` with `Accept: text/
 Lines arrive as `data: {JSON}`. Extract event type from `topic` field via:
 `topic.match(/:(\w+):urn:li-realtime/)` → group 1 is the event type key.
 
+### Read state, reactions, replies (verified live 2026-10)
+- `read`: `POST voyagerMessagingDashMessengerConversations/{msg_conversation urn}` with
+  `{patch:{$set:{read:true}}}`; `?action=markAllMessagesAsSeen` is HTTP 400 for every URN form.
+- `people`: `voyagerMessagingDashMessagingTypeahead?q=typeaheadKeyword&keyword=…&types=List(CONNECTIONS,COWORKERS)`
+  — the compose-box lookup. The flagship `voyagerSearchDashClusters` keyword search returns 0 results
+  for plain name queries, so don't use it for this.
+- `send --reply-to`: a `repliedMessageContent` render unit (original sender participant URN,
+  composite `urn:li:msg_message:(me,id)`, send time, body) — mirrors stored replies; not yet
+  verified on the wire.
+- `listen` persists reaction summaries and the viewer's own seen receipts onto RECORD/JSONL;
+  store commits retry on `.git/index.lock` contention.
+
 ### stdout vs stderr
 `allman listen` streams NDJSON to **stdout**. All logs, errors, debug output go to **stderr**.
 This separation is mandatory — agents parse stdout.
@@ -129,7 +141,9 @@ allman sync [--account <slug>] [--since 3mo|6mo|1y|YYYY-MM-DD]
 allman listen [--account <slug>]
 allman conversations [--account <slug>] [--json] [--limit N]
 allman messages <contact-slug|url|urn> [--account <slug>] [--json] [--limit N]
-allman send <contact-slug|url|urn> <text> [--account <slug>] [--json]
+allman send <contact-slug|url|urn> <text> [--reply-to <messageUrn>] [--account <slug>] [--json]
+allman read <contact-slug|url|urn> [--json]
+allman people <query> [--limit N] [--json]
 allman connections [--salesnav|--flagship] [--limit N] [--csv <path>] [--no-save] [--include-headline] [--enrich [--deep]] [--json]
 allman connections-of <slug> [--flagship|--salesnav] [--limit N] [--csv <path>] [--no-save] [--json]
 allman enrich [target] [--deep] [--force] [--limit N] [--json]

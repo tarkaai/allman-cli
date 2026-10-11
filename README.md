@@ -207,6 +207,11 @@ Each event is a JSON object on a single line. Example:
 
 ---
 
+`listen` also keeps the store current for two things the realtime stream carries that a sync would
+otherwise only catch later: reaction summaries (added or removed on linkedin.com) are written onto
+the stored message, and your own seen receipts (you read the thread on linkedin.com or your phone)
+flip the record to read.
+
 ### `allman conversations` (alias: `convs`)
 
 List conversations from the local store, sorted by most recent activity.
@@ -273,6 +278,14 @@ The `<to>` argument accepts a slug, profile URL, or conversation URN.
 
 ---
 
+Reply to a specific message (LinkedIn renders the quoted original above your text):
+
+```bash
+allman send jamie-rivera "Thursday works" --reply-to urn:li:messagingMessage:2-…
+```
+
+The message must already be synced locally; any URN form from `allman messages --json` works.
+
 ### `allman search <query>`
 
 Search contacts and conversations by name, slug, or profile ID. Fuzzy matching with confidence scores.
@@ -303,6 +316,34 @@ allman search --json "sarah"
 | `-n, --limit <n>` | 10 | Max results |
 
 ---
+
+### `allman people <query>`
+
+Find people you can message, by name — the same lookup as linkedin.com's "New message" box
+(your connections and coworkers). Read-only.
+
+```bash
+allman people "jane roe"                 # name, degree, headline
+allman people "jane roe" --limit 5 --json
+```
+
+Each result carries the `slug` you need for `allman send <slug>` / `allman connect <slug>`,
+the profile id, headline, picture, and `convId` when a local thread already exists. Slugs come
+from the local store (a conversation or exported connection) when the person is known, otherwise
+one profile lookup per result.
+
+### `allman read <target>`
+
+Mark a conversation as read on LinkedIn (and in the local record).
+
+```bash
+allman read jamie-rivera
+allman read https://www.linkedin.com/in/jamie-rivera/ --json
+```
+
+Front-ends call this when a thread is opened so the unread state on linkedin.com matches what you
+have actually seen. Uses the web client's partial update on the conversation (`{"patch":{"$set":{"read":true}}}`);
+the `markAllMessagesAsSeen` action returns HTTP 400.
 
 ### `allman inbox`
 
