@@ -59,7 +59,6 @@ export async function runLogin(options: AuthOptions = {}): Promise<AuthResult> {
   const executablePath = options.executablePath ?? process.env.PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH;
 
   output.info("Opening LinkedIn in browser — please complete login in the browser window.");
-  output.info(`Waiting up to ${Math.round(LOGIN_TIMEOUT_MS / 60000)} minutes...`);
 
   const browser = await chromium.launch({
     headless: false,
@@ -131,7 +130,9 @@ export async function runLogin(options: AuthOptions = {}): Promise<AuthResult> {
   }
 
   // Wait for successful authentication (URL changes to /feed, /in/, or /messaging)
-  output.info("Waiting for you to complete login...");
+  output.info(
+    `Waiting for you to complete login (up to ${Math.round(LOGIN_TIMEOUT_MS / 60000)} minutes)...`
+  );
   try {
     await page.waitForURL(FEED_URL_PATTERN, { timeout: LOGIN_TIMEOUT_MS });
   } catch {
@@ -209,8 +210,6 @@ export async function runLogin(options: AuthOptions = {}): Promise<AuthResult> {
 
   const { serializeCookieJar } = await import("../api/cookies.js");
   const cookieJar = serializeCookieJar(jar);
-
-  output.success(`Authenticated as: ${name ?? "unknown"}`);
 
   return {
     success: true,

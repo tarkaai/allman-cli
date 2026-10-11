@@ -457,11 +457,14 @@ allman enrich --json               # stream enriched records as NDJSON
 |------|---------|-------------|
 | `[target]` | — | A slug, URL, or profile URN to enrich one person (omit to enrich all stored connections) |
 | `--deep` | — | Also fetch work history, education, and skills |
+| `--raw` | — | Also store LinkedIn's untouched payloads on each record — see below |
 | `--force` | — | Re-fetch even connections already enriched |
 | `-n, --limit <n>` | all | Max profiles to fetch this run |
 | `--json` | — | Stream enriched records to stdout as NDJSON |
 
 > Enriching reads only what your own LinkedIn session already shows you. `ALLMAN_PROFILE_DECORATION` overrides the profile decoration if LinkedIn rotates it.
+
+`--raw` keeps LinkedIn's untouched entity payloads on each record under `raw`, so you can see what the parsers dropped. They are roughly 10x the size of the parsed record — at ~9,000 connections that is a third of a gigabyte in a git-versioned store, rewritten on every pass — so turn it on for a sample when you suspect a field is missing, not for a bulk run.
 
 #### Rate limits
 
@@ -470,9 +473,10 @@ Profile enrichment and connection requests are the two endpoints most likely to 
 | | With a SalesNav seat | Without |
 |---|---|---|
 | **Enrichment** | 100 / hour | 25 / day |
+| **Company lookups** | 500 / hour | 100 / day |
 | **Connection requests** | 40 / day | 10 / day |
 
-When a cap is hit, `enrich` stops early and tells you when capacity returns; `connect` refuses. Already-enriched records that get skipped don't consume quota. The Sales Navigator connections sweep is a bulk list operation and is *not* billed per person.
+Company lookups keep their own ledger rather than sharing the enrichment one: they read org pages on a different LinkedIn resource, so resolving employers never eats the budget for enriching people. When a cap is hit, `enrich` and `companies` stop early and tell you when capacity returns; `connect` refuses. Already-enriched records that get skipped don't consume quota. The Sales Navigator connections sweep is a bulk list operation and is *not* billed per person.
 
 Override per account in `config.json`:
 
@@ -481,6 +485,8 @@ Override per account in `config.json`:
   "rateLimit": {
     "maxEnrichments": 100,
     "enrichmentWindowMs": 3600000,
+    "maxCompanyLookups": 500,
+    "companyWindowMs": 3600000,
     "maxInvitesPerDay": 40,
     "minInviteIntervalMs": 60000
   }
@@ -504,6 +510,8 @@ allman companies urn:li:fsd_company:11850   # resolve one company
 allman companies marketbridge      # ...by slug or numeric id too
 ```
 
+A URN or numeric id is fetched directly. A vanity slug costs one extra request first, to resolve it to an id.
+
 Records land in `{myProfileId}/companies/{id}.json`, shared by everyone who works there, with a `{universalName} -> {id}.json` symlink. Re-running is idempotent and merges: a later, sparser response never downgrades a known value to null.
 
 | Field | Notes |
@@ -523,7 +531,7 @@ Records land in `{myProfileId}/companies/{id}.json`, shared by everyone who work
 | `-n, --limit <n>` | all | Max companies to fetch this run |
 | `--json` | — | Stream resolved companies as NDJSON |
 
-Paced with the same random 2–8s delay as the other bulk readers, and **billed against the enrichment quota** — it is the same class of bulk profile-adjacent fetching, and one shared ledger is easier to reason about than two. A company that can't be fetched (restricted, deleted, 403) is skipped rather than ending the run.
+Paced with the same random 2–8s delay as the other bulk readers, and metered on **its own quota** — 500/hour with a Sales Navigator seat, 100/day without — rather than the enrichment one, since it reads org pages on a different LinkedIn resource. A company that can't be fetched (restricted, deleted, 403) is skipped rather than ending the run.
 
 ---
 

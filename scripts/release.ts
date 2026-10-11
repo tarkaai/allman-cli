@@ -9,10 +9,11 @@
 //
 // Any tag containing `-alpha` or `-beta` is published as a GitHub prerelease.
 
-import { $ } from "bun";
 import { createHash } from "node:crypto";
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
+import { $ } from "bun";
+import { compileAllman } from "./build.ts";
 
 const ROOT = resolve(import.meta.dir, "..");
 const DIST = join(ROOT, "dist");
@@ -80,7 +81,7 @@ async function assertTagAvailable() {
 async function build(os: string, arch: string, bunTarget: string) {
   const outfile = join(DIST, `${BIN}-${os}-${arch}`);
   log(`building ${outfile}`);
-  await $`bun build --compile --minify --target=${bunTarget} src/index.ts --outfile ${outfile} --external chromium-bidi --external electron`;
+  await compileAllman({ outfile, target: bunTarget });
   return outfile;
 }
 

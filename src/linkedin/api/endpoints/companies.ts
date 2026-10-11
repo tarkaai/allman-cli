@@ -3,6 +3,7 @@
  * behind it.
  *
  *   GET /voyager/api/organization/companies/<id>
+ *   GET /voyager/api/organization/companies?q=universalName&universalName=<slug>
  *
  * Positions carry `companyUrn`, so this closes the loop between a person's
  * work history and the firm itself without guessing at names or domains.
@@ -147,12 +148,64 @@ export function parseCompany(resp: Raw, id: string): Company | null {
   };
 }
 
-/** Fetch one company by `urn:li:fsd_company:<id>` or bare numeric id. */
+/**
+ * Pull a numeric company id out of a `?q=universalName` lookup.
+ *
+ * The query resource answers with the company record under `elements` (nested
+ * under `data` in the normalized form), carrying an `entityUrn` in one of
+ * LinkedIn's several company namespaces — `fsd_company`, `fs_normalized_company`
+ * or a bare `company`. The id is all we take: it then goes through the same
+ * by-id fetch as every other target, so there is only one response shape to
+ * parse a company out of.
+ */
+export function parseUniversalNameLookup(resp: Raw): string | null {
+  const data = (resp.data ?? {}) as Raw;
+  const candidates: Raw[] = [];
+  for (const bag of [resp.elements, data.elements, resp.included, data.included]) {
+    if (Array.isArray(bag)) candidates.push(...(bag as Raw[]));
+  }
+  // Some decorations answer with the company object directly under `data`.
+  if (Object.keys(data).length > 0) candidates.push(data);
+  for (const c of candidates) {
+    const id = /urn:li:[a-z_]*company:(\d+)/i.exec(str(c.entityUrn) ?? "")?.[1];
+    if (id) return id;
+  }
+  return null;
+}
+
+/** LinkedIn vanity slugs are lowercase alphanumerics plus `-`, `_` and `.`. */
+const UNIVERSAL_NAME = /^[a-z0-9][a-z0-9\-_.]*$/;
+
+/**
+ * Resolve a vanity slug (`marketbridge`) to a numeric company id.
+ *
+ * Costs one extra request, so it only runs for a target that is neither a URN
+ * nor a bare id — `allman companies` with no target always has URNs from stored
+ * positions and never reaches this.
+ */
+async function resolveUniversalName(
+  client: LinkedInApiClient,
+  slug: string
+): Promise<string | null> {
+  const universalName = slug.trim().toLowerCase();
+  if (!UNIVERSAL_NAME.test(universalName)) return null;
+  try {
+    const resp = await client.request<Raw>({
+      method: "GET",
+      url: `${COMPANY_URL}?q=universalName&universalName=${encodeURIComponent(universalName)}`,
+    });
+    return parseUniversalNameLookup(resp ?? {});
+  } catch {
+    return null;
+  }
+}
+
+/** Fetch one company by `urn:li:fsd_company:<id>`, bare numeric id, or vanity slug. */
 export async function fetchCompany(
   client: LinkedInApiClient,
   urnOrId: string
 ): Promise<Company | null> {
-  const id = companyId(urnOrId);
+  const id = companyId(urnOrId) ?? (await resolveUniversalName(client, urnOrId));
   if (!id) return null;
   const resp = await client.request<Raw>({ method: "GET", url: `${COMPANY_URL}/${id}` });
   return parseCompany(resp ?? {}, id);
