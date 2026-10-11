@@ -3,11 +3,15 @@
 // checksum → tag → push → `gh release create` with assets.
 //
 // Usage:
-//   bun run release 2026-04-20.1-alpha
-//   bun run release 2026-04-20.1-alpha --skip-tests   # not recommended
-//   bun run release 2026-04-20.1-alpha --dry-run      # build but don't tag/publish
+//   bun run release v0.4.0
+//   bun run release v0.5.0-alpha.1          # published as a GitHub prerelease
+//   bun run release v0.4.0 --skip-tests     # not recommended
+//   bun run release v0.4.0 --dry-run        # build but don't tag/publish
 //
-// Any tag containing `-alpha` or `-beta` is published as a GitHub prerelease.
+// Tags are `v<major>.<minor>.<patch>` and must match the `version` in
+// package.json (and the hardcoded `.version()` in src/index.ts). A tag with a
+// `-alpha` / `-beta` suffix is published as a GitHub prerelease; anything else
+// is a stable release and becomes the repo's "latest".
 
 import { createHash } from "node:crypto";
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
@@ -19,7 +23,7 @@ const ROOT = resolve(import.meta.dir, "..");
 const DIST = join(ROOT, "dist");
 const REPO = "tarkaai/allman-cli";
 const BIN = "allman";
-const TAG_REGEX = /^20\d{2}-\d{2}-\d{2}\.\d+(?:-(?:alpha|beta))?$/;
+const TAG_REGEX = /^v(\d+\.\d+\.\d+)(?:-(?:alpha|beta)(?:\.\d+)?)?$/;
 const TARGETS = [
   { os: "linux", arch: "x64", bunTarget: "bun-linux-x64" },
   { os: "linux", arch: "arm64", bunTarget: "bun-linux-arm64" },
@@ -42,8 +46,18 @@ const skipTests = args.includes("--skip-tests");
 const dryRun = args.includes("--dry-run");
 
 if (!tag) die("usage: bun run release <tag> [--skip-tests] [--dry-run]");
-if (!TAG_REGEX.test(tag))
-  die(`tag ${tag} does not match YYYY-MM-DD.N[-alpha|-beta]`);
+const tagMatch = TAG_REGEX.exec(tag);
+if (!tagMatch)
+  die(`tag ${tag} does not match v<major>.<minor>.<patch>[-alpha.N|-beta.N]`);
+const tagVersion = tagMatch[1];
+
+const pkgVersion: string = JSON.parse(
+  readFileSync(join(ROOT, "package.json"), "utf8")
+).version;
+if (tagVersion !== pkgVersion)
+  die(`tag ${tag} does not match package.json version ${pkgVersion} — bump package.json (and src/index.ts) first`);
+if (!readFileSync(join(ROOT, "src", "index.ts"), "utf8").includes(`.version("${pkgVersion}")`))
+  die(`src/index.ts .version() does not match package.json version ${pkgVersion}`);
 
 const isPrerelease = tag.includes("-alpha") || tag.includes("-beta");
 
