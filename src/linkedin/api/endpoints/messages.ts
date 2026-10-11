@@ -245,17 +245,23 @@ export interface ReplyTarget {
 }
 
 /**
- * renderContentUnions entry for a reply. Mirrors the shape LinkedIn stores on
- * replied messages (`repliedMessageContent` with `*originalSender` /
- * `*originalMessage` refs in normalized responses).
+ * renderContentUnions entry for a reply — the exact shape the web client posts
+ * (captured live 2026-10-11). Note the request keys are `originalSenderUrn` /
+ * `originalMessageUrn`; the normalized *response* stores them as
+ * `*originalSender` / `*originalMessage`. Sending the response-style keys
+ * returns HTTP 500.
  */
 export function buildReplyRenderContent(reply: ReplyTarget, mailboxProfileId: string): unknown {
   return {
     repliedMessageContent: {
-      originalSender: `urn:li:msg_messagingParticipant:${reply.senderUrn}`,
-      originalMessage: buildReactionMessageUrn(reply.messageUrn, mailboxProfileId),
+      originalSenderUrn: `urn:li:msg_messagingParticipant:${reply.senderUrn}`,
       originalSendAt: reply.sentAt,
-      messageBody: { attributes: [], text: reply.text },
+      originalMessageUrn: buildReactionMessageUrn(reply.messageUrn, mailboxProfileId),
+      messageBody: {
+        _type: "com.linkedin.pemberly.text.AttributedText",
+        attributes: [],
+        text: reply.text,
+      },
     },
   };
 }
@@ -693,9 +699,12 @@ function parseAttachmentByKind(
 
   if (lk.includes("vectorimage") || lk.includes("photo") || lk === "image") {
     const path = str(inner.fileIdentifyingUrlPathSegment);
+    // Messaging images ship a complete, tokenised URL in `rootUrl` with an
+    // empty artifacts list — use it as-is when there is no path segment.
+    const rootUrl = str(inner.rootUrl);
     return {
       type: "image",
-      url: path ? buildVectorImageUrl(inner, path) : str(inner.url),
+      url: path ? buildVectorImageUrl(inner, path) : (str(inner.url) ?? rootUrl),
       width: num(inner.width),
       height: num(inner.height),
       raw,
@@ -771,11 +780,22 @@ function parseAttachmentByKind(
   }
 
   if (lk.includes("repliedmessage")) {
-    const sender = (inner.originalSender as Record<string, unknown>) ?? {};
+    // The quoted body is an AttributedText object; the sender is a participant
+    // URN ref (`*originalSender`) that may be resolvable from included[].
+    const body = inner.messageBody;
+    const bodyText =
+      str(body) ??
+      str((body as Record<string, unknown> | undefined)?.text) ??
+      str(inner.forwardedBody);
+    const senderRef = str(inner["*originalSender"]) ?? str(inner.originalSender);
+    const senderDoc = senderRef ? included.get(senderRef) : undefined;
+    const senderObj =
+      senderDoc ?? (inner.originalSender as Record<string, unknown> | undefined) ?? {};
+    const name = buildSenderName(senderObj);
     return {
       type: "replied",
-      originalText: str(inner.messageBody) ?? str(inner.forwardedBody),
-      authorName: buildSenderName(sender),
+      originalText: bodyText,
+      authorName: name && name.trim().length > 0 ? name : undefined,
       raw,
     };
   }

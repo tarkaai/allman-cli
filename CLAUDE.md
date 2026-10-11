@@ -121,9 +121,14 @@ Lines arrive as `data: {JSON}`. Extract event type from `topic` field via:
 - `people`: `voyagerMessagingDashMessagingTypeahead?q=typeaheadKeyword&keyword=…&types=List(CONNECTIONS,COWORKERS)`
   — the compose-box lookup. The flagship `voyagerSearchDashClusters` keyword search returns 0 results
   for plain name queries, so don't use it for this.
-- `send --reply-to`: a `repliedMessageContent` render unit (original sender participant URN,
-  composite `urn:li:msg_message:(me,id)`, send time, body) — mirrors stored replies; not yet
-  verified on the wire.
+- `send --reply-to`: a `repliedMessageContent` render unit with **request** keys
+  `originalSenderUrn` (participant URN), `originalMessageUrn` (composite `urn:li:msg_message:(me,id)`),
+  `originalSendAt`, `messageBody` (`_type` AttributedText). The normalized *response* stores
+  `*originalSender`/`*originalMessage`; sending those keys is HTTP 500. Captured from the web client
+  and verified live 2026-10-11.
+- `media`: `dms/prv/…` attachment URLs need the session cookies; `downloadMedia` fetches with the
+  jar (arraybuffer) into `{conv}/media/` (gitignored). Messaging images carry the full URL in
+  `vectorImage.rootUrl` with empty `artifacts`.
 - `listen` persists reaction summaries and the viewer's own seen receipts onto RECORD/JSONL;
   store commits retry on `.git/index.lock` contention.
 
@@ -144,6 +149,7 @@ allman messages <contact-slug|url|urn> [--account <slug>] [--json] [--limit N]
 allman send <contact-slug|url|urn> <text> [--reply-to <messageUrn>] [--account <slug>] [--json]
 allman read <contact-slug|url|urn> [--json]
 allman people <query> [--limit N] [--json]
+allman media <contact-slug|url|urn> [--message <urn>] [--limit N] [--json]
 allman connections [--salesnav|--flagship] [--limit N] [--csv <path>] [--no-save] [--include-headline] [--enrich [--deep]] [--json]
 allman connections-of <slug> [--flagship|--salesnav] [--limit N] [--csv <path>] [--no-save] [--json]
 allman enrich [target] [--deep] [--force] [--limit N] [--json]

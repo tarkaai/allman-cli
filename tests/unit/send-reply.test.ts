@@ -21,10 +21,14 @@ describe("buildReplyRenderContent", () => {
       ME.replace("urn:li:fsd_profile:", "")
     ) as { repliedMessageContent: Record<string, unknown> };
     expect(unit.repliedMessageContent).toEqual({
-      originalSender: `urn:li:msg_messagingParticipant:${THEM}`,
-      originalMessage: `urn:li:msg_message:(${ME},2-orig==)`,
+      originalSenderUrn: `urn:li:msg_messagingParticipant:${THEM}`,
       originalSendAt: 1_700_000_000_000,
-      messageBody: { attributes: [], text: "original" },
+      originalMessageUrn: `urn:li:msg_message:(${ME},2-orig==)`,
+      messageBody: {
+        _type: "com.linkedin.pemberly.text.AttributedText",
+        attributes: [],
+        text: "original",
+      },
     });
   });
 });

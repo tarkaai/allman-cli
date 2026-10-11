@@ -117,6 +117,7 @@ export async function ensureGitignore(storePath: string): Promise<void> {
         "*.lock",
         "COOKIES.json",
         "INBOX.jsonl",
+        "media/",
         "inbox-state.json",
         "rate-state.json",
         "query-cache.json",

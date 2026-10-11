@@ -93,6 +93,8 @@ async function resolveConversation(
     const found = await conversations.findByUrn(target);
     return found?.convId ?? null;
   }
+  // A bare conversation id must keep its case (slug resolution lowercases).
+  if (target.startsWith("2-") && (await conversations.exists(target))) return target;
   let slug: string;
   try {
     slug = slugFromUrl(target);
