@@ -42,7 +42,7 @@ const program = new Command();
 program
   .name("allman")
   .description("LinkedIn messenger from the CLI")
-  .version("0.5.0")
+  .version("0.6.0")
   .option("-a, --account <slug>", "account to use ($ALLMAN_ACCOUNT)")
   .option("-s, --store <path>", "store directory ($ALLMAN_STORE)")
   .option("--json", "output as JSON")
@@ -263,12 +263,20 @@ program
   .command("send <to> <text>")
   .description(
     "Send a message\n" +
-      "  <to> can be: LinkedIn profile URL, profile slug, conversation URN, or a conversation id (2-…)"
+      "  <to> can be: LinkedIn profile URL, profile slug, profile URN, conversation URN, or a conversation id (2-…)\n" +
+      "  Several people (comma-separated <to> and/or repeated --to) start a NEW group thread:\n" +
+      '    allman send alice-example,bob-example "hi both"\n' +
+      '    allman send alice-example --to bob-example --to urn:li:fsd_profile:… "hi all"'
   )
   .option("-a, --account <slug>", "account to send from")
   .option("-s, --store <path>", "store directory")
+  .option(
+    "--to <target>",
+    "additional recipient (repeatable); with <to> makes a new group thread",
+    (value: string, previous: string[] = []) => [...previous, value]
+  )
   .option("--reply-to <messageUrn>", "quote a message in this thread as the one you're replying to")
-  .option("--dry-run", "resolve the target and preview the message without sending")
+  .option("--dry-run", "resolve the target(s) and preview the message without sending")
   .option("--json", "output as JSON")
   .action(async (to: string, text: string, opts, cmd) => {
     const globalOpts = cmd.parent?.opts() ?? {};
@@ -278,6 +286,7 @@ program
       json: opts.json ?? globalOpts.json,
       replyTo: opts.replyTo,
       dryRun: opts.dryRun === true,
+      to: opts.to ?? [],
     });
   });
 

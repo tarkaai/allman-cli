@@ -42,7 +42,7 @@ export interface Company {
   id: string;
   companyUrn: string;
   name: string | null;
-  /** LinkedIn vanity slug, e.g. `etymonai`. */
+  /** LinkedIn vanity slug, e.g. `example-corp`. */
   universalName: string | null;
   /** The company's own website — not the LinkedIn page. */
   website: string | null;
@@ -177,7 +177,7 @@ export function parseUniversalNameLookup(resp: Raw): string | null {
 const UNIVERSAL_NAME = /^[a-z0-9][a-z0-9\-_.]*$/;
 
 /**
- * Resolve a vanity slug (`marketbridge`) to a numeric company id.
+ * Resolve a vanity slug (`example-corp`) to a numeric company id.
  *
  * Costs one extra request, so it only runs for a target that is neither a URN
  * nor a bare id — `allman companies` with no target always has URNs from stored
