@@ -357,16 +357,29 @@ export async function sendMessage(
 /**
  * Send a message to start a new conversation (no existing thread).
  *
- * @param contactProfileUrn  Recipient's profile URN
- * @param senderProfileUrn   Authenticated user's profile URN
- * @param text               Message body text
+ * One recipient starts a 1:1 thread; two or more start a **group** thread.
+ * Both are the same `createMessage` call the web client makes: the recipients
+ * go in `hostRecipientUrns` and the `message` object carries no
+ * `conversationUrn` at all (LinkedIn returns 400 if it is present but
+ * malformed). The created message in the response names the new thread in
+ * `backendConversationUrn` / `conversationUrn`.
+ *
+ * @param recipientProfileUrns  Recipient profile URN(s), `urn:li:fsd_profile:…`
+ * @param senderProfileUrn      Authenticated user's profile URN
+ * @param text                  Message body text
  */
 export async function sendFirstMessage(
   client: LinkedInApiClient,
-  contactProfileUrn: string,
+  recipientProfileUrns: string | string[],
   senderProfileUrn: string,
   text: string
 ): Promise<SendMessageResult> {
+  const recipients = Array.isArray(recipientProfileUrns)
+    ? recipientProfileUrns
+    : [recipientProfileUrns];
+  if (recipients.length === 0) {
+    throw new Error("sendFirstMessage needs at least one recipient");
+  }
   const senderProfileId = senderProfileUrn.replace("urn:li:fsd_profile:", "");
   const originToken = randomUUID();
   const trackingId = byteArrayToString(uuidToByteArray(originToken));
@@ -380,7 +393,7 @@ export async function sendFirstMessage(
     mailboxUrn: `urn:li:fsd_profile:${senderProfileId}`,
     trackingId,
     dedupeByClientGeneratedToken: false,
-    hostRecipientUrns: [contactProfileUrn],
+    hostRecipientUrns: recipients,
   };
 
   const response = await client.request<SendMessageResponse>({

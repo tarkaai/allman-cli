@@ -59,6 +59,7 @@ allman sync                        # pull conversation history (default: since l
 allman conversations               # list conversations
 allman messages sarah-chen         # show messages with sarah-chen
 allman send sarah-chen "Hey!"      # send a message
+allman send sarah-chen,jamie-rivera "Hey both!"   # start a group thread
 allman listen                      # stream real-time events to stdout as NDJSON
 ```
 
@@ -266,15 +267,32 @@ Send a message to a LinkedIn contact.
 allman send sarah-chen "Hey, how are you?"
 allman send "https://www.linkedin.com/in/sarah-chen" "Hello!"
 allman send "urn:li:messagingThread:2-abc123" "Following up"
+allman send 2-abc123 "Following up"                              # bare conversation id (1:1 or group)
 ```
 
-The `<to>` argument accepts a slug, profile URL, or conversation URN.
+The `<to>` argument accepts a slug, profile URL, profile URN, conversation URN, or a bare conversation id.
 
 **Behavior:**
 - **Pre-send sync**: fetches the 10 most recent messages before sending. If there are new inbound messages since the last sync that arrived after your last reply, the send is **aborted** and the new messages are shown. Re-run after reading them.
 - **New conversations**: if no existing thread is found (in local store or via LinkedIn API), starts a new conversation.
 - **Rate limiting**: minimum 3000ms between sends (configurable). State persisted to `rate-state.json` across process restarts.
 - Stores the sent message locally and commits the store.
+
+#### Group threads
+
+Several people start a **new group conversation**. List them comma-separated in `<to>` and/or repeat `--to`; each one is a slug, profile URL, or `urn:li:fsd_profile:…` URN (conversation ids are not people and are refused):
+
+```bash
+allman send sarah-chen,jamie-rivera "Hi both — can we find 30 minutes this week?"
+allman send sarah-chen --to jamie-rivera --to urn:li:fsd_profile:ACoAAEXAMPLE000001 "Hi all"
+allman send sarah-chen,jamie-rivera "Hi both" --dry-run        # show the resolved people + plan, send nothing
+```
+
+- Every recipient is resolved before anything is sent (local 1:1 record first, then the profile lookup); you and duplicates are dropped. If only one person is left, it is an ordinary 1:1 send.
+- One request creates the thread and delivers the message — the same call the LinkedIn web client makes.
+- **Each run creates another group**, even with the same people. To keep talking in a group you already have, address it by its conversation id: `allman send <convId> "…"` (see `allman conversations`).
+- The new thread is stored like any group synced by `sync`/`listen` (`isGroup`, `participants[]`, no slug alias) and `--json` reports its `convId`. If LinkedIn does not confirm the thread right away, a provisional record is written and the next `allman sync` fills it in.
+- `--reply-to` needs an existing thread, so it cannot be combined with several recipients.
 
 ---
 

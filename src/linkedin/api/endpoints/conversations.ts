@@ -205,10 +205,31 @@ export async function findConversationByRecipient(
   contactProfileUrn: string,
   myProfileUrn: string
 ): Promise<ConversationData | null> {
-  const contactId = contactProfileUrn.replace("urn:li:fsd_profile:", "");
-  const myId = myProfileUrn.replace("urn:li:fsd_profile:", "");
+  const matches = await findConversationsByRecipients(client, [contactProfileUrn], myProfileUrn);
+  return matches[0] ?? null;
+}
 
-  const variables = `(recipients:List(${encodeUrn(`urn:li:fsd_profile:${contactId}`)}),mailboxUrn:${encodeUrn(`urn:li:fsd_profile:${myId}`)},count:20)`;
+/**
+ * Find the conversations whose members are exactly the signed-in user plus
+ * `recipientProfileUrns` — the compose-box "by recipients" lookup. One
+ * recipient yields the 1:1 thread (at most one); several yield every group
+ * thread with precisely that membership, newest activity first, since LinkedIn
+ * happily keeps more than one group with the same members.
+ */
+export async function findConversationsByRecipients(
+  client: LinkedInApiClient,
+  recipientProfileUrns: string[],
+  myProfileUrn: string
+): Promise<ConversationData[]> {
+  const myId = myProfileUrn.replace("urn:li:fsd_profile:", "");
+  const wanted = new Set(
+    recipientProfileUrns.map((u) => `urn:li:fsd_profile:${u.replace("urn:li:fsd_profile:", "")}`)
+  );
+  wanted.delete(myProfileUrn);
+  if (wanted.size === 0) return [];
+
+  const recipientList = [...wanted].map((u) => encodeUrn(u)).join(",");
+  const variables = `(recipients:List(${recipientList}),mailboxUrn:${encodeUrn(`urn:li:fsd_profile:${myId}`)},count:20)`;
 
   const response = await client.request<NormalizedResponse>({
     method: "GET",
@@ -218,18 +239,18 @@ export async function findConversationByRecipient(
   const included = buildIncludedMap(response.included);
   const convUrns = response?.data?.data?.messengerConversationsByRecipients?.["*elements"] ?? [];
 
+  const matches: ConversationData[] = [];
   for (const urn of convUrns) {
     const c = parseConversation(urn, included);
     if (!c) continue;
-    if (c.participants.length === 2) {
-      const urns = c.participants.map((p) => p.entityUrn);
-      if (urns.includes(contactProfileUrn) && urns.includes(myProfileUrn)) {
-        return c;
-      }
-    }
+    if (c.participants.length !== wanted.size + 1) continue;
+    const urns = new Set(c.participants.map((p) => p.entityUrn));
+    if (!urns.has(myProfileUrn)) continue;
+    if ([...wanted].every((u) => urns.has(u))) matches.push(c);
   }
 
-  return null;
+  matches.sort((a, b) => (b.lastActivityAt ?? 0) - (a.lastActivityAt ?? 0));
+  return matches;
 }
 
 // ---------------------------------------------------------------------------

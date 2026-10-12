@@ -80,6 +80,21 @@ Slug = the LinkedIn `publicIdentifier` (e.g. `linkedin.com/in/sarah-chen` → `s
   through the shared backoff, capped at `MAX_GROUP_SLUG_LOOKUPS` (10) per group.
 - `send --dry-run <target>` resolves the target and prints the preview without any
   LinkedIn call beyond slug→URN lookup for unknown slugs.
+- **Creating a group**: `send` with several people — comma-separated `<to>` and/or
+  repeated `--to` (`send alice-example,bob-example "hi"`, `send alice-example --to
+  urn:li:fsd_profile:… "hi"`) — starts a **new** group thread. Each target resolves to
+  a person exactly like a single target (local 1:1 record → `getProfileUrnBySlug`;
+  `urn:li:fsd_profile:…` as-is); thread ids/URNs are refused, self and duplicates are
+  dropped, and `--reply-to` is rejected. The write is the same `createMessage` as a
+  new 1:1 (`sendFirstMessage`): every recipient in `hostRecipientUrns`, **no**
+  `conversationUrn` key — that is how the web client creates a group. The new thread
+  is read from the created message's `backendConversationUrn`, confirmed through
+  `findConversationsByRecipients` (the `messengerConversationsByRecipients` query
+  with all recipients, exact-membership match), and stored via
+  `buildConversationRecord`; if the lookup fails, a provisional group record is
+  stored from what the send knows (ids, slugs, local names) and the next
+  `sync`/`listen` replaces it. Every send with several people creates another
+  group — continue an existing one with `send <convId>`.
 
 ## Critical patterns
 
@@ -175,6 +190,7 @@ allman listen [--account <slug>]
 allman conversations [--account <slug>] [--json] [--limit N]
 allman messages <contact-slug|url|urn|convId> [--account <slug>] [--json] [--limit N]
 allman send <contact-slug|url|urn|convId> <text> [--reply-to <messageUrn>] [--dry-run] [--account <slug>] [--json]
+allman send <a,b,…> <text> [--to <target>]... [--dry-run] [--json]   # several people → NEW group thread
 allman read <contact-slug|url|urn|convId> [--json]
 allman whoami [--refresh] [--json]      # own profile → AUTH.json (name/headline/slug/photo)
 allman people <query> [--limit N] [--json]
