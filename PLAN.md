@@ -242,4 +242,4 @@ done
 - `src/store/contacts.ts` — merged into conversations.ts
 
 ## Existing features preserved
-All existing commands (login, logout, status, sync, listen, conversations, messages, send, store) are kept. Core behaviors (pre-send abort, message deduplication, git auto-commit, VCR test infra) are unchanged. Group chat support intentionally excluded for now.
+All existing commands (login, logout, status, sync, listen, conversations, messages, send, store) are kept. Core behaviors (pre-send abort, message deduplication, git auto-commit, VCR test infra) are unchanged. Group chats are stored since `feat/group-conversations`: same `{convId}/` layout, `isGroup`/`title`/`participants[]` on the RECORD, no profileId/slug aliases (see CLAUDE.md "Group conversations").
