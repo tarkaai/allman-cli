@@ -592,8 +592,8 @@ allman companies                   # resolve every employer referenced by stored
 allman companies --current-only    # only people's current employers
 allman companies --limit 200       # cap how many to fetch this run
 allman companies --force           # re-fetch companies already stored
-allman companies urn:li:fsd_company:11850   # resolve one company
-allman companies marketbridge      # ...by slug or numeric id too
+allman companies urn:li:fsd_company:100001   # resolve one company
+allman companies example-corp      # ...by slug or numeric id too
 ```
 
 A URN or numeric id is fetched directly. A vanity slug costs one extra request first, to resolve it to an id.

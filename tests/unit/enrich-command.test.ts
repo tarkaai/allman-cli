@@ -69,7 +69,7 @@ vi.mock("@/linkedin/api/session.js", () => ({
                 lastName: "Thetic",
                 headline: "Headline",
                 summary: "About.",
-                objectUrn: "urn:li:member:375843124",
+                objectUrn: "urn:li:member:100000001",
                 "*industry": "urn:li:fsd_industry:11",
                 industryUrn: "urn:li:fsd_industry:11",
                 location: { countryCode: "US" },
@@ -213,8 +213,8 @@ describe("enrich: request shape", () => {
     expect(h.enrichCalls[0]?.patch).toMatchObject({
       // The join key to Sales Navigator, and the reason a company no longer
       // has to be resolved by fuzzy name match.
-      objectUrn: "urn:li:member:375843124",
-      memberId: "375843124",
+      objectUrn: "urn:li:member:100000001",
+      memberId: "100000001",
       companyUrn: "urn:li:fsd_company:4242",
       industry: "Management Consulting",
       industryUrn: "urn:li:fsd_industry:11",
@@ -244,7 +244,7 @@ describe("enrich: raw passthrough", () => {
     };
     // Fields no parser reads today are preserved verbatim...
     expect(raw.profile.publicIdentifier).toBe("slug-1");
-    expect(raw.profile.objectUrn).toBe("urn:li:member:375843124");
+    expect(raw.profile.objectUrn).toBe("urn:li:member:100000001");
     expect(raw.positions[0]?.companyUrn).toBe("urn:li:fsd_company:4242");
     expect(raw.educations[0]?.degreeName).toBe("BS");
     expect(raw.skills[0]?.name).toBe("TypeScript");

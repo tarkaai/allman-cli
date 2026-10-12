@@ -9,29 +9,29 @@ import {
 
 describe("companyId", () => {
   it("extracts the numeric id from an fsd_company urn", () => {
-    expect(companyId("urn:li:fsd_company:99112930")).toBe("99112930");
+    expect(companyId("urn:li:fsd_company:100005")).toBe("100005");
   });
 
   it("accepts a bare numeric id", () => {
-    expect(companyId("11850")).toBe("11850");
+    expect(companyId("100001")).toBe("100001");
   });
 
   it("returns null for anything without an id", () => {
     // A vanity slug is not an id; `fetchCompany` resolves those over the wire.
-    expect(companyId("etymonai")).toBeNull();
+    expect(companyId("example-slug")).toBeNull();
     expect(companyId("")).toBeNull();
   });
 });
 
 describe("parseUniversalNameLookup", () => {
   it("reads the id out of a flat elements[] response", () => {
-    const resp = { elements: [{ entityUrn: "urn:li:fs_normalized_company:11850" }] };
-    expect(parseUniversalNameLookup(resp)).toBe("11850");
+    const resp = { elements: [{ entityUrn: "urn:li:fs_normalized_company:100001" }] };
+    expect(parseUniversalNameLookup(resp)).toBe("100001");
   });
 
   it("reads the id out of a normalized data.elements[] response", () => {
-    const resp = { data: { elements: [{ entityUrn: "urn:li:company:99112930" }] } };
-    expect(parseUniversalNameLookup(resp)).toBe("99112930");
+    const resp = { data: { elements: [{ entityUrn: "urn:li:company:100005" }] } };
+    expect(parseUniversalNameLookup(resp)).toBe("100005");
   });
 
   it("falls back to included[], ignoring non-company entities", () => {
@@ -67,27 +67,27 @@ describe("fetchCompany", () => {
     return { client, urls };
   }
 
-  const byId = { data: { name: "Marketbridge", universalName: "marketbridge" } };
+  const byId = { data: { name: "Example Corp", universalName: "example-corp" } };
 
   it("fetches a numeric id directly, with no lookup round trip", async () => {
     const { client, urls } = stubClient(() => byId);
-    const c = await fetchCompany(client, "11850");
-    expect(c?.id).toBe("11850");
-    expect(urls).toEqual(["https://www.linkedin.com/voyager/api/organization/companies/11850"]);
+    const c = await fetchCompany(client, "100001");
+    expect(c?.id).toBe("100001");
+    expect(urls).toEqual(["https://www.linkedin.com/voyager/api/organization/companies/100001"]);
   });
 
   it("resolves a vanity slug through the universalName query first", async () => {
     const { client, urls } = stubClient((url) =>
       url.includes("q=universalName")
-        ? { elements: [{ entityUrn: "urn:li:fs_normalized_company:11850" }] }
+        ? { elements: [{ entityUrn: "urn:li:fs_normalized_company:100001" }] }
         : byId
     );
-    const c = await fetchCompany(client, "marketbridge");
-    expect(c?.id).toBe("11850");
-    expect(c?.name).toBe("Marketbridge");
+    const c = await fetchCompany(client, "example-corp");
+    expect(c?.id).toBe("100001");
+    expect(c?.name).toBe("Example Corp");
     expect(urls).toEqual([
-      "https://www.linkedin.com/voyager/api/organization/companies?q=universalName&universalName=marketbridge",
-      "https://www.linkedin.com/voyager/api/organization/companies/11850",
+      "https://www.linkedin.com/voyager/api/organization/companies?q=universalName&universalName=example-corp",
+      "https://www.linkedin.com/voyager/api/organization/companies/100001",
     ]);
   });
 
@@ -95,8 +95,8 @@ describe("fetchCompany", () => {
     const { client, urls } = stubClient((url) =>
       url.includes("q=universalName") ? { elements: [{ entityUrn: "urn:li:company:7" }] } : byId
     );
-    await fetchCompany(client, " MarketBridge ");
-    expect(urls[0]).toContain("universalName=marketbridge");
+    await fetchCompany(client, " Example-Corp ");
+    expect(urls[0]).toContain("universalName=example-corp");
   });
 
   it("returns null without a second request when the slug resolves to nothing", async () => {
@@ -109,7 +109,7 @@ describe("fetchCompany", () => {
     const { client } = stubClient(() => {
       throw new Error("403");
     });
-    expect(await fetchCompany(client, "marketbridge")).toBeNull();
+    expect(await fetchCompany(client, "example-corp")).toBeNull();
   });
 
   it("never requests anything for a target that cannot be a slug", async () => {
@@ -123,12 +123,12 @@ describe("parseCompany", () => {
   // Shaped after a real /organization/companies/<id> response.
   const resp = {
     data: {
-      name: "Marketbridge",
-      universalName: "marketbridge",
-      companyPageUrl: "https://marketbridge.com",
-      url: "https://www.linkedin.com/company/marketbridge",
-      tagline: "Go-to-Market systems",
-      description: "Marketbridge partners with B2B leaders.",
+      name: "Example Corp",
+      universalName: "example-corp",
+      companyPageUrl: "https://example-corp.example",
+      url: "https://www.linkedin.com/company/example-corp",
+      tagline: "Example tagline",
+      description: "Example Corp partners with B2B leaders.",
       staffCount: 375,
       staffCountRange: { start: 201, end: 500 },
       companyType: { localizedName: "Privately Held", code: "PRIVATELY_HELD" },
@@ -157,25 +157,25 @@ describe("parseCompany", () => {
   };
 
   it("prefers the company's own site over the LinkedIn page", () => {
-    const c = parseCompany(resp, "11850");
-    expect(c?.website).toBe("https://marketbridge.com");
-    expect(c?.linkedinUrl).toBe("https://www.linkedin.com/company/marketbridge");
+    const c = parseCompany(resp, "100001");
+    expect(c?.website).toBe("https://example-corp.example");
+    expect(c?.linkedinUrl).toBe("https://www.linkedin.com/company/example-corp");
   });
 
   it("captures headcount, both exact and banded", () => {
-    const c = parseCompany(resp, "11850");
+    const c = parseCompany(resp, "100001");
     expect(c?.staffCount).toBe(375);
     expect(c?.staffCountRange).toEqual({ start: 201, end: 500 });
   });
 
   it("pulls industry and follower count out of included[]", () => {
-    const c = parseCompany(resp, "11850");
+    const c = parseCompany(resp, "100001");
     expect(c?.industries).toEqual(["Advertising Services"]);
     expect(c?.followerCount).toBe(22580);
   });
 
   it("captures type, founding year, specialties and headquarters", () => {
-    const c = parseCompany(resp, "11850");
+    const c = parseCompany(resp, "100001");
     expect(c?.companyType).toBe("Privately Held");
     expect(c?.foundedYear).toBe(1991);
     expect(c?.specialties).toEqual(["ABM/ABX", "Advertising"]);
@@ -184,13 +184,13 @@ describe("parseCompany", () => {
   });
 
   it("picks the largest logo artifact", () => {
-    expect(parseCompany(resp, "11850")?.logoUrl).toContain("large.png");
+    expect(parseCompany(resp, "100001")?.logoUrl).toContain("large.png");
   });
 
   it("sets the urn from the id and keeps them consistent", () => {
-    const c = parseCompany(resp, "11850");
-    expect(c?.id).toBe("11850");
-    expect(c?.companyUrn).toBe("urn:li:fsd_company:11850");
+    const c = parseCompany(resp, "100001");
+    expect(c?.id).toBe("100001");
+    expect(c?.companyUrn).toBe("urn:li:fsd_company:100001");
   });
 
   it("degrades to nulls rather than throwing on a sparse response", () => {
