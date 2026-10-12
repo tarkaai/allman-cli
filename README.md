@@ -912,3 +912,20 @@ bun run lint
 MIT — see [LICENSE](./LICENSE).
 
 `allman` is named in tribute to [Eric Allman](https://en.wikipedia.org/wiki/Eric_Allman), author of sendmail.
+
+### `allman send` attachments (voice notes, files)
+
+```bash
+allman send sarah-chen --audio note.m4a --duration-ms 12300   # voice note (m4a/aac/mp3/wav/ogg)
+allman send sarah-chen "see attached" --file deck.pdf          # file attachment
+allman send sarah-chen --audio note.m4a --dry-run --json       # print the upload + send plan, send nothing
+```
+
+The text may be omitted when sending `--audio` or `--file`. The upload follows the web
+client's attachment flow (upload-metadata request → PUT bytes → `createMessage` with an
+`audio` / `file` render unit); the sent bytes are kept beside the thread under
+`{conv}/media/` so front-ends render them from disk. **The upload endpoint is modelled on
+the web client and has not been verified live yet** — `--dry-run` shows exactly what would
+go out, and `ALLMAN_AUDIO_UPLOAD_TYPE` / `ALLMAN_FILE_UPLOAD_TYPE` override the upload type
+if LinkedIn's enum differs.
+

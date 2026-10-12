@@ -260,21 +260,35 @@ program
 // ---------------------------------------------------------------------------
 
 program
-  .command("send <to> <text>")
+  .command("send <to> [text]")
   .description(
-    "Send a message\n" + "  <to> can be: LinkedIn profile URL, profile slug, or conversation URN"
+    "Send a message\n" +
+      "  <to> can be: LinkedIn profile URL, profile slug, or conversation URN\n" +
+      "  [text] may be omitted when sending --audio or --file"
   )
   .option("-a, --account <slug>", "account to send from")
   .option("-s, --store <path>", "store directory")
   .option("--reply-to <messageUrn>", "quote a message in this thread as the one you're replying to")
+  .option("--audio <path>", "send an audio file (m4a/aac/mp3) as a voice note")
+  .option("--file <path>", "send a file as an attachment")
+  .option(
+    "--duration-ms <n>",
+    "voice note length in milliseconds (shown on the bubble)",
+    (v: string) => parseInt(v, 10)
+  )
+  .option("--dry-run", "print the upload and send payloads without sending")
   .option("--json", "output as JSON")
-  .action(async (to: string, text: string, opts, cmd) => {
+  .action(async (to: string, text: string | undefined, opts, cmd) => {
     const globalOpts = cmd.parent?.opts() ?? {};
-    await sendCommand(to, text, {
+    await sendCommand(to, text ?? "", {
       account: opts.account ?? globalOpts.account,
       store: opts.store ?? globalOpts.store,
       json: opts.json ?? globalOpts.json,
       replyTo: opts.replyTo,
+      audio: opts.audio,
+      file: opts.file,
+      durationMs: opts.durationMs,
+      dryRun: opts.dryRun === true,
     });
   });
 

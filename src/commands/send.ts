@@ -2,8 +2,18 @@
  * allman send — send a message to a LinkedIn contact.
  */
 
+import { copyFile, mkdir, readFile, stat } from "node:fs/promises";
+import { basename, extname, join } from "node:path";
 import { type LinkedInApiClient, LinkedInError } from "../linkedin/api/client.js";
 import { findConversationByRecipient } from "../linkedin/api/endpoints/conversations.js";
+import {
+  buildAudioRenderContent,
+  buildFileRenderContent,
+  buildUploadMetadataPayload,
+  mimeTypeFor,
+  requestUploadSlot,
+  uploadBytes,
+} from "../linkedin/api/endpoints/media-upload.js";
 import {
   fetchMessages,
   type ReplyTarget,
@@ -25,6 +35,14 @@ export interface SendOptions {
   json?: boolean;
   /** URN of a message in this thread to quote as the one being replied to. */
   replyTo?: string;
+  /** Path to an audio file (m4a/aac/mp3) sent as a voice note. */
+  audio?: string;
+  /** Path to any file sent as an attachment. */
+  file?: string;
+  /** Duration of the voice note, when the caller knows it. */
+  durationMs?: number;
+  /** Print the upload + send payloads and stop. Nothing reaches LinkedIn. */
+  dryRun?: boolean;
 }
 
 export async function sendCommand(
@@ -61,6 +79,79 @@ export async function sendCommand(
     contactLastName,
     isNewConversation,
   } = resolved;
+
+  // Attachment (voice note / file): read it, then upload before the send.
+  const attachmentPath = options.audio ?? options.file;
+  const attachmentKind: "audio" | "file" | null = options.audio
+    ? "audio"
+    : options.file
+      ? "file"
+      : null;
+  let attachmentBytes: Buffer | null = null;
+  let attachmentName = "";
+  let attachmentMime = "";
+  if (attachmentPath && attachmentKind) {
+    try {
+      const st = await stat(attachmentPath);
+      if (!st.isFile()) throw new Error("not a file");
+      attachmentBytes = await readFile(attachmentPath);
+    } catch (err) {
+      output.error(`Can't read ${attachmentPath}: ${(err as Error).message}`, 1);
+      return;
+    }
+    attachmentName = basename(attachmentPath);
+    attachmentMime = mimeTypeFor(attachmentName);
+    if (attachmentKind === "audio" && !attachmentMime.startsWith("audio/")) {
+      output.error(
+        `--audio expects an audio file (m4a, aac, mp3, wav, ogg); got ${attachmentName}`,
+        1
+      );
+      return;
+    }
+  }
+  if (!text && !attachmentBytes) {
+    output.error("Nothing to send: give message text, --audio <file> or --file <file>.", 1);
+    return;
+  }
+
+  if (options.dryRun) {
+    const plan: Record<string, unknown> = {
+      dryRun: true,
+      target: isNewConversation
+        ? { newConversationWith: contactProfileUrn }
+        : { conversation: bareConvId },
+      text,
+      replyTo: options.replyTo ?? null,
+    };
+    if (attachmentBytes && attachmentKind) {
+      plan.upload = {
+        step1: {
+          POST: "voyagerVideoDashMediaUploadMetadata?action=upload",
+          body: buildUploadMetadataPayload(attachmentKind, attachmentBytes.length, attachmentName),
+        },
+        step2: {
+          PUT: "<singleUploadUrl from step 1>",
+          contentType: attachmentMime,
+          bytes: attachmentBytes.length,
+        },
+        renderContent:
+          attachmentKind === "audio"
+            ? buildAudioRenderContent("<assetUrn from step 1>", options.durationMs ?? 0)
+            : buildFileRenderContent(
+                "<assetUrn from step 1>",
+                attachmentBytes.length,
+                attachmentMime,
+                attachmentName
+              ),
+      };
+    }
+    if (options.json) output.printData(plan);
+    else {
+      output.info("[dry-run] Nothing sent. Plan:");
+      process.stderr.write(`${JSON.stringify(plan, null, 2)}\n`);
+    }
+    return;
+  }
 
   // Pre-send sync — abort if new inbound messages arrived since last sync
   if (bareConvId && !isNewConversation) {
@@ -107,6 +198,38 @@ export async function sendCommand(
     replyFromName = original.fromName || null;
   }
 
+  const renderUnits: unknown[] = [];
+  if (attachmentBytes && attachmentKind) {
+    try {
+      output.info(`Uploading ${attachmentName} (${attachmentBytes.length} bytes)…`);
+      const slot = await requestUploadSlot(
+        apiClient,
+        attachmentKind,
+        attachmentBytes.length,
+        attachmentName
+      );
+      await uploadBytes(apiClient, slot, attachmentBytes, attachmentMime);
+      renderUnits.push(
+        attachmentKind === "audio"
+          ? buildAudioRenderContent(slot.assetUrn, options.durationMs ?? 0)
+          : buildFileRenderContent(
+              slot.assetUrn,
+              attachmentBytes.length,
+              attachmentMime,
+              attachmentName
+            )
+      );
+    } catch (err: unknown) {
+      const msg =
+        err instanceof LinkedInError ? err.message : String((err as Error).message ?? err);
+      output.error(
+        `Attachment upload failed: ${msg}\n  (The upload flow is modelled on the web client and may need adjusting — see --dry-run.)`,
+        1
+      );
+      return;
+    }
+  }
+
   // Send (rate limiting enforced by the API client)
   let result: {
     messageUrn: string;
@@ -118,11 +241,17 @@ export async function sendCommand(
   try {
     if (isNewConversation && contactProfileUrn) {
       output.info("Starting new conversation...");
-      result = await sendFirstMessage(apiClient, contactProfileUrn, myProfileUrn, text);
+      result = await sendFirstMessage(
+        apiClient,
+        contactProfileUrn,
+        myProfileUrn,
+        text,
+        renderUnits
+      );
     } else if (bareConvId) {
       const convRecord = await conversations.read(bareConvId);
       const convUrn = convRecord?.backendUrn ?? convRecord?.convUrn ?? bareConvId;
-      result = await sendMessage(apiClient, convUrn, myProfileUrn, text, replyTarget);
+      result = await sendMessage(apiClient, convUrn, myProfileUrn, text, replyTarget, renderUnits);
     } else {
       output.error("Could not determine conversation to send to.", 1);
       return;
@@ -147,17 +276,53 @@ export async function sendCommand(
     isFromMe: true,
     body: text,
     reactions: [],
-    attachments: replyTarget
-      ? [
-          {
-            type: "replied",
-            originalText: replyTarget.text,
-            authorName: replyFromName ?? undefined,
-          },
-        ]
-      : [],
+    attachments: [
+      ...(replyTarget
+        ? [
+            {
+              type: "replied" as const,
+              originalText: replyTarget.text,
+              authorName: replyFromName ?? undefined,
+            },
+          ]
+        : []),
+      ...(attachmentBytes && attachmentKind
+        ? [
+            attachmentKind === "audio"
+              ? {
+                  type: "voice" as const,
+                  name: attachmentName,
+                  mimeType: attachmentMime,
+                  size: attachmentBytes.length,
+                  durationMs: options.durationMs,
+                }
+              : {
+                  type: "file" as const,
+                  name: attachmentName,
+                  mimeType: attachmentMime,
+                  size: attachmentBytes.length,
+                },
+          ]
+        : []),
+    ],
     originToken: null,
   };
+
+  // Keep the sent bytes beside the thread (media/<messageId>-<index>) so front-ends render it
+  // from disk like downloaded media, without re-fetching our own upload.
+  if (attachmentPath && attachmentBytes) {
+    const index = storedMsg.attachments.length - 1;
+    const mediaDir = join(storePath, profileId, targetBareId, "media");
+    try {
+      await mkdir(mediaDir, { recursive: true });
+      await copyFile(
+        attachmentPath,
+        join(mediaDir, `${bareMessageId(result.messageUrn)}-${index}${extname(attachmentPath)}`)
+      );
+    } catch {
+      // Non-fatal: the message went out; `allman media` can fetch it later.
+    }
+  }
 
   if (await conversations.exists(targetBareId)) {
     await conversations.appendMessages(targetBareId, [storedMsg]);

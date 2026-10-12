@@ -315,7 +315,9 @@ export async function sendMessage(
   conversationUrn: string,
   senderProfileUrn: string,
   text: string,
-  replyTo?: ReplyTarget
+  replyTo?: ReplyTarget,
+  /** Extra render units (an uploaded voice note or file) sent alongside the text. */
+  attachments: unknown[] = []
 ): Promise<SendMessageResult> {
   const senderProfileId = senderProfileUrn.replace("urn:li:fsd_profile:", "");
   const originToken = randomUUID();
@@ -329,9 +331,12 @@ export async function sendMessage(
   const payload: SendMessagePayload = {
     message: {
       body: { attributes: [], text },
-      renderContentUnions: replyTo
-        ? [buildReplyRenderContent(replyTo, senderProfileUrn.replace("urn:li:fsd_profile:", ""))]
-        : [],
+      renderContentUnions: [
+        ...(replyTo
+          ? [buildReplyRenderContent(replyTo, senderProfileUrn.replace("urn:li:fsd_profile:", ""))]
+          : []),
+        ...attachments,
+      ],
       conversationUrn: fullConvUrn,
       originToken,
     },
@@ -365,7 +370,8 @@ export async function sendFirstMessage(
   client: LinkedInApiClient,
   contactProfileUrn: string,
   senderProfileUrn: string,
-  text: string
+  text: string,
+  attachments: unknown[] = []
 ): Promise<SendMessageResult> {
   const senderProfileId = senderProfileUrn.replace("urn:li:fsd_profile:", "");
   const originToken = randomUUID();
@@ -374,7 +380,7 @@ export async function sendFirstMessage(
   const payload: SendMessagePayload & { hostRecipientUrns: string[] } = {
     message: {
       body: { attributes: [], text },
-      renderContentUnions: [],
+      renderContentUnions: [...attachments],
       originToken,
     },
     mailboxUrn: `urn:li:fsd_profile:${senderProfileId}`,
