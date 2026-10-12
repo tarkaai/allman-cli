@@ -25,6 +25,8 @@ export interface SendOptions {
   json?: boolean;
   /** URN of a message in this thread to quote as the one being replied to. */
   replyTo?: string;
+  /** Resolve the target and print what would be sent, without any LinkedIn write. */
+  dryRun?: boolean;
 }
 
 export async function sendCommand(
@@ -61,6 +63,33 @@ export async function sendCommand(
     contactLastName,
     isNewConversation,
   } = resolved;
+
+  if (options.dryRun) {
+    const convRecord = bareConvId ? await conversations.read(bareConvId) : null;
+    const preview = {
+      dryRun: true,
+      convId: bareConvId ?? null,
+      conversationUrn: convRecord?.backendUrn ?? convRecord?.convUrn ?? null,
+      name: convRecord?.name ?? null,
+      isGroup: convRecord?.isGroup === true,
+      participants: convRecord?.participants?.map((p) => p.name) ?? null,
+      contactProfileUrn: contactProfileUrn ?? null,
+      contactSlug: contactSlug ?? null,
+      isNewConversation: isNewConversation === true,
+      replyTo: options.replyTo ?? null,
+      text,
+    };
+    if (options.json) {
+      output.printData(preview);
+    } else {
+      const to = convRecord
+        ? `${convRecord.name}${convRecord.isGroup ? " (group)" : ""} [${bareConvId}]`
+        : `new conversation with ${contactSlug ?? contactProfileUrn ?? target}`;
+      output.info(`[dry-run] Would send to ${to}:`);
+      process.stderr.write(`  ${text}\n`);
+    }
+    return;
+  }
 
   // Pre-send sync — abort if new inbound messages arrived since last sync
   if (bareConvId && !isNewConversation) {
@@ -271,7 +300,13 @@ async function resolveTarget(
     return { bareConvId: found?.convId, isNewConversation: false };
   }
 
-  // Case 2: Slug or URL — try symlink first
+  // Case 2: Bare conversation id. Must keep its case (slug resolution
+  // lowercases) and is the only address a group thread has (no slug alias).
+  if (target.startsWith("2-") && (await conversations.exists(target))) {
+    return { bareConvId: target, isNewConversation: false };
+  }
+
+  // Case 3: Slug or URL — try symlink first
   let contactSlug: string;
   try {
     contactSlug = slugFromUrl(target);

@@ -262,11 +262,13 @@ program
 program
   .command("send <to> <text>")
   .description(
-    "Send a message\n" + "  <to> can be: LinkedIn profile URL, profile slug, or conversation URN"
+    "Send a message\n" +
+      "  <to> can be: LinkedIn profile URL, profile slug, conversation URN, or a conversation id (2-…)"
   )
   .option("-a, --account <slug>", "account to send from")
   .option("-s, --store <path>", "store directory")
   .option("--reply-to <messageUrn>", "quote a message in this thread as the one you're replying to")
+  .option("--dry-run", "resolve the target and preview the message without sending")
   .option("--json", "output as JSON")
   .action(async (to: string, text: string, opts, cmd) => {
     const globalOpts = cmd.parent?.opts() ?? {};
@@ -275,6 +277,7 @@ program
       store: opts.store ?? globalOpts.store,
       json: opts.json ?? globalOpts.json,
       replyTo: opts.replyTo,
+      dryRun: opts.dryRun === true,
     });
   });
 
