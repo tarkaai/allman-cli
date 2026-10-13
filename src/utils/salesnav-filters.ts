@@ -25,10 +25,19 @@ export interface FilterValue {
   include: boolean;
 }
 
+/** Network distance from the viewer: F = 1st-degree (mutuals), S = 2nd-degree. */
+export type RelationshipDegree = "F" | "S";
+
 /** The facets `connections-of` can add to a CONNECTION_OF search. */
 export interface LeadSearchFilters {
   regions?: FilterValue[];
   seniorities?: FilterValue[];
+  /**
+   * Which of X's connections to return by their distance from the viewer.
+   * Omitted means `["S"]`, the historical default: X's connections who are
+   * 2nd-degree to the viewer, which leaves out the viewer's own mutuals.
+   */
+  relationship?: RelationshipDegree[];
 }
 
 const BAY = "90000084";
@@ -48,6 +57,40 @@ export const SENIORITY_ALIASES: Readonly<Record<string, string[]>> = {
   owner: ["320"],
   exec: EXEC,
 };
+
+export const RELATIONSHIP_ALIASES: Readonly<Record<string, RelationshipDegree[]>> = {
+  "1": ["F"],
+  "1st": ["F"],
+  first: ["F"],
+  f: ["F"],
+  mutual: ["F"],
+  "2": ["S"],
+  "2nd": ["S"],
+  second: ["S"],
+  s: ["S"],
+  all: ["F", "S"],
+  both: ["F", "S"],
+};
+
+/**
+ * Parse `--relationship`: a comma-separated list of degrees or aliases.
+ * Returns undefined for an empty flag so the search keeps its default.
+ */
+export function parseRelationship(raw: string | undefined): RelationshipDegree[] | undefined {
+  if (!raw) return undefined;
+  const out: RelationshipDegree[] = [];
+  for (const part of raw.split(",")) {
+    const token = part.trim();
+    if (!token) continue;
+    const ids = RELATIONSHIP_ALIASES[token.toLowerCase()];
+    if (!ids) {
+      const known = Object.keys(RELATIONSHIP_ALIASES).join(", ");
+      throw new Error(`Unknown relationship "${token}". Pass one of: ${known}.`);
+    }
+    for (const id of ids) if (!out.includes(id)) out.push(id);
+  }
+  return out.length > 0 ? out : undefined;
+}
 
 /**
  * Parse one comma-separated flag value into facet values. Each item is a
@@ -87,6 +130,7 @@ export interface FilterFlagInput {
   excludeRegion?: string;
   seniority?: string;
   excludeSeniority?: string;
+  relationship?: string;
 }
 
 /** Turn the four CLI flags into `LeadSearchFilters` (or null when none are set). */
@@ -99,17 +143,22 @@ export function parseFilterFlags(flags: FilterFlagInput): LeadSearchFilters | nu
     ...parseFilterIds(flags.seniority, SENIORITY_ALIASES, true, "seniority"),
     ...parseFilterIds(flags.excludeSeniority, SENIORITY_ALIASES, false, "seniority"),
   ];
-  if (regions.length === 0 && seniorities.length === 0) return null;
+  const relationship = parseRelationship(flags.relationship);
+  if (regions.length === 0 && seniorities.length === 0 && !relationship) return null;
   return {
     ...(regions.length > 0 ? { regions } : {}),
     ...(seniorities.length > 0 ? { seniorities } : {}),
+    ...(relationship ? { relationship } : {}),
   };
 }
 
 /** True when the filters carry at least one facet value. */
 export function hasFilters(filters: LeadSearchFilters | null | undefined): boolean {
   return Boolean(
-    filters && ((filters.regions?.length ?? 0) > 0 || (filters.seniorities?.length ?? 0) > 0)
+    filters &&
+      ((filters.regions?.length ?? 0) > 0 ||
+        (filters.seniorities?.length ?? 0) > 0 ||
+        (filters.relationship?.length ?? 0) > 0)
   );
 }
 
@@ -120,9 +169,11 @@ export function mergeFilters(
 ): LeadSearchFilters {
   const regions = [...(base?.regions ?? []), ...(extra.regions ?? [])];
   const seniorities = [...(base?.seniorities ?? []), ...(extra.seniorities ?? [])];
+  const relationship = extra.relationship ?? base?.relationship;
   return {
     ...(regions.length > 0 ? { regions } : {}),
     ...(seniorities.length > 0 ? { seniorities } : {}),
+    ...(relationship ? { relationship } : {}),
   };
 }
 

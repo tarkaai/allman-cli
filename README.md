@@ -505,7 +505,11 @@ allman connections-of jane-doe --json          # stream NDJSON (no store write)
 allman connections-of jane-doe --slice         # network > 1,000: split by region, then seniority, and merge
 allman connections-of jane-doe --region bay,seattle          # only Bay Area + Seattle
 allman connections-of jane-doe --exclude-region us --seniority exec   # non-US VPs, CXOs, owners
+allman connections-of jane-doe --relationship 1st            # only your mutuals with Jane
+allman connections-of jane-doe --relationship all --slice    # her whole network: mutuals + 2nd-degree
 ```
+
+**Mutuals are left out by default.** The search asks for Jane's connections who are 2nd-degree to you, so your own connections who also know Jane (the mutuals LinkedIn shows on her profile) are not returned. `--relationship 1st` returns only those mutuals; `--relationship all` returns both halves, which is Jane's whole visible network.
 
 **Getting past the 1,000-result cap.** A single Sales Navigator search returns at most 1,000 results, whatever `total` it reports. `--slice` probes the total with a one-result request and, when it exceeds the cap, partitions the search by region (Bay Area, Seattle, rest of US, non-US) and then by seniority (VP/CXO/Owner vs. the rest), pulls each slice, and merges them by SalesNav id. Slices overlap a little on LinkedIn's side and the unfiltered total undercounts, so the merged count can exceed the reported total. A slice still over the cap after both splits is truncated with a warning.
 
