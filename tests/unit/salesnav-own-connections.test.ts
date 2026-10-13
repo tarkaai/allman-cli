@@ -55,7 +55,7 @@ describe("parseOwnConnectionsResponse", () => {
         { $type: "com.linkedin.sales.company.Company", entityUrn: "urn:li:fs_salesCompany:1" },
         hit({
           sn: "ACwSYNTH01",
-          member: "3069246",
+          member: "100000002",
           first: "Alpha",
           last: "Tester",
           title: "Chief Strategy Officer",
@@ -72,8 +72,8 @@ describe("parseOwnConnectionsResponse", () => {
       {
         salesnavId: "ACwSYNTH01",
         entityUrn: "urn:li:fs_salesProfile:(ACwSYNTH01,NAME_SEARCH,abcd)",
-        memberUrn: "urn:li:member:3069246",
-        memberId: "3069246",
+        memberUrn: "urn:li:member:100000002",
+        memberId: "100000002",
         firstName: "Alpha",
         lastName: "Tester",
         fullName: "Alpha Tester",
@@ -136,7 +136,7 @@ describe("parseOwnConnectionsResponse", () => {
         {
           $type: HIT,
           entityUrn: "urn:li:fs_salesProfile:(ACwSYNTH02,NAME_SEARCH,abcd)",
-          objectUrn: "urn:li:member:3069247",
+          objectUrn: "urn:li:member:100000003",
           firstName: "Bravo",
           lastName: "Tester",
           fullName: "Bravo Tester",

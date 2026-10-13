@@ -16,6 +16,8 @@ import { encodeUrn } from "../../../utils/urn.js";
 import type { LinkedInApiClient } from "../client.js";
 
 const GRAPHQL_URL = "https://www.linkedin.com/voyager/api/voyagerMessagingGraphQL/graphql";
+const CONVERSATIONS_REST_URL =
+  "https://www.linkedin.com/voyager/api/voyagerMessagingDashMessengerConversations";
 
 const QUERY_ID_LIST = "messengerConversations.45338e053010d1c19147f92de6de3ae6";
 const QUERY_ID_BY_RECIPIENTS = "messengerConversations.44030325d8f59d8cebbb804f16d6b0a3";
@@ -203,10 +205,31 @@ export async function findConversationByRecipient(
   contactProfileUrn: string,
   myProfileUrn: string
 ): Promise<ConversationData | null> {
-  const contactId = contactProfileUrn.replace("urn:li:fsd_profile:", "");
-  const myId = myProfileUrn.replace("urn:li:fsd_profile:", "");
+  const matches = await findConversationsByRecipients(client, [contactProfileUrn], myProfileUrn);
+  return matches[0] ?? null;
+}
 
-  const variables = `(recipients:List(${encodeUrn(`urn:li:fsd_profile:${contactId}`)}),mailboxUrn:${encodeUrn(`urn:li:fsd_profile:${myId}`)},count:20)`;
+/**
+ * Find the conversations whose members are exactly the signed-in user plus
+ * `recipientProfileUrns` — the compose-box "by recipients" lookup. One
+ * recipient yields the 1:1 thread (at most one); several yield every group
+ * thread with precisely that membership, newest activity first, since LinkedIn
+ * happily keeps more than one group with the same members.
+ */
+export async function findConversationsByRecipients(
+  client: LinkedInApiClient,
+  recipientProfileUrns: string[],
+  myProfileUrn: string
+): Promise<ConversationData[]> {
+  const myId = myProfileUrn.replace("urn:li:fsd_profile:", "");
+  const wanted = new Set(
+    recipientProfileUrns.map((u) => `urn:li:fsd_profile:${u.replace("urn:li:fsd_profile:", "")}`)
+  );
+  wanted.delete(myProfileUrn);
+  if (wanted.size === 0) return [];
+
+  const recipientList = [...wanted].map((u) => encodeUrn(u)).join(",");
+  const variables = `(recipients:List(${recipientList}),mailboxUrn:${encodeUrn(`urn:li:fsd_profile:${myId}`)},count:20)`;
 
   const response = await client.request<NormalizedResponse>({
     method: "GET",
@@ -216,18 +239,18 @@ export async function findConversationByRecipient(
   const included = buildIncludedMap(response.included);
   const convUrns = response?.data?.data?.messengerConversationsByRecipients?.["*elements"] ?? [];
 
+  const matches: ConversationData[] = [];
   for (const urn of convUrns) {
     const c = parseConversation(urn, included);
     if (!c) continue;
-    if (c.participants.length === 2) {
-      const urns = c.participants.map((p) => p.entityUrn);
-      if (urns.includes(contactProfileUrn) && urns.includes(myProfileUrn)) {
-        return c;
-      }
-    }
+    if (c.participants.length !== wanted.size + 1) continue;
+    const urns = new Set(c.participants.map((p) => p.entityUrn));
+    if (!urns.has(myProfileUrn)) continue;
+    if ([...wanted].every((u) => urns.has(u))) matches.push(c);
   }
 
-  return null;
+  matches.sort((a, b) => (b.lastActivityAt ?? 0) - (a.lastActivityAt ?? 0));
+  return matches;
 }
 
 // ---------------------------------------------------------------------------
@@ -329,4 +352,28 @@ function parseParticipant(
     isVerified: raw.showVerificationBadge === true || badge === "VERIFIED_PROFILE",
     backendUrn: raw.backendUrn ?? null,
   };
+}
+
+/**
+ * Mark a conversation as read on LinkedIn.
+ *
+ * Verified live 2026-10-07: the web client's partial update works —
+ *   POST voyagerMessagingDashMessengerConversations/{msg_conversation urn}
+ *   { "patch": { "$set": { "read": true } } }
+ * — while `?action=markAllMessagesAsSeen` returns HTTP 400 for both the
+ * msg_conversation and messagingThread URN forms.
+ *
+ * Takes the `msg_conversation` URN (RECORD.json `convUrn`), one call per thread.
+ */
+export async function markConversationsRead(
+  client: LinkedInApiClient,
+  conversationUrns: string[]
+): Promise<void> {
+  for (const urn of conversationUrns) {
+    await client.request<unknown>({
+      method: "POST",
+      url: `${CONVERSATIONS_REST_URL}/${encodeURIComponent(urn)}`,
+      data: { patch: { $set: { read: true } } },
+    });
+  }
 }

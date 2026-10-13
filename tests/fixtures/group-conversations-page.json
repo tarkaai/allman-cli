@@ -1,0 +1,117 @@
+{
+  "_comment": "Recorded-style messengerConversationsByCategoryQuery page: one 1:1 thread (me + Bob) followed by one untitled group thread (me + Alice + Bob). Shapes mirror live responses; every id and name is synthetic.",
+  "data": {
+    "data": {
+      "messengerConversationsByCategoryQuery": {
+        "metadata": { "nextCursor": null },
+        "*elements": [
+          "urn:li:msg_conversation:(urn:li:fsd_profile:ACoSYNTHME000000000000000000000000001,2-T25lVG9PbmVTeW50aGV0aWM=)",
+          "urn:li:msg_conversation:(urn:li:fsd_profile:ACoSYNTHME000000000000000000000000001,2-R3JvdXBTeW50aGV0aWNUaHJlYWQ=)"
+        ]
+      }
+    }
+  },
+  "included": [
+    {
+      "$type": "com.linkedin.messenger.Conversation",
+      "entityUrn": "urn:li:msg_conversation:(urn:li:fsd_profile:ACoSYNTHME000000000000000000000000001,2-T25lVG9PbmVTeW50aGV0aWM=)",
+      "backendUrn": "urn:li:messagingThread:2-T25lVG9PbmVTeW50aGV0aWM=",
+      "title": null,
+      "groupChat": false,
+      "unreadCount": 0,
+      "read": true,
+      "lastActivityAt": 1786981522193,
+      "createdAt": 1780000000000,
+      "lastReadAt": 1786981600000,
+      "notificationStatus": "ACTIVE",
+      "categories": ["INBOX", "PRIMARY_INBOX"],
+      "conversationUrl": "https://www.linkedin.com/messaging/thread/2-T25lVG9PbmVTeW50aGV0aWM=/",
+      "disabledFeatures": [],
+      "*conversationParticipants": [
+        "urn:li:msg_messagingParticipant:urn:li:fsd_profile:ACoSYNTHME000000000000000000000000001",
+        "urn:li:msg_messagingParticipant:urn:li:fsd_profile:ACoSYNTHBOB000000000000000000000001"
+      ]
+    },
+    {
+      "$type": "com.linkedin.messenger.Conversation",
+      "entityUrn": "urn:li:msg_conversation:(urn:li:fsd_profile:ACoSYNTHME000000000000000000000000001,2-R3JvdXBTeW50aGV0aWNUaHJlYWQ=)",
+      "backendUrn": "urn:li:messagingThread:2-R3JvdXBTeW50aGV0aWNUaHJlYWQ=",
+      "title": null,
+      "groupChat": true,
+      "unreadCount": 1,
+      "read": false,
+      "lastActivityAt": 1786981000000,
+      "createdAt": 1786980000000,
+      "lastReadAt": 1786980500000,
+      "notificationStatus": "ACTIVE",
+      "categories": ["INBOX", "PRIMARY_INBOX"],
+      "conversationUrl": "https://www.linkedin.com/messaging/thread/2-R3JvdXBTeW50aGV0aWNUaHJlYWQ=/",
+      "disabledFeatures": [{ "disabledFeature": "REMOVE_PARTICIPANT", "reasonText": null }],
+      "*conversationParticipants": [
+        "urn:li:msg_messagingParticipant:urn:li:fsd_profile:ACoSYNTHME000000000000000000000000001",
+        "urn:li:msg_messagingParticipant:urn:li:fsd_profile:ACoSYNTHALICE0000000000000000000001",
+        "urn:li:msg_messagingParticipant:urn:li:fsd_profile:ACoSYNTHBOB000000000000000000000001"
+      ]
+    },
+    {
+      "$type": "com.linkedin.messenger.MessagingParticipant",
+      "entityUrn": "urn:li:msg_messagingParticipant:urn:li:fsd_profile:ACoSYNTHME000000000000000000000000001",
+      "backendUrn": "urn:li:msg_messagingParticipant:urn:li:fsd_profile:ACoSYNTHME000000000000000000000000001",
+      "hostIdentityUrn": "urn:li:fsd_profile:ACoSYNTHME000000000000000000000000001",
+      "memberBadgeType": null,
+      "participantType": {
+        "member": {
+          "firstName": { "text": "Test" },
+          "lastName": { "text": "User" },
+          "headline": { "text": "Owner of this inbox" },
+          "profileUrl": "https://www.linkedin.com/in/test-user",
+          "distance": "SELF",
+          "pronoun": null
+        }
+      }
+    },
+    {
+      "$type": "com.linkedin.messenger.MessagingParticipant",
+      "entityUrn": "urn:li:msg_messagingParticipant:urn:li:fsd_profile:ACoSYNTHALICE0000000000000000000001",
+      "backendUrn": "urn:li:msg_messagingParticipant:urn:li:fsd_profile:ACoSYNTHALICE0000000000000000000001",
+      "hostIdentityUrn": "urn:li:fsd_profile:ACoSYNTHALICE0000000000000000000001",
+      "memberBadgeType": "VERIFIED_PROFILE",
+      "showVerificationBadge": true,
+      "participantType": {
+        "member": {
+          "firstName": { "text": "Alice" },
+          "lastName": { "text": "Example" },
+          "headline": { "text": "Alice's headline" },
+          "profileUrl": "https://www.linkedin.com/in/alice-example",
+          "distance": "DISTANCE_1",
+          "pronoun": { "standardizedPronoun": "SHE_HER", "customPronoun": null },
+          "profilePicture": {
+            "rootUrl": "https://media.licdn.com/dms/image/alice/",
+            "artifacts": [
+              { "width": 200, "height": 200, "fileIdentifyingUrlPathSegment": "200.jpg" },
+              { "width": 100, "height": 100, "fileIdentifyingUrlPathSegment": "100.jpg" }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "$type": "com.linkedin.messenger.MessagingParticipant",
+      "entityUrn": "urn:li:msg_messagingParticipant:urn:li:fsd_profile:ACoSYNTHBOB000000000000000000000001",
+      "backendUrn": "urn:li:msg_messagingParticipant:urn:li:fsd_profile:ACoSYNTHBOB000000000000000000000001",
+      "hostIdentityUrn": "urn:li:fsd_profile:ACoSYNTHBOB000000000000000000000001",
+      "memberBadgeType": "PREMIUM_PROFILE",
+      "showPremiumInBug": true,
+      "participantType": {
+        "member": {
+          "firstName": { "text": "Bob" },
+          "lastName": { "text": "Example" },
+          "headline": { "text": "Bob's headline" },
+          "profileUrl": "https://www.linkedin.com/in/bob-example",
+          "distance": "DISTANCE_2",
+          "pronoun": null
+        }
+      }
+    }
+  ]
+}

@@ -232,6 +232,40 @@ export async function fetchMessages(
 // Send message
 // ---------------------------------------------------------------------------
 
+/** A message being quoted as the one you're replying to (LinkedIn "Reply"). */
+export interface ReplyTarget {
+  /** Any known URN form of the original message. */
+  messageUrn: string;
+  /** urn:li:fsd_profile:… of the original sender. */
+  senderUrn: string;
+  /** Unix ms the original was sent. */
+  sentAt: number;
+  /** Original body text (what LinkedIn renders in the quote). */
+  text: string;
+}
+
+/**
+ * renderContentUnions entry for a reply — the exact shape the web client posts
+ * (captured live 2026-10-11). Note the request keys are `originalSenderUrn` /
+ * `originalMessageUrn`; the normalized *response* stores them as
+ * `*originalSender` / `*originalMessage`. Sending the response-style keys
+ * returns HTTP 500.
+ */
+export function buildReplyRenderContent(reply: ReplyTarget, mailboxProfileId: string): unknown {
+  return {
+    repliedMessageContent: {
+      originalSenderUrn: `urn:li:msg_messagingParticipant:${reply.senderUrn}`,
+      originalSendAt: reply.sentAt,
+      originalMessageUrn: buildReactionMessageUrn(reply.messageUrn, mailboxProfileId),
+      messageBody: {
+        _type: "com.linkedin.pemberly.text.AttributedText",
+        attributes: [],
+        text: reply.text,
+      },
+    },
+  };
+}
+
 interface SendMessagePayload {
   message: {
     body: { attributes: unknown[]; text: string };
@@ -280,7 +314,8 @@ export async function sendMessage(
   client: LinkedInApiClient,
   conversationUrn: string,
   senderProfileUrn: string,
-  text: string
+  text: string,
+  replyTo?: ReplyTarget
 ): Promise<SendMessageResult> {
   const senderProfileId = senderProfileUrn.replace("urn:li:fsd_profile:", "");
   const originToken = randomUUID();
@@ -294,7 +329,9 @@ export async function sendMessage(
   const payload: SendMessagePayload = {
     message: {
       body: { attributes: [], text },
-      renderContentUnions: [],
+      renderContentUnions: replyTo
+        ? [buildReplyRenderContent(replyTo, senderProfileUrn.replace("urn:li:fsd_profile:", ""))]
+        : [],
       conversationUrn: fullConvUrn,
       originToken,
     },
@@ -320,16 +357,29 @@ export async function sendMessage(
 /**
  * Send a message to start a new conversation (no existing thread).
  *
- * @param contactProfileUrn  Recipient's profile URN
- * @param senderProfileUrn   Authenticated user's profile URN
- * @param text               Message body text
+ * One recipient starts a 1:1 thread; two or more start a **group** thread.
+ * Both are the same `createMessage` call the web client makes: the recipients
+ * go in `hostRecipientUrns` and the `message` object carries no
+ * `conversationUrn` at all (LinkedIn returns 400 if it is present but
+ * malformed). The created message in the response names the new thread in
+ * `backendConversationUrn` / `conversationUrn`.
+ *
+ * @param recipientProfileUrns  Recipient profile URN(s), `urn:li:fsd_profile:…`
+ * @param senderProfileUrn      Authenticated user's profile URN
+ * @param text                  Message body text
  */
 export async function sendFirstMessage(
   client: LinkedInApiClient,
-  contactProfileUrn: string,
+  recipientProfileUrns: string | string[],
   senderProfileUrn: string,
   text: string
 ): Promise<SendMessageResult> {
+  const recipients = Array.isArray(recipientProfileUrns)
+    ? recipientProfileUrns
+    : [recipientProfileUrns];
+  if (recipients.length === 0) {
+    throw new Error("sendFirstMessage needs at least one recipient");
+  }
   const senderProfileId = senderProfileUrn.replace("urn:li:fsd_profile:", "");
   const originToken = randomUUID();
   const trackingId = byteArrayToString(uuidToByteArray(originToken));
@@ -343,7 +393,7 @@ export async function sendFirstMessage(
     mailboxUrn: `urn:li:fsd_profile:${senderProfileId}`,
     trackingId,
     dedupeByClientGeneratedToken: false,
-    hostRecipientUrns: [contactProfileUrn],
+    hostRecipientUrns: recipients,
   };
 
   const response = await client.request<SendMessageResponse>({
@@ -662,9 +712,12 @@ function parseAttachmentByKind(
 
   if (lk.includes("vectorimage") || lk.includes("photo") || lk === "image") {
     const path = str(inner.fileIdentifyingUrlPathSegment);
+    // Messaging images ship a complete, tokenised URL in `rootUrl` with an
+    // empty artifacts list — use it as-is when there is no path segment.
+    const rootUrl = str(inner.rootUrl);
     return {
       type: "image",
-      url: path ? buildVectorImageUrl(inner, path) : str(inner.url),
+      url: path ? buildVectorImageUrl(inner, path) : (str(inner.url) ?? rootUrl),
       width: num(inner.width),
       height: num(inner.height),
       raw,
@@ -740,11 +793,22 @@ function parseAttachmentByKind(
   }
 
   if (lk.includes("repliedmessage")) {
-    const sender = (inner.originalSender as Record<string, unknown>) ?? {};
+    // The quoted body is an AttributedText object; the sender is a participant
+    // URN ref (`*originalSender`) that may be resolvable from included[].
+    const body = inner.messageBody;
+    const bodyText =
+      str(body) ??
+      str((body as Record<string, unknown> | undefined)?.text) ??
+      str(inner.forwardedBody);
+    const senderRef = str(inner["*originalSender"]) ?? str(inner.originalSender);
+    const senderDoc = senderRef ? included.get(senderRef) : undefined;
+    const senderObj =
+      senderDoc ?? (inner.originalSender as Record<string, unknown> | undefined) ?? {};
+    const name = buildSenderName(senderObj);
     return {
       type: "replied",
-      originalText: str(inner.messageBody) ?? str(inner.forwardedBody),
-      authorName: buildSenderName(sender),
+      originalText: bodyText,
+      authorName: name && name.trim().length > 0 ? name : undefined,
       raw,
     };
   }

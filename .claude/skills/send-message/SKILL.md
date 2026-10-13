@@ -30,3 +30,4 @@ Send a message to a LinkedIn contact. Requires explicit user approval.
 - NEVER send a message without explicit user approval for that specific send.
 - The `send` command will also check for unread inbound messages and abort if there are newer inbound messages than your last outbound — this prevents accidentally ignoring someone's reply.
 - Use the contact's slug (e.g., `alice-smith`) or profileId as the `<to>` argument.
+- Several people (`send alice-smith,bob-jones "…"` or repeated `--to`) create a **new group thread** every time. To continue an existing group, pass its conversation id (`2-…`) from `conversations --json`. Preview with `--dry-run` first — it lists the resolved people and sends nothing.
