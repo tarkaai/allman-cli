@@ -281,9 +281,13 @@ function facetClause(type: string, values: FilterValue[]): string {
  * (see `utils/salesnav-filters.ts`). Without filters the output is unchanged.
  */
 export function buildConnectionOfQuery(salesnavId: string, filters?: LeadSearchFilters): string {
+  const degrees = filters?.relationship?.length ? filters.relationship : ["S"];
   const clauses = [
     `(type:CONNECTION_OF,values:List((id:${salesnavId},selectionType:INCLUDED)))`,
-    "(type:RELATIONSHIP,values:List((id:S,selectionType:INCLUDED)))",
+    facetClause(
+      "RELATIONSHIP",
+      degrees.map((id) => ({ id, include: true }))
+    ),
   ];
   if (filters?.regions?.length) clauses.push(facetClause("REGION", filters.regions));
   if (filters?.seniorities?.length) {

@@ -157,7 +157,9 @@ export async function connectionsOfCommand(
   // people search has no REGION/SENIORITY facets, so refuse rather than
   // silently return an unfiltered list.
   const salesnavOnly = hasFilters(opts.filters) || opts.slice === true;
-  const salesnavOnlyWhy = hasFilters(opts.filters) ? "--region/--seniority filters" : "--slice";
+  const salesnavOnlyWhy = hasFilters(opts.filters)
+    ? "--region/--seniority/--relationship filters"
+    : "--slice";
   const refuseFlagship = (why: string) =>
     output.error(
       `${salesnavOnlyWhy} need the Sales Navigator backend (${why}). ` +

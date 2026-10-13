@@ -12,6 +12,7 @@ import {
   mergeFilters,
   parseFilterFlags,
   parseFilterIds,
+  parseRelationship,
   REGION_ALIASES,
   SENIORITY_ALIASES,
   SLICE_PLANS,
@@ -158,5 +159,40 @@ describe("buildConnectionOfQuery with facets", () => {
     expect(
       buildConnectionOfQuery(SALESNAV_ID, { regions: [{ id: "90000084", include: true }] })
     ).not.toContain("text:");
+  });
+});
+
+describe("relationship (--relationship)", () => {
+  it("parses degrees and aliases, dedupes, and keeps the default for an empty flag", () => {
+    expect(parseRelationship(undefined)).toBeUndefined();
+    expect(parseRelationship(" , ")).toBeUndefined();
+    expect(parseRelationship("1st")).toEqual(["F"]);
+    expect(parseRelationship("mutual,2")).toEqual(["F", "S"]);
+    expect(parseRelationship("all,first")).toEqual(["F", "S"]);
+    expect(() => parseRelationship("3rd")).toThrow(/Unknown relationship "3rd"/);
+  });
+  it("counts as a filter on its own and survives a slice merge", () => {
+    const f = parseFilterFlags({ relationship: "all" });
+    expect(f).toEqual({ relationship: ["F", "S"] });
+    expect(hasFilters(f)).toBe(true);
+    const bay = SLICE_PLANS[0]?.[0];
+    if (!bay) throw new Error("slice plan missing");
+    expect(mergeFilters(f, bay.filters)).toEqual({
+      regions: [{ id: "90000084", include: true }],
+      relationship: ["F", "S"],
+    });
+  });
+  it("emits one RELATIONSHIP value per degree, S alone by default", () => {
+    expect(buildConnectionOfQuery(SALESNAV_ID, { relationship: ["F"] })).toBe(
+      "(filters:List(" +
+        `(type:CONNECTION_OF,values:List((id:${SALESNAV_ID},selectionType:INCLUDED))),` +
+        "(type:RELATIONSHIP,values:List((id:F,selectionType:INCLUDED)))))"
+    );
+    expect(buildConnectionOfQuery(SALESNAV_ID, { relationship: ["F", "S"] })).toBe(
+      "(filters:List(" +
+        `(type:CONNECTION_OF,values:List((id:${SALESNAV_ID},selectionType:INCLUDED))),` +
+        "(type:RELATIONSHIP,values:List((id:F,selectionType:INCLUDED),(id:S,selectionType:INCLUDED)))))"
+    );
+    expect(buildConnectionOfQuery(SALESNAV_ID, { relationship: [] })).toBe(`${BASE}))`);
   });
 });

@@ -131,7 +131,7 @@ allman conversations [--account <slug>] [--json] [--limit N]
 allman messages <contact-slug|url|urn> [--account <slug>] [--json] [--limit N]
 allman send <contact-slug|url|urn> <text> [--account <slug>] [--json]
 allman connections [--salesnav|--flagship] [--limit N] [--csv <path>] [--no-save] [--include-headline] [--enrich [--deep]] [--json]
-allman connections-of <slug> [--flagship|--salesnav] [--region <ids>] [--exclude-region <ids>] [--seniority <ids>] [--exclude-seniority <ids>] [--slice] [--limit N] [--csv <path>] [--no-save] [--json]
+allman connections-of <slug> [--flagship|--salesnav] [--region <ids>] [--exclude-region <ids>] [--seniority <ids>] [--exclude-seniority <ids>] [--relationship 1st|2nd|all] [--slice] [--limit N] [--csv <path>] [--no-save] [--json]
 allman enrich [target] [--deep] [--force] [--limit N] [--json]
 allman connect <slug|url|urn> [--note <text>] [--dry-run] [--json]
 allman store path|commit|status
