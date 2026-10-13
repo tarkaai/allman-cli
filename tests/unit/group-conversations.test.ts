@@ -392,8 +392,11 @@ describe("group conversation records", () => {
     ).toBe("Alice Example");
     expect(participantName(record, "urn:li:fsd_profile:NOBODY")).toBeNull();
     // 1:1 records keep the old behaviour: the thread name is the sender.
-    expect(participantName({ ...record, isGroup: false, name: "Only Person" }, "x")).toBe(
-      "Only Person"
-    );
+    expect(
+      participantName(
+        { ...record, isGroup: false, name: "Only Person", profileUrn: record.profileUrn ?? "" },
+        "x"
+      )
+    ).toBe("Only Person");
   });
 });
