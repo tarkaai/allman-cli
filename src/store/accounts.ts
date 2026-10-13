@@ -147,7 +147,8 @@ export class AccountStore {
   async writeCookies(profileId: string, cookies: AccountCookies): Promise<void> {
     await ensureDir(this.root, profileId);
     const target = join(this.dir(profileId), COOKIES_FILE);
-    const tmp = `${target}.${process.pid}.tmp`;
+    // pid + random suffix: two in-flight responses on one client must not share a temp path.
+    const tmp = `${target}.${process.pid}.${Math.random().toString(36).slice(2, 8)}.tmp`;
     await writeFile(tmp, `${JSON.stringify(cookies, null, 2)}\n`, "utf8");
     await rename(tmp, target);
   }

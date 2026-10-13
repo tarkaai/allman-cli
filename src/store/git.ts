@@ -85,27 +85,40 @@ export class StoreGit {
   }
 }
 
-/** Create a .gitignore in the store root if one doesn't exist. */
+/** Files that must never be committed to the store repo. */
+const STORE_GITIGNORE: readonly string[] = [
+  "# allman-cli store gitignore",
+  "*.lock",
+  "COOKIES.json",
+  "COOKIES.json.*.tmp",
+  "INBOX.jsonl",
+  "inbox-state.json",
+  "rate-state.json",
+  "query-cache.json",
+  "listen.log",
+  "",
+];
+
+/**
+ * Create a .gitignore in the store root, or append any required entry an
+ * existing one lacks (older stores predate e.g. the cookie temp file).
+ */
 export async function ensureGitignore(storePath: string): Promise<void> {
-  const { writeFile, access } = await import("node:fs/promises");
+  const { writeFile, readFile, appendFile } = await import("node:fs/promises");
   const gitignorePath = join(storePath, ".gitignore");
+  let existing: string | null = null;
   try {
-    await access(gitignorePath);
+    existing = await readFile(gitignorePath, "utf8");
   } catch {
-    await writeFile(
-      gitignorePath,
-      [
-        "# allman-cli store gitignore",
-        "*.lock",
-        "COOKIES.json",
-        "INBOX.jsonl",
-        "inbox-state.json",
-        "rate-state.json",
-        "query-cache.json",
-        "listen.log",
-        "",
-      ].join("\n"),
-      "utf8"
-    );
+    existing = null;
   }
+  if (existing === null) {
+    await writeFile(gitignorePath, `${STORE_GITIGNORE.join("\n")}\n`, "utf8");
+    return;
+  }
+  const have = new Set(existing.split("\n").map((l) => l.trim()));
+  const missing = STORE_GITIGNORE.filter((l) => l !== "" && !l.startsWith("#") && !have.has(l));
+  if (missing.length === 0) return;
+  const sep = existing.endsWith("\n") || existing === "" ? "" : "\n";
+  await appendFile(gitignorePath, `${sep}${missing.join("\n")}\n`, "utf8");
 }
