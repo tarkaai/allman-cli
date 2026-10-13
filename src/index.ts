@@ -261,10 +261,11 @@ program
 // ---------------------------------------------------------------------------
 
 program
-  .command("send <to> <text>")
+  .command("send <to> [text]")
   .description(
     "Send a message\n" +
       "  <to> can be: LinkedIn profile URL, profile slug, profile URN, conversation URN, or a conversation id (2-…)\n" +
+      "  [text] may be omitted when sending --audio or --file\n" +
       "  Several people (comma-separated <to> and/or repeated --to) start a NEW group thread:\n" +
       '    allman send alice-example,bob-example "hi both"\n' +
       '    allman send alice-example --to bob-example --to urn:li:fsd_profile:… "hi all"'
@@ -277,15 +278,27 @@ program
     (value: string, previous: string[] = []) => [...previous, value]
   )
   .option("--reply-to <messageUrn>", "quote a message in this thread as the one you're replying to")
-  .option("--dry-run", "resolve the target(s) and preview the message without sending")
+  .option(
+    "--audio <path>",
+    "send an audio file (m4a/aac/mp3/wav/ogg/caf) as a voice note; requires --duration-ms"
+  )
+  .option("--file <path>", "send a file as an attachment (20 MB max)")
+  .option("--duration-ms <n>", "voice note length in milliseconds (required with --audio)")
+  .option(
+    "--dry-run",
+    "resolve the target(s) and preview the message (and any upload) without sending"
+  )
   .option("--json", "output as JSON")
-  .action(async (to: string, text: string, opts, cmd) => {
+  .action(async (to: string, text: string | undefined, opts, cmd) => {
     const globalOpts = cmd.parent?.opts() ?? {};
-    await sendCommand(to, text, {
+    await sendCommand(to, text ?? "", {
       account: opts.account ?? globalOpts.account,
       store: opts.store ?? globalOpts.store,
       json: opts.json ?? globalOpts.json,
       replyTo: opts.replyTo,
+      audio: opts.audio,
+      file: opts.file,
+      durationMs: opts.durationMs,
       dryRun: opts.dryRun === true,
       to: opts.to ?? [],
     });

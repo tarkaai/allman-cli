@@ -323,7 +323,12 @@ describe("send — several recipients create a group thread", () => {
     });
 
     expect(mockSendFirstMessage).toHaveBeenCalledTimes(1);
-    expect(mockSendFirstMessage.mock.calls[0]?.slice(1)).toEqual([[AVERY, BLAKE], ME, "hi both"]);
+    expect(mockSendFirstMessage.mock.calls[0]?.slice(1)).toEqual([
+      [AVERY, BLAKE],
+      ME,
+      "hi both",
+      [], // no attachment → no render units
+    ]);
     expect(mockSendMessage).not.toHaveBeenCalled();
     expect(mockFetchMessages).not.toHaveBeenCalled(); // no pre-send sync for a new thread
     expect(mockFindConversationsByRecipients.mock.calls[0]?.slice(1)).toEqual([[AVERY, BLAKE], ME]);

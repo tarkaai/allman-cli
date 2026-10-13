@@ -79,7 +79,14 @@ Slug = the LinkedIn `publicIdentifier` (e.g. `linkedin.com/in/sarah-chen` → `s
   (cached even when null), then a local 1:1 record for that person, then the API
   through the shared backoff, capped at `MAX_GROUP_SLUG_LOOKUPS` (10) per group.
 - `send --dry-run <target>` resolves the target and prints the preview without any
-  LinkedIn call beyond slug→URN lookup for unknown slugs.
+  LinkedIn call beyond slug→URN lookup for unknown slugs. With `--audio`/`--file` the
+  same preview carries the upload plan (`attachment`, `upload.step1/step2/renderUnit`).
+- **Attachments ride on both paths.** `sendCommand` reads and validates `--audio`/`--file`
+  (20 MB cap, audio mime, required positive-integer `--duration-ms`) *before* dispatching to
+  `sendToOne`/`sendToGroup`; each path uploads right before its `createMessage`, passes the
+  render unit (`sendFirstMessage(..., renderUnits)` for groups), stores the `voice`/`file`
+  attachment on the message, and caches the bytes as `{conv}/media/<messageId>-<index>.<ext>`
+  only once both the bare conv id and the message id are known.
 - **Creating a group**: `send` with several people — comma-separated `<to>` and/or
   repeated `--to` (`send alice-example,bob-example "hi"`, `send alice-example --to
   urn:li:fsd_profile:… "hi"`) — starts a **new** group thread. Each target resolves to
@@ -192,7 +199,7 @@ allman sync [--account <slug>] [--since 3mo|6mo|1y|YYYY-MM-DD]
 allman listen [--account <slug>]
 allman conversations [--account <slug>] [--json] [--limit N]
 allman messages <contact-slug|url|urn|convId> [--account <slug>] [--json] [--limit N]
-allman send <contact-slug|url|urn|convId> <text> [--reply-to <messageUrn>] [--dry-run] [--account <slug>] [--json]
+allman send <contact-slug|url|urn|convId> [text] [--to <target>…] [--reply-to <messageUrn>] [--audio <file> --duration-ms <n> | --file <file>] [--dry-run] [--account <slug>] [--json]
 allman send <a,b,…> <text> [--to <target>]... [--dry-run] [--json]   # several people → NEW group thread
 allman read <contact-slug|url|urn|convId> [--json]
 allman whoami [--refresh] [--json]      # own profile → AUTH.json (name/headline/slug/photo)

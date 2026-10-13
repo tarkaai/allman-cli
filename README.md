@@ -259,7 +259,7 @@ The `<conversation>` argument accepts:
 
 ---
 
-### `allman send <to> <text>`
+### `allman send <to> [text]`
 
 Send a message to a LinkedIn contact.
 
@@ -304,6 +304,21 @@ allman send jamie-rivera "Thursday works" --reply-to urn:li:messagingMessage:2-�
 
 The message must already be synced locally; any URN form from `allman messages --json` works.
 Verified live: the quoted original renders on linkedin.com exactly as a reply sent from the web client.
+
+#### Voice notes and file attachments
+
+```bash
+allman send sarah-chen --audio note.m4a --duration-ms 12300        # voice note (text optional)
+allman send sarah-chen "see attached" --file deck.pdf              # file attachment
+allman send sarah-chen,jamie-rivera --file deck.pdf "for you both" # works for new groups too
+allman send sarah-chen --audio note.m4a --duration-ms 12300 --dry-run --json   # plan only, sends nothing
+```
+
+- `--audio <file>` sends a voice note; the file must be audio (`m4a`, `aac`, `mp3`, `wav`, `ogg`, `caf`) and **`--duration-ms` is required** — the length in milliseconds, a positive integer, as your recorder reported it. The container is not parsed.
+- `--file <file>` sends any file as an attachment. One attachment per send; `[text]` may be omitted when either flag is given.
+- Attachments are capped at **20 MB**; the file is read and checked (size, type, duration) before any request is made.
+- The upload follows the web client's attachment flow: upload-metadata request → PUT the bytes → `createMessage` with an `audio` / `file` render unit. The sent bytes are cached beside the thread as `{conv}/media/<messageId>-<index>.<ext>` (the same name `allman media` writes) so front-ends render them from disk.
+- **The upload endpoint and render-unit shapes are modelled on the web client and have not been verified live yet.** `--dry-run` prints exactly what would go out, and `ALLMAN_AUDIO_UPLOAD_TYPE` / `ALLMAN_FILE_UPLOAD_TYPE` override the upload type if LinkedIn's enum differs.
 
 ### `allman search <query>`
 

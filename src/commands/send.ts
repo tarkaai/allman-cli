@@ -7,8 +7,16 @@
  * Several targets (comma-separated and/or repeated `--to`) → a **new group
  * thread** with all of them, created by the same `createMessage` call the web
  * client makes: every recipient in `hostRecipientUrns`, no `conversationUrn`.
+ *
+ * `--audio <file>` (voice note) / `--file <file>` (attachment) ride on either
+ * path: the file is read and validated here, before dispatch and before any
+ * network call; the upload happens right before the `createMessage`, and the
+ * sent bytes are cached under `{conv}/media/` once the thread and message ids
+ * are known.
  */
 
+import { copyFile, mkdir, readFile, stat } from "node:fs/promises";
+import { basename, extname, join } from "node:path";
 import { type LinkedInApiClient, LinkedInError } from "../linkedin/api/client.js";
 import {
   type ConversationData,
@@ -16,6 +24,16 @@ import {
   findConversationByRecipient,
   findConversationsByRecipients,
 } from "../linkedin/api/endpoints/conversations.js";
+import { extensionFor } from "../linkedin/api/endpoints/media.js";
+import {
+  buildAudioRenderContent,
+  buildFileRenderContent,
+  buildUploadMetadataPayload,
+  type MediaUploadKind,
+  mimeTypeFor,
+  requestUploadSlot,
+  uploadBytes,
+} from "../linkedin/api/endpoints/media-upload.js";
 import {
   fetchMessages,
   type ReplyTarget,
@@ -27,7 +45,7 @@ import { loadSession } from "../linkedin/api/session.js";
 import { buildConversationRecord, profileIdFromUrn } from "../store/conversation-record.js";
 import type { ConversationStore } from "../store/index.js";
 import { resolveStorePath, Store } from "../store/index.js";
-import type { ConversationRecord, StoredMessage } from "../store/types.js";
+import type { ConversationRecord, MessageAttachment, StoredMessage } from "../store/types.js";
 import * as output from "../utils/output.js";
 import { slugFromUrl } from "../utils/slug.js";
 import { extractBareConvId, isUrn, profileUrnId } from "../utils/urn.js";
@@ -38,16 +56,239 @@ export interface SendOptions {
   json?: boolean;
   /** URN of a message in this thread to quote as the one being replied to. */
   replyTo?: string;
-  /** Resolve the target and print what would be sent, without any LinkedIn write. */
+  /**
+   * Resolve the target and print what would be sent (including the upload
+   * plan for an attachment), without any LinkedIn write.
+   */
   dryRun?: boolean;
   /**
    * Additional recipients (repeatable `--to`). Together with a comma-separated
    * `<to>` these make the send create a group thread.
    */
   to?: string[];
+  /** Path to an audio file sent as a voice note. Needs `durationMs`. */
+  audio?: string;
+  /** Path to any file sent as an attachment. */
+  file?: string;
+  /**
+   * Length of the voice note in milliseconds — shown on the bubble and sent in
+   * the render unit. Required with `audio`; a positive integer (the CLI passes
+   * the raw string). Containers are not parsed.
+   */
+  durationMs?: number | string;
 }
 
 type Session = Awaited<ReturnType<typeof loadSession>>;
+
+/** Largest attachment `send` will read and upload. */
+export const MAX_ATTACHMENT_BYTES = 20 * 1024 * 1024;
+
+/** An attachment read from disk and validated, ready to upload. */
+export interface PreparedAttachment {
+  kind: MediaUploadKind;
+  /** Path as given — the source of the cached copy. */
+  path: string;
+  name: string;
+  mimeType: string;
+  bytes: Buffer;
+  /** Voice note length; null for a file. */
+  durationMs: number | null;
+  /** Extension (no dot) for the cached copy — from the name, else the mime type. */
+  ext: string;
+}
+
+/**
+ * Read and validate `--audio` / `--file` before anything else happens: at most
+ * one of them, a regular file at most `MAX_ATTACHMENT_BYTES`, an audio mime
+ * type for `--audio`, and a positive-integer `--duration-ms` for a voice note.
+ * Returns null when no attachment was asked for.
+ */
+export async function prepareAttachment(
+  options: Pick<SendOptions, "audio" | "file" | "durationMs">
+): Promise<PreparedAttachment | null | { error: string }> {
+  if (options.audio && options.file) {
+    return { error: "Pass either --audio or --file, not both." };
+  }
+  const path = options.audio ?? options.file;
+  if (!path) return null;
+  const kind: MediaUploadKind = options.audio ? "audio" : "file";
+
+  let size: number;
+  try {
+    const st = await stat(path);
+    if (!st.isFile()) return { error: `Can't read ${path}: not a regular file` };
+    size = st.size;
+  } catch (err) {
+    return { error: `Can't read ${path}: ${(err as Error).message}` };
+  }
+  if (size === 0) return { error: `Can't send ${path}: the file is empty` };
+  if (size > MAX_ATTACHMENT_BYTES) {
+    return {
+      error: `Can't send ${path}: ${formatBytes(size)} is over the ${formatBytes(MAX_ATTACHMENT_BYTES)} attachment limit`,
+    };
+  }
+
+  const name = basename(path);
+  const mimeType = mimeTypeFor(name);
+  if (kind === "audio" && !mimeType.startsWith("audio/")) {
+    return {
+      error: `--audio expects an audio file (m4a, aac, mp3, wav, ogg, caf); got ${name}`,
+    };
+  }
+
+  let durationMs: number | null = null;
+  if (kind === "audio") {
+    const raw = options.durationMs;
+    const n = typeof raw === "number" ? raw : raw === undefined ? Number.NaN : Number(raw.trim());
+    if (raw === undefined || raw === "" || !Number.isInteger(n) || n <= 0) {
+      return {
+        error:
+          "--audio needs --duration-ms <n>: the voice note length in milliseconds (a positive integer). " +
+          "The container is not parsed, so pass what your recorder reported.",
+      };
+    }
+    durationMs = n;
+  }
+
+  let bytes: Buffer;
+  try {
+    bytes = await readFile(path);
+  } catch (err) {
+    return { error: `Can't read ${path}: ${(err as Error).message}` };
+  }
+  if (bytes.length > MAX_ATTACHMENT_BYTES) {
+    return {
+      error: `Can't send ${path}: ${formatBytes(bytes.length)} is over the ${formatBytes(MAX_ATTACHMENT_BYTES)} attachment limit`,
+    };
+  }
+
+  const fromName = extname(name).replace(/^\./, "").toLowerCase();
+  const ext = fromName || extensionFor(mimeType, null, null) || "bin";
+  return { kind, path, name, mimeType, bytes, durationMs, ext };
+}
+
+function formatBytes(n: number): string {
+  if (n >= 1024 * 1024) return `${(n / (1024 * 1024)).toFixed(1)} MB`;
+  if (n >= 1024) return `${(n / 1024).toFixed(1)} KB`;
+  return `${n} B`;
+}
+
+/** The render unit that references the uploaded asset. */
+function renderUnitFor(att: PreparedAttachment, assetUrn: string): unknown {
+  return att.kind === "audio"
+    ? buildAudioRenderContent(assetUrn, att.durationMs ?? 0)
+    : buildFileRenderContent(assetUrn, att.bytes.length, att.mimeType, att.name);
+}
+
+/** What the dry-run preview shows for an attachment: the two upload steps and the unit. */
+export function attachmentPlan(att: PreparedAttachment): {
+  attachment: {
+    kind: MediaUploadKind;
+    name: string;
+    mimeType: string;
+    bytes: number;
+    durationMs: number | null;
+  };
+  upload: {
+    step1: { POST: string; body: ReturnType<typeof buildUploadMetadataPayload> };
+    step2: { PUT: string; contentType: string; bytes: number };
+    renderUnit: unknown;
+  };
+} {
+  return {
+    attachment: {
+      kind: att.kind,
+      name: att.name,
+      mimeType: att.mimeType,
+      bytes: att.bytes.length,
+      durationMs: att.durationMs,
+    },
+    upload: {
+      step1: {
+        POST: "voyagerVideoDashMediaUploadMetadata?action=upload",
+        body: buildUploadMetadataPayload(att.kind, att.bytes.length, att.name),
+      },
+      step2: {
+        PUT: "<singleUploadUrl from step 1>",
+        contentType: att.mimeType,
+        bytes: att.bytes.length,
+      },
+      renderUnit: renderUnitFor(att, "<assetUrn from step 1>"),
+    },
+  };
+}
+
+function describeAttachment(att: PreparedAttachment): string {
+  const extra = att.durationMs !== null ? `, ${(att.durationMs / 1000).toFixed(1)}s` : "";
+  return `${att.kind === "audio" ? "voice note" : "file"} ${att.name} (${att.mimeType}, ${formatBytes(att.bytes.length)}${extra})`;
+}
+
+/**
+ * Upload the attachment (metadata request, then the PUT) and return the render
+ * units to send with the message. On failure the error is printed and the
+ * process exits — nothing has been sent at that point.
+ */
+async function uploadAttachment(
+  apiClient: LinkedInApiClient,
+  att: PreparedAttachment | null
+): Promise<unknown[]> {
+  if (!att) return [];
+  try {
+    output.info(`Uploading ${att.name} (${formatBytes(att.bytes.length)})…`);
+    const slot = await requestUploadSlot(apiClient, att.kind, att.bytes.length, att.name);
+    await uploadBytes(apiClient, slot, att.bytes, att.mimeType);
+    return [renderUnitFor(att, slot.assetUrn)];
+  } catch (err: unknown) {
+    const msg = err instanceof LinkedInError ? err.message : String((err as Error).message ?? err);
+    output.error(
+      `Attachment upload failed: ${msg}\n  (The upload flow is modelled on the web client and may need adjusting — see --dry-run.)`,
+      1
+    );
+    return [];
+  }
+}
+
+/** The attachment as it is stored on the sent message. */
+function storedAttachmentFor(att: PreparedAttachment): MessageAttachment {
+  return att.kind === "audio"
+    ? {
+        type: "voice",
+        name: att.name,
+        mimeType: att.mimeType,
+        size: att.bytes.length,
+        durationMs: att.durationMs ?? undefined,
+      }
+    : { type: "file", name: att.name, mimeType: att.mimeType, size: att.bytes.length };
+}
+
+/**
+ * Keep the sent bytes beside the thread as `media/<messageId>-<index>.<ext>`,
+ * the name `allman media` writes for downloads, so front-ends render our own
+ * upload from disk. Only when both the bare conv id and the message id are
+ * known — never `media/-0.m4a`, never under the account dir itself.
+ */
+export async function cacheSentAttachment(
+  storePath: string,
+  profileId: string,
+  convId: string | null | undefined,
+  messageUrn: string | null | undefined,
+  att: PreparedAttachment,
+  index: number
+): Promise<string | null> {
+  const bareConv = (convId ?? "").trim();
+  const messageId = bareMessageId(messageUrn ?? "").trim();
+  if (!bareConv || !messageId || bareConv.includes("/") || messageId.includes("/")) return null;
+  const mediaDir = join(storePath, profileId, bareConv, "media");
+  const dest = join(mediaDir, `${messageId}-${index}.${att.ext}`);
+  try {
+    await mkdir(mediaDir, { recursive: true });
+    await copyFile(att.path, dest);
+    return dest;
+  } catch {
+    // Non-fatal: the message went out; `allman media` can fetch it later.
+    return null;
+  }
+}
 
 /**
  * Split `<to>` into individual targets on commas, except commas inside
@@ -94,11 +335,24 @@ export async function sendCommand(
     output.error("No recipient given. Pass a slug, URL, URN or conversation id.", 1);
     return;
   }
-  if (targets.length > 1) {
-    await sendToGroup(targets, text, options, store, session);
+
+  // Read + validate the attachment before any dispatch or network call.
+  const prepared = await prepareAttachment(options);
+  if (prepared && "error" in prepared) {
+    output.error(prepared.error, 1);
     return;
   }
-  await sendToOne(targets[0] as string, text, options, store, session);
+  const attachment = prepared;
+  if (!text && !attachment) {
+    output.error("Nothing to send: give message text, --audio <file> or --file <file>.", 1);
+    return;
+  }
+
+  if (targets.length > 1) {
+    await sendToGroup(targets, text, options, store, session, attachment);
+    return;
+  }
+  await sendToOne(targets[0] as string, text, options, store, session, attachment);
 }
 
 // ---------------------------------------------------------------------------
@@ -110,10 +364,12 @@ async function sendToOne(
   text: string,
   options: SendOptions,
   store: Store,
-  session: Session
+  session: Session,
+  attachment: PreparedAttachment | null = null
 ): Promise<void> {
   const { apiClient, profileId, myProfileUrn, accountRecord } = session;
   const conversations = store.forAccount(profileId);
+  const storePath = store.path;
 
   const resolved = await resolveTarget(target, myProfileUrn, apiClient, conversations);
 
@@ -145,6 +401,7 @@ async function sendToOne(
       isNewConversation: isNewConversation === true,
       replyTo: options.replyTo ?? null,
       text,
+      ...(attachment ? attachmentPlan(attachment) : { attachment: null, upload: null }),
     };
     if (options.json) {
       output.printData(preview);
@@ -153,7 +410,8 @@ async function sendToOne(
         ? `${convRecord.name}${convRecord.isGroup ? " (group)" : ""} [${bareConvId}]`
         : `new conversation with ${contactSlug ?? contactProfileUrn ?? target}`;
       output.info(`[dry-run] Would send to ${to}:`);
-      process.stderr.write(`  ${text}\n`);
+      if (text) process.stderr.write(`  ${text}\n`);
+      if (attachment) printAttachmentPlan(attachment);
     }
     return;
   }
@@ -211,14 +469,23 @@ async function sendToOne(
     deliveredAt: number;
   };
 
+  // Upload the attachment first; the render unit rides on createMessage.
+  const renderUnits = await uploadAttachment(apiClient, attachment);
+
   try {
     if (isNewConversation && contactProfileUrn) {
       output.info("Starting new conversation...");
-      result = await sendFirstMessage(apiClient, contactProfileUrn, myProfileUrn, text);
+      result = await sendFirstMessage(
+        apiClient,
+        contactProfileUrn,
+        myProfileUrn,
+        text,
+        renderUnits
+      );
     } else if (bareConvId) {
       const convRecord = await conversations.read(bareConvId);
       const convUrn = convRecord?.backendUrn ?? convRecord?.convUrn ?? bareConvId;
-      result = await sendMessage(apiClient, convUrn, myProfileUrn, text, replyTarget);
+      result = await sendMessage(apiClient, convUrn, myProfileUrn, text, replyTarget, renderUnits);
     } else {
       output.error("Could not determine conversation to send to.", 1);
       return;
@@ -243,17 +510,31 @@ async function sendToOne(
     isFromMe: true,
     body: text,
     reactions: [],
-    attachments: replyTarget
-      ? [
-          {
-            type: "replied",
-            originalText: replyTarget.text,
-            authorName: replyFromName ?? undefined,
-          },
-        ]
-      : [],
+    attachments: [
+      ...(replyTarget
+        ? [
+            {
+              type: "replied" as const,
+              originalText: replyTarget.text,
+              authorName: replyFromName ?? undefined,
+            },
+          ]
+        : []),
+      ...(attachment ? [storedAttachmentFor(attachment)] : []),
+    ],
     originToken: null,
   };
+
+  if (attachment) {
+    await cacheSentAttachment(
+      storePath,
+      profileId,
+      targetBareId,
+      result.messageUrn,
+      attachment,
+      storedMsg.attachments.length - 1
+    );
+  }
 
   if (await conversations.exists(targetBareId)) {
     await conversations.appendMessages(targetBareId, [storedMsg]);
@@ -331,6 +612,15 @@ async function sendToOne(
   }
 }
 
+function printAttachmentPlan(att: PreparedAttachment): void {
+  const plan = attachmentPlan(att);
+  output.info(`  Attachment: ${describeAttachment(att)}`);
+  output.info(
+    `  Upload: POST ${plan.upload.step1.POST} ${JSON.stringify(plan.upload.step1.body)}; then PUT ${plan.upload.step2.bytes} bytes (${plan.upload.step2.contentType})`
+  );
+  output.info(`  Render unit: ${JSON.stringify(plan.upload.renderUnit)}`);
+}
+
 /** Bare message id from any URN form: composite `(…,2-id)`, backend `…:2-id`, or bare. */
 function bareMessageId(urn: string): string {
   const comma = urn.lastIndexOf(",");
@@ -360,7 +650,8 @@ async function sendToGroup(
   text: string,
   options: SendOptions,
   store: Store,
-  session: Session
+  session: Session,
+  attachment: PreparedAttachment | null = null
 ): Promise<void> {
   const { apiClient, profileId, myProfileUrn, accountRecord } = session;
   const conversations = store.forAccount(profileId);
@@ -395,7 +686,14 @@ async function sendToGroup(
   if (recipients.length === 1) {
     const only = recipients[0] as GroupRecipient;
     output.info(`Only one distinct recipient (${only.slug ?? only.profileUrn}) — sending 1:1.`);
-    await sendToOne(only.slug ?? only.profileUrn, text, { ...options, to: [] }, store, session);
+    await sendToOne(
+      only.slug ?? only.profileUrn,
+      text,
+      { ...options, to: [] },
+      store,
+      session,
+      attachment
+    );
     return;
   }
 
@@ -419,6 +717,7 @@ async function sendToGroup(
       isNewConversation: true,
       replyTo: null,
       text,
+      ...(attachment ? attachmentPlan(attachment) : { attachment: null, upload: null }),
     };
     if (options.json) {
       output.printData(preview);
@@ -433,17 +732,20 @@ async function sendToGroup(
       output.info(
         "  Plan: POST createMessage with hostRecipientUrns=[all of the above] and no conversationUrn"
       );
-      process.stderr.write(`  ${text}\n`);
+      if (text) process.stderr.write(`  ${text}\n`);
+      if (attachment) printAttachmentPlan(attachment);
     }
     return;
   }
 
   // Send (rate limiting enforced by the API client). No pre-send sync: there
   // is no thread yet to have missed anything in.
+  const renderUnits = await uploadAttachment(apiClient, attachment);
+
   let result: Awaited<ReturnType<typeof sendFirstMessage>>;
   try {
     output.info(`Starting new group conversation with ${recipients.length} people...`);
-    result = await sendFirstMessage(apiClient, hostRecipientUrns, myProfileUrn, text);
+    result = await sendFirstMessage(apiClient, hostRecipientUrns, myProfileUrn, text, renderUnits);
   } catch (err: unknown) {
     if (err instanceof LinkedInError) {
       output.error(err.message, 1);
@@ -461,7 +763,7 @@ async function sendToGroup(
     isFromMe: true,
     body: text,
     reactions: [],
-    attachments: [],
+    attachments: attachment ? [storedAttachmentFor(attachment)] : [],
     originToken: null,
   };
 
@@ -526,6 +828,9 @@ async function sendToGroup(
         },
       });
       await conversations.appendMessages(convId, [storedMsg]);
+      if (attachment) {
+        await cacheSentAttachment(store.path, profileId, convId, result.messageUrn, attachment, 0);
+      }
     }
   } else {
     output.warn(
