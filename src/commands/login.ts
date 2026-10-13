@@ -1,6 +1,6 @@
 import { buildApiClient } from "../linkedin/api/client.js";
 import { loadCookieJar } from "../linkedin/api/cookies.js";
-import { getProfileUrnBySlug } from "../linkedin/api/endpoints/profiles.js";
+import { getMyProfile, getProfileUrnBySlug } from "../linkedin/api/endpoints/profiles.js";
 import { loadSession } from "../linkedin/api/session.js";
 import { runLogin } from "../linkedin/auth/playwright-auth.js";
 import { resolveStorePath, Store } from "../store/index.js";
@@ -41,12 +41,16 @@ export async function loginCommand(options: LoginOptions): Promise<void> {
   // Check for existing account to inject cookies (re-auth flow)
   // If --account is provided, try resolving it to an existing profile ID
   let existingCookieJar: object | null = null;
+  let existingProfileId: string | null = null;
+  let existingSlug: string | null = null;
 
   if (options.account) {
     const resolved = await store.accounts.resolveId(options.account);
     if (resolved) {
+      existingProfileId = resolved;
       const existing = await store.accounts.read(resolved);
       existingCookieJar = existing?.cookieJar ?? null;
+      existingSlug = existing?.profileSlug ?? null;
       if (existingCookieJar) {
         output.info(`Re-authenticating existing account (${options.account})...`);
       }
@@ -69,37 +73,62 @@ export async function loginCommand(options: LoginOptions): Promise<void> {
   let profileId = result.profileUrn?.replace("urn:li:fsd_profile:", "") ?? null;
 
   // Extract profile slug from the URL (e.g. "jamie-rivera" from linkedin.com/in/jamie-rivera)
-  const profileSlug = result.profileUrl?.match(/linkedin\.com\/in\/([^/?]+)/)?.[1] ?? null;
+  let profileSlug = result.profileUrl?.match(/linkedin\.com\/in\/([^/?]+)/)?.[1] ?? null;
 
-  // If we didn't get a URN from the browser, try the API
+  // The browser flow can miss the profile id (no voyagerIdentityDashProfiles
+  // response to sniff, no /in/ redirect). The session is still good, so identify
+  // it via the API before giving up — throwing away a captured session (and its
+  // Sales Navigator seat) just to retry the browser dance is the worse outcome.
+  const tempClient = () => buildTempClient(result);
+
+  // 1. Slug known → look the URN up by slug.
   if (!profileId && profileSlug) {
     output.info(`Fetching profile URN for "${profileSlug}" via API...`);
     try {
-      // Build a temporary client using the cookies we just got
-      const tempRecord = {
-        urn: null,
-        profileSlug: null,
-        name: result.name,
-        headline: result.headline,
-        profileUrl: result.profileUrl,
-        imageUrl: result.imageUrl,
-        userType: null as null,
-        networkSize: null,
-        status: "authenticated" as const,
-        cookieJar: result.cookieJar,
-        cookiesUpdatedAt: new Date().toISOString(),
-        lastSyncAt: null,
-      };
-      const jar = loadCookieJar(tempRecord);
-      const apiClient = buildApiClient(tempRecord, async () => {}, undefined);
-      apiClient.updateJar(jar);
-      const fetchedUrn = await getProfileUrnBySlug(apiClient, profileSlug);
+      const fetchedUrn = await getProfileUrnBySlug(tempClient(), profileSlug);
       if (fetchedUrn) {
         profileId = fetchedUrn.replace("urn:li:fsd_profile:", "");
       }
     } catch (err) {
       output.debug(`API URN lookup failed: ${String(err)}`);
     }
+  }
+
+  // 2. Ask LinkedIn who the session belongs to (voyager/api/me).
+  if (!profileId) {
+    output.info("Browser didn't expose the profile ID — identifying the session via the API...");
+    const me = await getMyProfile(tempClient());
+    if (me) {
+      profileId = me.urn.replace("urn:li:fsd_profile:", "");
+      if (!profileSlug && me.publicIdentifier) profileSlug = me.publicIdentifier;
+      output.debug(`Identified session via /me: ${profileId}`);
+    }
+  }
+
+  // 3. Re-auth of a named existing account → assume it's the same person,
+  //    unless the browser showed a different person's slug: then the session
+  //    must not be filed under that account at all.
+  if (
+    !profileId &&
+    existingProfileId &&
+    profileSlug &&
+    existingSlug &&
+    profileSlug !== existingSlug
+  ) {
+    output.error(
+      `The browser session belongs to "${profileSlug}", not to the existing account ` +
+        `"${options.account}" (${existingSlug}). Nothing was written — log in again without ` +
+        `--account, or with the account that matches.`,
+      1
+    );
+    return;
+  }
+  if (!profileId && existingProfileId) {
+    output.warn(
+      `Could not confirm the profile ID from LinkedIn; assuming it is the existing account ` +
+        `"${options.account}" (${existingProfileId.slice(0, 12)}…). Run \`allman status\` to verify.`
+    );
+    profileId = existingProfileId;
   }
 
   if (!profileId) {
@@ -180,4 +209,28 @@ export async function loginCommand(options: LoginOptions): Promise<void> {
     if (slug) output.info(`  Slug:       ${slug}`);
     output.info(`  Store:      ${storePath}`);
   }
+}
+
+/**
+ * An API client wired to the cookies the browser just captured, for the
+ * identity lookups that run before the account record exists.
+ */
+function buildTempClient(result: Awaited<ReturnType<typeof runLogin>>) {
+  const tempRecord = {
+    urn: null,
+    profileSlug: null,
+    name: result.name,
+    headline: result.headline,
+    profileUrl: result.profileUrl,
+    imageUrl: result.imageUrl,
+    userType: null as null,
+    networkSize: null,
+    status: "authenticated" as const,
+    cookieJar: result.cookieJar,
+    cookiesUpdatedAt: new Date().toISOString(),
+    lastSyncAt: null,
+  };
+  const apiClient = buildApiClient(tempRecord, async () => {}, undefined);
+  apiClient.updateJar(loadCookieJar(tempRecord));
+  return apiClient;
 }
