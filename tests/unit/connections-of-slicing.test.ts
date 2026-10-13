@@ -271,6 +271,66 @@ describe("connections-of --slice", () => {
     expect(h.emitted.length).toBe(20);
   });
 
+  it("skips the region split when the base already includes a region (OR would widen it)", async () => {
+    const base: LeadSearchFilters = { regions: [{ id: "90000084", include: true }] };
+    serve({
+      [BAY]: { total: 1500 },
+      // Explicit ids: the generated ids strip punctuation, so +/- slices would collide.
+      "R[+90000084]S[+300,+310,+320]": { total: 40, ids: ids("exec", 40) },
+      "R[+90000084]S[-300,-310,-320]": { total: 60, ids: ids("nonexec", 60) },
+    });
+    await connectionsOfCommand("example-user-1", {
+      json: true,
+      noDelay: true,
+      slice: true,
+      filters: base,
+    });
+    // No slice ever carries a second region value: the plan goes straight to seniority.
+    for (const c of calls()) expect(c.filters?.regions).toEqual(base.regions);
+    const probes = calls()
+      .filter((c) => c.count === 1)
+      .map((c) => sliceKey(c.filters));
+    expect(probes).toEqual([BAY, "R[+90000084]S[+300,+310,+320]", "R[+90000084]S[-300,-310,-320]"]);
+    expect(h.emitted.length).toBe(100);
+  });
+
+  it("pulls one truncated slice when both facets are already included", async () => {
+    const base: LeadSearchFilters = {
+      regions: [{ id: "90000084", include: true }],
+      seniorities: [{ id: "300", include: true }],
+    };
+    serve({ "R[+90000084]S[+300]": { total: 1200 } });
+    await connectionsOfCommand("example-user-1", {
+      json: true,
+      noDelay: true,
+      slice: true,
+      filters: base,
+    });
+    const seen = calls();
+    expect(seen.filter((c) => c.count === 1).length).toBe(1);
+    for (const c of seen) expect(sliceKey(c.filters)).toBe("R[+90000084]S[+300]");
+    expect(Math.max(...seen.map((c) => c.start))).toBe(975);
+    expect(h.emitted.length).toBe(1000);
+  });
+
+  it("still splits by region when the base only excludes one", async () => {
+    const base: LeadSearchFilters = { regions: [{ id: "90000091", include: false }] };
+    serve({
+      "R[-90000091]S[]": { total: 1500 },
+      "R[-90000091,+90000084]S[]": { total: 10 },
+      "R[-90000091,+90000091]S[]": { total: 0 },
+      "R[-90000091,+103644278,-90000084,-90000091]S[]": { total: 10 },
+      "R[-90000091,-103644278]S[]": { total: 10 },
+    });
+    await connectionsOfCommand("example-user-1", {
+      json: true,
+      noDelay: true,
+      slice: true,
+      filters: base,
+    });
+    expect(h.emitted.length).toBe(30);
+  });
+
   it("honors --limit on the merged result", async () => {
     serve({
       [UNFILTERED]: { total: 1200 },

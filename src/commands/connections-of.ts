@@ -37,6 +37,7 @@ import {
   hasFilters,
   type LeadSearchFilters,
   mergeFilters,
+  nextSliceLevel,
   SLICE_PLANS,
 } from "../utils/salesnav-filters.js";
 import { isUrn, profileUrnId } from "../utils/urn.js";
@@ -409,8 +410,11 @@ function probeDelay(delayConfig: RandomDelayConfig): RandomDelayConfig {
  * `--slice`: probe the unfiltered total; when it exceeds the cap, walk
  * SLICE_PLANS (region, then seniority) so every pulled slice fits under it,
  * and merge the slices by salesnavId. Explicit filters form the base of every
- * slice. Slices overlap a little on LinkedIn's side and the unfiltered total
- * undercounts, so the merged count can exceed the reported total.
+ * slice, and a plan whose facet the base already includes is skipped (its
+ * INCLUDED ids would OR with the base and widen the search instead of
+ * partitioning it). Slices overlap a little on LinkedIn's side and the
+ * unfiltered total undercounts, so the merged count can exceed the reported
+ * total.
  */
 async function runSalesnavSliced(
   search: SalesnavSearch,
@@ -444,13 +448,46 @@ async function runSalesnavSliced(
   );
   const merged = new Map<string, ResultRow>();
 
+  /** Pull one slice up to the cap and fold it into `merged`. */
+  const pullSlice = async (
+    sliceFilters: LeadSearchFilters | undefined,
+    label: string,
+    t: number
+  ): Promise<boolean> => {
+    if (t > SALESNAV_SAFETY_MAX) {
+      output.warn(
+        `  slice ${label}: ${t} exceeds the ${SALESNAV_SAFETY_MAX}-result cap at the deepest ` +
+          `split — only the first ${SALESNAV_SAFETY_MAX} will be fetched.`
+      );
+    }
+    if (!opts.noDelay) await randomPageSleep(probeDelay(delayConfig));
+    const r = await pullSalesnavPages(search, {
+      filters: sliceFilters,
+      limit: SALESNAV_SAFETY_MAX,
+      allowFallback: false,
+      abortOnEmptyFirstPage: false,
+      label,
+    });
+    if (r === FALLBACK || r === null) return false;
+    for (const row of r.rows) {
+      if (row.salesnavId && !merged.has(row.salesnavId)) merged.set(row.salesnavId, row);
+    }
+    output.info(`  slice ${label}: ${r.rows.length} / ${t} (merged ${merged.size})`);
+    return true;
+  };
+
   const walk = async (
     filters: LeadSearchFilters | undefined,
     level: number,
-    parentLabel: string | null
+    parentLabel: string | null,
+    knownTotal: number
   ): Promise<boolean> => {
-    const plan = SLICE_PLANS[level];
-    if (!plan) return true;
+    const lvl = nextSliceLevel(filters, level);
+    const plan = lvl >= 0 ? SLICE_PLANS[lvl] : undefined;
+    if (!plan) {
+      // Every facet is already pinned by the filters: nothing left to split on.
+      return pullSlice(filters, parentLabel ?? "base", knownTotal);
+    }
     for (const entry of plan) {
       const label = parentLabel ? `${parentLabel}/${entry.label}` : entry.label;
       const sliceFilters = mergeFilters(filters, entry.filters);
@@ -465,35 +502,17 @@ async function runSalesnavSliced(
         output.info(`  slice ${label}: 0 — skipped`);
         continue;
       }
-      if (t > SALESNAV_SAFETY_MAX && level + 1 < SLICE_PLANS.length) {
+      if (t > SALESNAV_SAFETY_MAX && nextSliceLevel(sliceFilters, lvl + 1) >= 0) {
         output.info(`  slice ${label}: ${t} — over the cap, splitting`);
-        if (!(await walk(sliceFilters, level + 1, label))) return false;
+        if (!(await walk(sliceFilters, lvl + 1, label, t))) return false;
         continue;
       }
-      if (t > SALESNAV_SAFETY_MAX) {
-        output.warn(
-          `  slice ${label}: ${t} exceeds the ${SALESNAV_SAFETY_MAX}-result cap at the deepest ` +
-            `split — only the first ${SALESNAV_SAFETY_MAX} will be fetched.`
-        );
-      }
-      if (!opts.noDelay) await randomPageSleep(probeDelay(delayConfig));
-      const r = await pullSalesnavPages(search, {
-        filters: sliceFilters,
-        limit: SALESNAV_SAFETY_MAX,
-        allowFallback: false,
-        abortOnEmptyFirstPage: false,
-        label,
-      });
-      if (r === FALLBACK || r === null) return false;
-      for (const row of r.rows) {
-        if (row.salesnavId && !merged.has(row.salesnavId)) merged.set(row.salesnavId, row);
-      }
-      output.info(`  slice ${label}: ${r.rows.length} / ${t} (merged ${merged.size})`);
+      if (!(await pullSlice(sliceFilters, label, t))) return false;
     }
     return true;
   };
 
-  if (!(await walk(base, 0, null))) return null;
+  if (!(await walk(base, 0, null, total))) return null;
 
   const rows = [...merged.values()];
   output.info(`Merged ${rows.length} unique results across slices (server total ${total}).`);

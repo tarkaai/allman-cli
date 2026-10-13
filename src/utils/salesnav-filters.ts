@@ -126,6 +126,42 @@ export function mergeFilters(
   };
 }
 
+/** The facet a partition plan splits on. */
+export type SliceFacet = "regions" | "seniorities";
+
+/** The facet a plan's entries all carry (every plan splits exactly one facet). */
+export function planFacet(plan: readonly SlicePlanEntry[]): SliceFacet {
+  return plan[0]?.filters.seniorities ? "seniorities" : "regions";
+}
+
+/**
+ * True when `filters` already pins `facet` to an included value. Values in one
+ * clause are OR'd, so adding a plan's own INCLUDED ids to such a clause would
+ * widen the search instead of partitioning it — `--slice` must skip that plan.
+ * Exclusions are fine: they narrow, and a plan's slices still partition them.
+ */
+export function constrainsInclusively(
+  filters: LeadSearchFilters | null | undefined,
+  facet: SliceFacet
+): boolean {
+  return (filters?.[facet] ?? []).some((v) => v.include);
+}
+
+/**
+ * The index of the first plan at or after `from` that `filters` leave open to
+ * split on, or -1 when every remaining facet is already constrained.
+ */
+export function nextSliceLevel(
+  filters: LeadSearchFilters | null | undefined,
+  from: number
+): number {
+  for (let i = from; i < SLICE_PLANS.length; i++) {
+    const plan = SLICE_PLANS[i];
+    if (plan && !constrainsInclusively(filters, planFacet(plan))) return i;
+  }
+  return -1;
+}
+
 /** One slice of a partition plan: a label for the log line plus its clauses. */
 export interface SlicePlanEntry {
   label: string;
