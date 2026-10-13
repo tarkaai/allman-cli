@@ -5,7 +5,8 @@
  * flagship id, then enumerate that person's network via one of two backends:
  *
  *   SalesNav (default): resolve flagship id -> salesnav id, then paginate
- *     salesApiLeadSearch with CONNECTION_OF + RELATIONSHIP:S. Requires the seat
+ *     salesApiLeadSearch with CONNECTION_OF + RELATIONSHIP:S (or F,S with
+ *     --relationship, to include the viewer's own mutuals). Requires the seat
  *     cookies captured by `allman login` (REST-only at call time, no handshake).
  *     Less restricted, returns salesnav id + numeric member id.
  *
@@ -158,7 +159,9 @@ export async function connectionsOfCommand(
   // people search has no REGION/SENIORITY facets, so refuse rather than
   // silently return an unfiltered list.
   const salesnavOnly = hasFilters(opts.filters) || opts.slice === true;
-  const salesnavOnlyWhy = hasFilters(opts.filters) ? "--region/--seniority filters" : "--slice";
+  const salesnavOnlyWhy = hasFilters(opts.filters)
+    ? "--region/--seniority/--relationship filters"
+    : "--slice";
   const refuseFlagship = (why: string) =>
     output.error(
       `${salesnavOnlyWhy} need the Sales Navigator backend (${why}). ` +

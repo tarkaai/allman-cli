@@ -550,6 +550,10 @@ program
   )
   .option("--exclude-seniority <ids>", "SalesNav only: drop these seniority levels (same aliases)")
   .option(
+    "--relationship <degrees>",
+    "SalesNav only: which of their connections to return by distance from you — 2nd (default), 1st (your mutuals), or all"
+  )
+  .option(
     "--slice",
     "SalesNav only: when the network exceeds the 1,000-result cap, split the search by region then seniority and merge the slices"
   )
@@ -563,6 +567,7 @@ program
         excludeRegion: opts.excludeRegion,
         seniority: opts.seniority,
         excludeSeniority: opts.excludeSeniority,
+        relationship: opts.relationship,
       });
     } catch (err) {
       printError((err as Error).message, 1);
