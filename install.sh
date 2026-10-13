@@ -7,7 +7,7 @@
 #
 # Usage:
 #   curl -fsSL https://raw.githubusercontent.com/tarkaai/allman-cli/main/install.sh | bash
-#   curl -fsSL .../install.sh | VERSION=2026-04-20.1-alpha bash
+#   curl -fsSL .../install.sh | VERSION=v0.4.0 bash              # pin a release (also for prereleases)
 #   curl -fsSL .../install.sh | PREFIX=/usr/local bash        # system-wide
 #
 # The repo is public, so no token is needed. Setting GH_TOKEN is optional and
@@ -51,8 +51,8 @@ esac
 asset="allman-$os-$arch"
 
 # Fetch release metadata via the REST API.
-# - Uses /releases?per_page=1 for "latest" so we include prereleases (unlike
-#   /releases/latest/download/ which skips them).
+# - "latest" resolves via /releases/latest, i.e. the newest *stable* release;
+#   prereleases are skipped unless pinned explicitly with VERSION=<tag>.
 # - Downloads assets via /releases/assets/{id} with Accept: application/octet-stream;
 #   that endpoint works on both public and private repos and survives the
 #   redirect to objects.githubusercontent.com (signed URL; no auth-header
@@ -63,9 +63,8 @@ if ! command -v python3 >/dev/null 2>&1; then
 fi
 
 if [ "$VERSION" = "latest" ]; then
-  release_url="https://api.github.com/repos/$REPO/releases?per_page=1"
-  release_json="$(curl_with_auth "$release_url")"
-  release_json="$(echo "$release_json" | python3 -c 'import json,sys; d=json.load(sys.stdin); print(json.dumps(d[0]) if d else "")')"
+  release_url="https://api.github.com/repos/$REPO/releases/latest"
+  release_json="$(curl_with_auth "$release_url" || true)"
   if [ -z "$release_json" ]; then
     echo "could not resolve latest release for $REPO" >&2
     exit 1

@@ -4,10 +4,14 @@
  * Layout (inside account dir):
  *   {accountDir}/{convId}/RECORD.json         — conversation + contact data
  *   {accountDir}/{convId}/messages/YYYY-MM.jsonl
- *   {accountDir}/{profileId} -> {convId}      — symlink
- *   {accountDir}/{slug} -> {convId}           — symlink (real LinkedIn publicIdentifier)
+ *   {accountDir}/{profileId} -> {convId}      — symlink (1:1 only)
+ *   {accountDir}/{slug} -> {convId}           — symlink (1:1 only, real LinkedIn publicIdentifier)
  *
- * Every 1:1 conversation maps to exactly one contact.
+ * Every 1:1 conversation maps to exactly one contact, and the contact's
+ * profileId / slug alias the conversation directory. Group conversations
+ * (`record.isGroup`) get NO aliases — the person in the contact fields is just
+ * the first other participant, and aliasing them would hijack their 1:1
+ * thread — so a group is only addressable by its bare convId.
  * The convId is the canonical key (directory name).
  */
 
@@ -118,7 +122,8 @@ export class ConversationStore {
 
   /**
    * Write or update a conversation record.
-   * Also creates/validates profileId and slug symlinks.
+   * Also creates/validates profileId and slug symlinks for 1:1 records.
+   * Group records never get aliases (see module doc).
    */
   async upsert(convId: string, record: ConversationRecord): Promise<void> {
     await ensureDir(this.accountDir, convId);
@@ -143,15 +148,17 @@ export class ConversationStore {
       "utf8"
     );
 
-    // Create profileId symlink → convId
-    if (merged.profileId) {
-      await ensureAlias(this.accountDir, merged.profileId, convId).catch(() => {});
-    }
+    if (!merged.isGroup) {
+      // Create profileId symlink → convId
+      if (merged.profileId) {
+        await ensureAlias(this.accountDir, merged.profileId, convId).catch(() => {});
+      }
 
-    // Create slug symlink → convId (only if slug is resolved)
-    if (merged.slug) {
-      // Use forceAlias for slug since it may be newly resolved
-      await forceAlias(this.accountDir, merged.slug, convId).catch(() => {});
+      // Create slug symlink → convId (only if slug is resolved)
+      if (merged.slug) {
+        // Use forceAlias for slug since it may be newly resolved
+        await forceAlias(this.accountDir, merged.slug, convId).catch(() => {});
+      }
     }
 
     this.git.scheduleCommit(`conversation: update ${convId.slice(0, 20)}`);
@@ -169,14 +176,18 @@ export class ConversationStore {
     return null;
   }
 
-  /** Find a 1:1 conversation by the contact's profile URN. Scans all records. */
+  /**
+   * Find the 1:1 conversation with a contact by profile URN. Scans all records.
+   * Group records are skipped even though their `profileUrn` names a person —
+   * that person is only the first participant, not the thread's counterpart.
+   */
   async findByProfileUrn(
     profileUrn: string
   ): Promise<{ convId: string; record: ConversationRecord } | null> {
     const ids = await this.list();
     for (const convId of ids) {
       const record = await this.read(convId);
-      if (record && record.profileUrn === profileUrn) {
+      if (record && !record.isGroup && record.profileUrn === profileUrn) {
         return { convId, record };
       }
     }

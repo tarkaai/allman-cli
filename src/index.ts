@@ -23,8 +23,11 @@ import { inboxCommand } from "./commands/inbox.js";
 import { listenCommand } from "./commands/listen.js";
 import { loginCommand } from "./commands/login.js";
 import { logoutCommand } from "./commands/logout.js";
+import { mediaCommand } from "./commands/media.js";
 import { messagesCommand } from "./commands/messages.js";
+import { peopleCommand } from "./commands/people.js";
 import { reactCommand } from "./commands/react.js";
+import { readCommand } from "./commands/read.js";
 import { searchCommand } from "./commands/search.js";
 import { sendCommand } from "./commands/send.js";
 import { startCommand } from "./commands/start.js";
@@ -33,13 +36,15 @@ import { storeCommitCommand, storePathCommand, storeStatusCommand } from "./comm
 import { syncCommand } from "./commands/sync.js";
 import { error as printError, setDebugMode, setJsonMode } from "./utils/output.js";
 import { parseFilterFlags } from "./utils/salesnav-filters.js";
+import { whoamiCommand } from "./commands/whoami.js";
+import { setDebugMode, setJsonMode } from "./utils/output.js";
 
 const program = new Command();
 
 program
   .name("allman")
   .description("LinkedIn messenger from the CLI")
-  .version("0.3.2")
+  .version("0.6.0")
   .option("-a, --account <slug>", "account to use ($ALLMAN_ACCOUNT)")
   .option("-s, --store <path>", "store directory ($ALLMAN_STORE)")
   .option("--json", "output as JSON")
@@ -122,6 +127,27 @@ program
     await statusCommand({
       account: opts.account ?? globalOpts.account,
       store: opts.store ?? globalOpts.store,
+      json: opts.json ?? globalOpts.json,
+    });
+  });
+
+// ---------------------------------------------------------------------------
+// whoami — the signed-in member's own profile (cached in AUTH.json)
+// ---------------------------------------------------------------------------
+
+program
+  .command("whoami")
+  .description("Show the signed-in member's own profile (name, headline, slug, photo)")
+  .option("-a, --account <slug>", "account to inspect")
+  .option("-s, --store <path>", "store directory")
+  .option("--refresh", "re-fetch the profile from LinkedIn and update AUTH.json")
+  .option("--json", "output as JSON")
+  .action(async (opts, cmd) => {
+    const globalOpts = cmd.parent?.opts() ?? {};
+    await whoamiCommand({
+      account: opts.account ?? globalOpts.account,
+      store: opts.store ?? globalOpts.store,
+      refresh: opts.refresh,
       json: opts.json ?? globalOpts.json,
     });
   });
@@ -238,10 +264,21 @@ program
 program
   .command("send <to> <text>")
   .description(
-    "Send a message\n" + "  <to> can be: LinkedIn profile URL, profile slug, or conversation URN"
+    "Send a message\n" +
+      "  <to> can be: LinkedIn profile URL, profile slug, profile URN, conversation URN, or a conversation id (2-…)\n" +
+      "  Several people (comma-separated <to> and/or repeated --to) start a NEW group thread:\n" +
+      '    allman send alice-example,bob-example "hi both"\n' +
+      '    allman send alice-example --to bob-example --to urn:li:fsd_profile:… "hi all"'
   )
   .option("-a, --account <slug>", "account to send from")
   .option("-s, --store <path>", "store directory")
+  .option(
+    "--to <target>",
+    "additional recipient (repeatable); with <to> makes a new group thread",
+    (value: string, previous: string[] = []) => [...previous, value]
+  )
+  .option("--reply-to <messageUrn>", "quote a message in this thread as the one you're replying to")
+  .option("--dry-run", "resolve the target(s) and preview the message without sending")
   .option("--json", "output as JSON")
   .action(async (to: string, text: string, opts, cmd) => {
     const globalOpts = cmd.parent?.opts() ?? {};
@@ -249,6 +286,9 @@ program
       account: opts.account ?? globalOpts.account,
       store: opts.store ?? globalOpts.store,
       json: opts.json ?? globalOpts.json,
+      replyTo: opts.replyTo,
+      dryRun: opts.dryRun === true,
+      to: opts.to ?? [],
     });
   });
 
@@ -276,6 +316,67 @@ program
       json: opts.json ?? globalOpts.json,
       message: opts.message,
       unreact: opts.unreact,
+    });
+  });
+
+program
+  .command("people <query>")
+  .description(
+    "Search LinkedIn for people by name or keywords (results carry the slug for send/connect)"
+  )
+  .option("-a, --account <slug>", "account to search with")
+  .option("-s, --store <path>", "store directory")
+  .option("-n, --limit <n>", "max results (default 10, max 50)", (v: string) => parseInt(v, 10))
+  .option("--json", "output as JSON")
+  .action(async (query: string, opts, cmd) => {
+    const globalOpts = cmd.parent?.opts() ?? {};
+    await peopleCommand(query, {
+      account: opts.account ?? globalOpts.account,
+      store: opts.store ?? globalOpts.store,
+      json: opts.json ?? globalOpts.json,
+      limit: opts.limit,
+    });
+  });
+
+program
+  .command("media <conversation>")
+  .description(
+    "Download a conversation's attachments (images, files, voice, video) into the store\n" +
+      "  <conversation> can be: slug, LinkedIn URL, or conversation URN"
+  )
+  .option("-a, --account <slug>", "account to use")
+  .option("-s, --store <path>", "store directory")
+  .option("-m, --message <urn>", "only this message")
+  .option("-n, --limit <n>", "max messages to scan, newest first (default 200)", (v: string) =>
+    parseInt(v, 10)
+  )
+  .option("--json", "output as JSON")
+  .action(async (conversation: string, opts, cmd) => {
+    const globalOpts = cmd.parent?.opts() ?? {};
+    await mediaCommand(conversation, {
+      account: opts.account ?? globalOpts.account,
+      store: opts.store ?? globalOpts.store,
+      json: opts.json ?? globalOpts.json,
+      message: opts.message,
+      limit: opts.limit,
+    });
+  });
+
+program
+  .command("read <target>")
+  .description(
+    "Mark a conversation as read on LinkedIn\n" +
+      "  <target> can be: slug, LinkedIn URL, or conversation URN"
+  )
+  .option("-a, --account <slug>", "account to use")
+  .option("-s, --store <path>", "store directory")
+  .option("--json", "output as JSON")
+  .action(async (target: string, opts, cmd) => {
+    const globalOpts = cmd.parent?.opts() ?? {};
+    await readCommand(target, {
+      account: opts.account ?? globalOpts.account,
+      store: opts.store ?? globalOpts.store,
+      json: opts.json ?? globalOpts.json,
     });
   });
 
