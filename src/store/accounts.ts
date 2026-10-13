@@ -8,7 +8,7 @@
  *   {root}/{slug} -> {profileId}       — symlink: friendly name → profile ID
  */
 
-import { readdir, readFile, writeFile } from "node:fs/promises";
+import { readdir, readFile, rename, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { ensureDir, forceAlias, resolveAlias } from "./alias.js";
 import type { StoreGit } from "./git.js";
@@ -138,14 +138,19 @@ export class AccountStore {
     this.git.scheduleCommit(commitMessage ?? `account: update ${profileId.slice(0, 12)}`);
   }
 
-  /** Write COOKIES.json (cookie jar). No git commit — cookies are gitignored. */
+  /**
+   * Write COOKIES.json (cookie jar). No git commit — cookies are gitignored.
+   *
+   * Written via a temp file + rename so a concurrent reader (another allman
+   * process mid-request) never sees a half-written jar.
+   */
   async writeCookies(profileId: string, cookies: AccountCookies): Promise<void> {
     await ensureDir(this.root, profileId);
-    await writeFile(
-      join(this.dir(profileId), COOKIES_FILE),
-      `${JSON.stringify(cookies, null, 2)}\n`,
-      "utf8"
-    );
+    const target = join(this.dir(profileId), COOKIES_FILE);
+    // pid + random suffix: two in-flight responses on one client must not share a temp path.
+    const tmp = `${target}.${process.pid}.${Math.random().toString(36).slice(2, 8)}.tmp`;
+    await writeFile(tmp, `${JSON.stringify(cookies, null, 2)}\n`, "utf8");
+    await rename(tmp, target);
   }
 
   /** Write both AUTH + COOKIES (convenience for login). */
