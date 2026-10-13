@@ -55,7 +55,8 @@ export async function conversationsCommand(options: ConversationsOptions): Promi
       (rec.lastActivityAt ? new Date(rec.lastActivityAt).getTime() : 0);
     const time = timeMs ? relativeTime(timeMs) : "never";
     const unread = rec.unreadCount > 0 ? ` [${rec.unreadCount} unread]` : "";
-    return `  ${rec.name.padEnd(30)} ${time.padEnd(12)}${unread}`;
+    const group = rec.isGroup ? ` (group, ${rec.participants?.length ?? 0} others)` : "";
+    return `  ${rec.name.padEnd(30)} ${time.padEnd(12)}${unread}${group}`;
   });
 
   process.stdout.write(`${lines.join("\n")}\n`);

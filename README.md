@@ -4,7 +4,7 @@ LinkedIn messenger from the CLI. File-backed, git-versioned, designed for AI age
 
 Messages are stored locally as JSONL files in a git repository. All reads come from disk. Network calls go to LinkedIn's private APIs using cookies captured via a headed Playwright browser session.
 
-> **Want a terminal inbox UI on top of this?** See the companion repo, [`tarkaai/allman-tui`](https://github.com/tarkaai/allman-tui). It bundles the `allman` binary, so installing the TUI gets you both.
+> **Want an inbox on top of this?** Two front-ends build on this CLI and bundle the `allman` binary, so installing either gets you both: [`tarkaai/allman-tui`](https://github.com/tarkaai/allman-tui), the terminal inbox, and [`tarkaai/allman-mac`](https://github.com/tarkaai/allman-mac), the native macOS menu bar app.
 
 ---
 
@@ -59,6 +59,7 @@ allman sync                        # pull conversation history (default: since l
 allman conversations               # list conversations
 allman messages sarah-chen         # show messages with sarah-chen
 allman send sarah-chen "Hey!"      # send a message
+allman send sarah-chen,jamie-rivera "Hey both!"   # start a group thread
 allman listen                      # stream real-time events to stdout as NDJSON
 ```
 
@@ -258,7 +259,7 @@ The `<conversation>` argument accepts:
 
 ---
 
-### `allman send <to> <text>`
+### `allman send <to> [text]`
 
 Send a message to a LinkedIn contact.
 
@@ -266,15 +267,32 @@ Send a message to a LinkedIn contact.
 allman send sarah-chen "Hey, how are you?"
 allman send "https://www.linkedin.com/in/sarah-chen" "Hello!"
 allman send "urn:li:messagingThread:2-abc123" "Following up"
+allman send 2-abc123 "Following up"                              # bare conversation id (1:1 or group)
 ```
 
-The `<to>` argument accepts a slug, profile URL, or conversation URN.
+The `<to>` argument accepts a slug, profile URL, profile URN, conversation URN, or a bare conversation id.
 
 **Behavior:**
 - **Pre-send sync**: fetches the 10 most recent messages before sending. If there are new inbound messages since the last sync that arrived after your last reply, the send is **aborted** and the new messages are shown. Re-run after reading them.
 - **New conversations**: if no existing thread is found (in local store or via LinkedIn API), starts a new conversation.
 - **Rate limiting**: minimum 3000ms between sends (configurable). State persisted to `rate-state.json` across process restarts.
 - Stores the sent message locally and commits the store.
+
+#### Group threads
+
+Several people start a **new group conversation**. List them comma-separated in `<to>` and/or repeat `--to`; each one is a slug, profile URL, or `urn:li:fsd_profile:…` URN (conversation ids are not people and are refused):
+
+```bash
+allman send sarah-chen,jamie-rivera "Hi both — can we find 30 minutes this week?"
+allman send sarah-chen --to jamie-rivera --to urn:li:fsd_profile:ACoAAEXAMPLE000001 "Hi all"
+allman send sarah-chen,jamie-rivera "Hi both" --dry-run        # show the resolved people + plan, send nothing
+```
+
+- Every recipient is resolved before anything is sent (local 1:1 record first, then the profile lookup); you and duplicates are dropped. If only one person is left, it is an ordinary 1:1 send.
+- One request creates the thread and delivers the message — the same call the LinkedIn web client makes.
+- **Each run creates another group**, even with the same people. To keep talking in a group you already have, address it by its conversation id: `allman send <convId> "…"` (see `allman conversations`).
+- The new thread is stored like any group synced by `sync`/`listen` (`isGroup`, `participants[]`, no slug alias) and `--json` reports its `convId`. If LinkedIn does not confirm the thread right away, a provisional record is written and the next `allman sync` fills it in.
+- `--reply-to` needs an existing thread, so it cannot be combined with several recipients.
 
 ---
 
@@ -286,6 +304,21 @@ allman send jamie-rivera "Thursday works" --reply-to urn:li:messagingMessage:2-�
 
 The message must already be synced locally; any URN form from `allman messages --json` works.
 Verified live: the quoted original renders on linkedin.com exactly as a reply sent from the web client.
+
+#### Voice notes and file attachments
+
+```bash
+allman send sarah-chen --audio note.m4a --duration-ms 12300        # voice note (text optional)
+allman send sarah-chen "see attached" --file deck.pdf              # file attachment
+allman send sarah-chen,jamie-rivera --file deck.pdf "for you both" # works for new groups too
+allman send sarah-chen --audio note.m4a --duration-ms 12300 --dry-run --json   # plan only, sends nothing
+```
+
+- `--audio <file>` sends a voice note; the file must be audio (`m4a`, `aac`, `mp3`, `wav`, `ogg`, `caf`) and **`--duration-ms` is required** — the length in milliseconds, a positive integer, as your recorder reported it. The container is not parsed.
+- `--file <file>` sends any file as an attachment. One attachment per send; `[text]` may be omitted when either flag is given.
+- Attachments are capped at **20 MB**; the file is read and checked (size, type, duration) before any request is made.
+- The upload follows the web client's attachment flow: upload-metadata request → PUT the bytes → `createMessage` with an `audio` / `file` render unit. The sent bytes are cached beside the thread as `{conv}/media/<messageId>-<index>.<ext>` (the same name `allman media` writes) so front-ends render them from disk.
+- **The upload endpoint and render-unit shapes are modelled on the web client and have not been verified live yet.** `--dry-run` prints exactly what would go out, and `ALLMAN_AUDIO_UPLOAD_TYPE` / `ALLMAN_FILE_UPLOAD_TYPE` override the upload type if LinkedIn's enum differs.
 
 ### `allman search <query>`
 
@@ -574,8 +607,8 @@ allman companies                   # resolve every employer referenced by stored
 allman companies --current-only    # only people's current employers
 allman companies --limit 200       # cap how many to fetch this run
 allman companies --force           # re-fetch companies already stored
-allman companies urn:li:fsd_company:11850   # resolve one company
-allman companies marketbridge      # ...by slug or numeric id too
+allman companies urn:li:fsd_company:100001   # resolve one company
+allman companies example-corp      # ...by slug or numeric id too
 ```
 
 A URN or numeric id is fetched directly. A vanity slug costs one extra request first, to resolve it to an id.
@@ -912,20 +945,3 @@ bun run lint
 MIT — see [LICENSE](./LICENSE).
 
 `allman` is named in tribute to [Eric Allman](https://en.wikipedia.org/wiki/Eric_Allman), author of sendmail.
-
-### `allman send` attachments (voice notes, files)
-
-```bash
-allman send sarah-chen --audio note.m4a --duration-ms 12300   # voice note (m4a/aac/mp3/wav/ogg)
-allman send sarah-chen "see attached" --file deck.pdf          # file attachment
-allman send sarah-chen --audio note.m4a --dry-run --json       # print the upload + send plan, send nothing
-```
-
-The text may be omitted when sending `--audio` or `--file`. The upload follows the web
-client's attachment flow (upload-metadata request → PUT bytes → `createMessage` with an
-`audio` / `file` render unit); the sent bytes are kept beside the thread under
-`{conv}/media/` so front-ends render them from disk. **The upload endpoint is modelled on
-the web client and has not been verified live yet** — `--dry-run` shows exactly what would
-go out, and `ALLMAN_AUDIO_UPLOAD_TYPE` / `ALLMAN_FILE_UPLOAD_TYPE` override the upload type
-if LinkedIn's enum differs.
-

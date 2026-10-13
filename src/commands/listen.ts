@@ -13,9 +13,10 @@ import { fetchMessages } from "../linkedin/api/endpoints/messages.js";
 import { getProfileSlugById } from "../linkedin/api/endpoints/profiles.js";
 import { loadSession } from "../linkedin/api/session.js";
 import { SseClient, type SseEvent } from "../linkedin/realtime/sse-client.js";
+import { buildConversationRecord, participantName } from "../store/conversation-record.js";
 import type { ConversationStore } from "../store/index.js";
 import { resolveStorePath, Store } from "../store/index.js";
-import type { ConversationRecord, StoredMessage } from "../store/types.js";
+import type { StoredMessage } from "../store/types.js";
 import { debug, emitEvent, error, info } from "../utils/output.js";
 import { extractBareConvId } from "../utils/urn.js";
 
@@ -115,8 +116,9 @@ async function handleEvent(
       const convId = convInfo?.convId ?? null;
       const convRecord = convInfo?.record ?? null;
 
-      // Sender name: for 1:1 convs, convRecord.name is the other person
-      const fromName = isFromMe ? null : (convRecord?.name ?? null);
+      // Sender name: for 1:1 convs, convRecord.name is the other person; in a
+      // group it comes from the participant list (by profile URN).
+      let fromName = isFromMe ? null : participantName(convRecord, event.fromUrn);
 
       // Fetch body, attachments, and real URN if body is empty (SSE often
       // omits body text for non-plaintext messages like shared posts, and
@@ -141,6 +143,7 @@ async function handleEvent(
           const match = messages.find((m) => Math.abs(m.deliveredAt - eventTs) < 2000);
           if (match) {
             if (!body) body = match.body;
+            if (!fromName && !isFromMe) fromName = match.fromName ?? null;
             realUrn = match.urn;
             attachments = match.attachments.map((a) => ({
               type: a.type,
@@ -177,8 +180,14 @@ async function handleEvent(
         account: profileId,
         timestamp: event.timestamp ?? timestamp,
         conversation: convRecord
-          ? { urn: convRecord.convUrn, convId, name: convRecord.name, slug: convRecord.slug }
-          : { urn: event.conversationUrn, convId: null, name: null, slug: null },
+          ? {
+              urn: convRecord.convUrn,
+              convId,
+              name: convRecord.name,
+              slug: convRecord.slug,
+              isGroup: convRecord.isGroup === true,
+            }
+          : { urn: event.conversationUrn, convId: null, name: null, slug: null, isGroup: false },
         from: { urn: event.fromUrn, name: fromName },
         message: { urn: event.messageUrn, body, isFromMe },
       });
@@ -334,7 +343,8 @@ async function handleEvent(
   }
 }
 
-async function fetchAndUpsertConversation(
+/** Exported for tests. Materialize a thread the store has never seen. */
+export async function fetchAndUpsertConversation(
   conversationUrn: string,
   myProfileUrn: string,
   apiClient: LinkedInApiClient,
@@ -347,67 +357,16 @@ async function fetchAndUpsertConversation(
     const match = page.find((c) => c.urn === conversationUrn || c.backendUrn === conversationUrn);
     if (!match) return;
 
-    // Skip group conversations
-    if (match.isGroup) {
-      debug(`listen: skipping group conversation ${conversationUrn}`);
-      return;
-    }
-
     const convId = extractBareConvId(match.backendUrn || match.urn);
-    const otherParticipant = match.participants.find((p) => p.entityUrn !== myProfileUrn);
-    if (!otherParticipant) return;
-
-    const contactProfileUrn = otherParticipant.entityUrn;
-    const contactProfileId = contactProfileUrn.replace("urn:li:fsd_profile:", "");
-
-    // Try to resolve slug
     const existingRecord = await conversations.read(convId);
-    let slug: string | null = existingRecord?.slug ?? null;
-    if (!slug) {
-      slug = await getProfileSlugById(apiClient, contactProfileId).catch(() => null);
-    }
-
-    const fullName = otherParticipant.name ?? "Unknown";
-    const { firstName, lastName } = splitName(fullName);
-
-    const record: ConversationRecord = {
-      convId,
-      profileId: contactProfileId,
-      slug,
-      convUrn: match.urn,
-      backendUrn: match.backendUrn || null,
-      profileUrn: contactProfileUrn,
-      memberUrn: null,
-      firstName,
-      lastName,
-      name: fullName,
-      headline: otherParticipant.headline ?? null,
-      profileUrl: otherParticipant.profileUrl ?? null,
-      profilePictures:
-        otherParticipant.profilePictures.length > 0 ? otherParticipant.profilePictures : null,
-      distance: otherParticipant.distance,
-      pronoun: otherParticipant.pronoun,
-      memberBadgeType: otherParticipant.memberBadgeType,
-      isPremium: otherParticipant.isPremium,
-      isVerified: otherParticipant.isVerified,
-      unreadCount: match.unreadCount,
-      lastActivityAt: match.lastActivityAt ? new Date(match.lastActivityAt).toISOString() : null,
-      lastReadAt: match.lastReadAt ? new Date(match.lastReadAt).toISOString() : null,
-      createdAt: match.createdAt ? new Date(match.createdAt).toISOString() : null,
-      read: match.read,
-      notificationStatus: match.notificationStatus,
-      categories: match.categories,
-      conversationUrl: match.conversationUrl,
-      disabledFeatures: match.disabledFeatures,
-      syncState: existingRecord?.syncState ?? {
-        oldestMessageAt: null,
-        newestMessageAt: null,
-        lastSyncAt: null,
-        totalSynced: 0,
-        fullyBackfilled: false,
-      },
-      fetchedAt: new Date().toISOString(),
-    };
+    const record = await buildConversationRecord({
+      conv: match,
+      myProfileUrn,
+      existing: existingRecord,
+      conversations,
+      resolveSlug: (id) => getProfileSlugById(apiClient, id).catch(() => null),
+    });
+    if (!record) return;
 
     await conversations.upsert(convId, record);
   } catch (err) {
@@ -442,12 +401,6 @@ async function recentConversationIds(
     .sort((a, b) => b.at - a.at)
     .slice(0, limit)
     .map((x) => x.id);
-}
-
-function splitName(name: string): { firstName: string; lastName: string } {
-  const spaceIdx = name.indexOf(" ");
-  if (spaceIdx === -1) return { firstName: name, lastName: "" };
-  return { firstName: name.slice(0, spaceIdx), lastName: name.slice(spaceIdx + 1) };
 }
 
 /**

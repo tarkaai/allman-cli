@@ -41,17 +41,67 @@ tests/integration/           Mock network responses
 │   ├── config.json                  # proxy, rate limits (committed)
 │   ├── rate-state.json              # last send timestamp (gitignored)
 │   ├── query-cache.json             # cached flagship search queryId (gitignored)
-│   ├── {convId}/
-│   │   ├── RECORD.json              # contact + conversation + sync state
+│   ├── {convId}/                    # 1:1 AND group threads (bare `2-…` id)
+│   │   ├── RECORD.json              # contact + conversation + sync state (+ group fields)
 │   │   └── messages/YYYY-MM.jsonl
 │   ├── connections/                 # `connections`: {flagshipId}.json + {slug} symlinks
 │   ├── connections-of/{targetId}/   # `connections-of`: RECORD.json + per-result files + symlinks
-│   ├── {profileId} -> {convId}      # symlink: contact profile ID → conversation
-│   └── {slug} -> {convId}           # symlink: LinkedIn slug → conversation
+│   ├── {profileId} -> {convId}      # symlink: contact profile ID → 1:1 conversation (never a group)
+│   └── {slug} -> {convId}           # symlink: LinkedIn slug → 1:1 conversation (never a group)
 └── {accountSlug} -> {myProfileId}   # symlink: account slug → profile dir
 ```
 
 Slug = the LinkedIn `publicIdentifier` (e.g. `linkedin.com/in/sarah-chen` → `sarah-chen`).
+
+### Group conversations
+`sync` and `listen` store group threads alongside 1:1 threads; both are built by
+`store/conversation-record.ts` (`buildConversationRecord`) so the shapes never drift.
+
+- A group RECORD adds `isGroup: true`, `title` (LinkedIn's, or null) and
+  `participants[]` — every member **except the signed-in user**, in LinkedIn's
+  order, each with `profileId`, `profileUrn` (`urn:li:fsd_profile:…`),
+  `backendUrn` (`urn:li:msg_messagingParticipant:…`), `slug`, names, headline,
+  pictures, distance, badges. 1:1 records are byte-for-byte unchanged (no group keys).
+- The single-contact fields (`profileId`, `profileUrn`, `firstName`, `headline`, …)
+  are filled from the **first** other participant so 1:1 readers still see a person.
+  `slug` is `null`; `name` is `title` if set, else the participants' full names joined
+  with `", "`.
+- **No alias symlinks for a group.** `{profileId}`/`{slug}` links always mean "the
+  1:1 thread with this person"; a group is addressable only by its bare `2-…` convId
+  (`messages|read|media|send <convId>`). `findByProfileUrn` skips groups for the same
+  reason — `send <slug>` never lands in a group.
+- `StoredMessage.fromUrn` is the **fsd_profile URN** (REST: `*sender` →
+  participant `hostIdentityUrn`; SSE: `fs_miniProfile` normalized). Match a sender
+  with `participants[].profileUrn`. Only if LinkedIn omits the participant from the
+  response graph does it degrade to the raw messagingParticipant reference, which
+  then matches `participants[].backendUrn`.
+- Participant slug lookups are bounded: reuse the existing record's `participants[]`
+  (cached even when null), then a local 1:1 record for that person, then the API
+  through the shared backoff, capped at `MAX_GROUP_SLUG_LOOKUPS` (10) per group.
+- `send --dry-run <target>` resolves the target and prints the preview without any
+  LinkedIn call beyond slug→URN lookup for unknown slugs. With `--audio`/`--file` the
+  same preview carries the upload plan (`attachment`, `upload.step1/step2/renderUnit`).
+- **Attachments ride on both paths.** `sendCommand` reads and validates `--audio`/`--file`
+  (20 MB cap, audio mime, required positive-integer `--duration-ms`) *before* dispatching to
+  `sendToOne`/`sendToGroup`; each path uploads right before its `createMessage`, passes the
+  render unit (`sendFirstMessage(..., renderUnits)` for groups), stores the `voice`/`file`
+  attachment on the message, and caches the bytes as `{conv}/media/<messageId>-<index>.<ext>`
+  only once both the bare conv id and the message id are known.
+- **Creating a group**: `send` with several people — comma-separated `<to>` and/or
+  repeated `--to` (`send alice-example,bob-example "hi"`, `send alice-example --to
+  urn:li:fsd_profile:… "hi"`) — starts a **new** group thread. Each target resolves to
+  a person exactly like a single target (local 1:1 record → `getProfileUrnBySlug`;
+  `urn:li:fsd_profile:…` as-is); thread ids/URNs are refused, self and duplicates are
+  dropped, and `--reply-to` is rejected. The write is the same `createMessage` as a
+  new 1:1 (`sendFirstMessage`): every recipient in `hostRecipientUrns`, **no**
+  `conversationUrn` key — that is how the web client creates a group. The new thread
+  is read from the created message's `backendConversationUrn`, confirmed through
+  `findConversationsByRecipients` (the `messengerConversationsByRecipients` query
+  with all recipients, exact-membership match), and stored via
+  `buildConversationRecord`; if the lookup fails, a provisional group record is
+  stored from what the send knows (ids, slugs, local names) and the next
+  `sync`/`listen` replaces it. Every send with several people creates another
+  group — continue an existing one with `send <convId>`.
 
 ## Critical patterns
 
@@ -145,12 +195,13 @@ allman status [--account <slug>] [--json]
 allman sync [--account <slug>] [--since 3mo|6mo|1y|YYYY-MM-DD]
 allman listen [--account <slug>]
 allman conversations [--account <slug>] [--json] [--limit N]
-allman messages <contact-slug|url|urn> [--account <slug>] [--json] [--limit N]
-allman send <contact-slug|url|urn> <text> [--reply-to <messageUrn>] [--account <slug>] [--json]
-allman read <contact-slug|url|urn> [--json]
+allman messages <contact-slug|url|urn|convId> [--account <slug>] [--json] [--limit N]
+allman send <contact-slug|url|urn|convId> [text] [--to <target>…] [--reply-to <messageUrn>] [--audio <file> --duration-ms <n> | --file <file>] [--dry-run] [--account <slug>] [--json]
+allman send <a,b,…> <text> [--to <target>]... [--dry-run] [--json]   # several people → NEW group thread
+allman read <contact-slug|url|urn|convId> [--json]
 allman whoami [--refresh] [--json]      # own profile → AUTH.json (name/headline/slug/photo)
 allman people <query> [--limit N] [--json]
-allman media <contact-slug|url|urn> [--message <urn>] [--limit N] [--json]
+allman media <contact-slug|url|urn|convId> [--message <urn>] [--limit N] [--json]
 allman connections [--salesnav|--flagship] [--limit N] [--csv <path>] [--no-save] [--include-headline] [--enrich [--deep]] [--json]
 allman connections-of <slug> [--flagship|--salesnav] [--limit N] [--csv <path>] [--no-save] [--json]
 allman enrich [target] [--deep] [--force] [--limit N] [--json]

@@ -26,11 +26,11 @@ function company(
   over: Partial<StoredCompany> = {}
 ): Omit<StoredCompany, "firstSeenAt" | "lastSeenAt"> {
   return {
-    id: "11850",
-    companyUrn: "urn:li:fsd_company:11850",
-    name: "Marketbridge",
-    universalName: "marketbridge",
-    website: "https://marketbridge.com",
+    id: "100001",
+    companyUrn: "urn:li:fsd_company:100001",
+    name: "Example Corp",
+    universalName: "example-corp",
+    website: "https://example-corp.example",
     linkedinUrl: null,
     tagline: null,
     description: null,
@@ -52,33 +52,33 @@ function company(
 describe("company store", () => {
   it("round-trips a company and lists its id", async () => {
     await cstore.upsertCompany(company());
-    expect(await cstore.listCompanyIds()).toEqual(["11850"]);
-    const read = await cstore.readCompany("11850");
-    expect(read?.website).toBe("https://marketbridge.com");
+    expect(await cstore.listCompanyIds()).toEqual(["100001"]);
+    const read = await cstore.readCompany("100001");
+    expect(read?.website).toBe("https://example-corp.example");
     expect(read?.staffCountRange).toEqual({ start: 201, end: 500 });
   });
 
   it("writes a universalName alias pointing at the id file", async () => {
     await cstore.upsertCompany(company());
-    const target = await readlink(join(accountDir, "companies", "marketbridge"));
-    expect(target).toContain("11850.json");
+    const target = await readlink(join(accountDir, "companies", "example-corp"));
+    expect(target).toContain("100001.json");
   });
 
   it("never downgrades a known value to null on re-fetch", async () => {
     await cstore.upsertCompany(company());
     // A later, sparser response must not erase the website or headcount.
     await cstore.upsertCompany(company({ website: null, staffCount: null, foundedYear: null }));
-    const read = await cstore.readCompany("11850");
-    expect(read?.website).toBe("https://marketbridge.com");
+    const read = await cstore.readCompany("100001");
+    expect(read?.website).toBe("https://example-corp.example");
     expect(read?.staffCount).toBe(375);
     expect(read?.foundedYear).toBe(1991);
   });
 
   it("applies real updates and preserves firstSeenAt", async () => {
     await cstore.upsertCompany(company());
-    const first = await cstore.readCompany("11850");
+    const first = await cstore.readCompany("100001");
     await cstore.upsertCompany(company({ staffCount: 400 }));
-    const second = await cstore.readCompany("11850");
+    const second = await cstore.readCompany("100001");
     expect(second?.staffCount).toBe(400);
     expect(second?.firstSeenAt).toBe(first?.firstSeenAt);
     expect(second?.lastSeenAt).not.toBe(first?.firstSeenAt);
