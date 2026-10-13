@@ -5,7 +5,8 @@
  * flagship id, then enumerate that person's network via one of two backends:
  *
  *   SalesNav (default): resolve flagship id -> salesnav id, then paginate
- *     salesApiLeadSearch with CONNECTION_OF + RELATIONSHIP:S. Requires the seat
+ *     salesApiLeadSearch with CONNECTION_OF + RELATIONSHIP:S (or F,S with
+ *     --relationship, to include the viewer's own mutuals). Requires the seat
  *     cookies captured by `allman login` (REST-only at call time, no handshake).
  *     Less restricted, returns salesnav id + numeric member id.
  *

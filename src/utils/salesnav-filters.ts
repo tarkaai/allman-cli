@@ -158,7 +158,8 @@ export function hasFilters(filters: LeadSearchFilters | null | undefined): boole
     filters &&
       ((filters.regions?.length ?? 0) > 0 ||
         (filters.seniorities?.length ?? 0) > 0 ||
-        (filters.relationship?.length ?? 0) > 0)
+        // The default RELATIONSHIP:S clause is not a filter: the query is unchanged.
+        (filters.relationship ?? []).some((d) => d !== "S"))
   );
 }
 

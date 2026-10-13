@@ -12,8 +12,9 @@
  *   GET /sales-api/salesApiProfiles?ids=List((profileId:<flagshipId>,authType:undefined,authToken:undefined))
  *       → resolves a flagship id (ACoXXXX) to a salesnav id (ACwXXXX).
  *   GET /sales-api/salesApiLeadSearch?q=searchQuery&query=(...)&decorationId=...
- *       → people search; CONNECTION_OF + RELATIONSHIP:S yields the 2nd-degree
- *         connections of person X (= X's 1st-degree network visible to us).
+ *       → people search; CONNECTION_OF + RELATIONSHIP:S yields person X's
+ *         connections who are 2nd-degree to the viewer; RELATIONSHIP:F adds the
+ *         viewer's own mutuals (`--relationship`).
  *
  * URN namespaces:
  *   urn:li:fs_salesProfile:(<salesnavId>,<ctx>,<token>)  (salesnav, ACwXXXX)
@@ -272,7 +273,8 @@ function facetClause(type: string, values: FilterValue[]): string {
 
 /**
  * Build the rest.li `query=(filters:List(...))` string for the CONNECTION_OF
- * facet (2nd-degree, i.e. all of person X's 1st-degree connections).
+ * facet: person X's 1st-degree connections, filtered by their distance from
+ * the viewer (RELATIONSHIP:S by default, F and/or S via `filters.relationship`).
  * `text:` labels are omitted — the server only needs id + selectionType, and
  * omitting them keeps names/ids out of the request beyond the target id.
  *

@@ -175,6 +175,9 @@ describe("relationship (--relationship)", () => {
     const f = parseFilterFlags({ relationship: "all" });
     expect(f).toEqual({ relationship: ["F", "S"] });
     expect(hasFilters(f)).toBe(true);
+    // The historical default is not a filter: it leaves the query byte-identical.
+    expect(hasFilters({ relationship: ["S"] })).toBe(false);
+    expect(hasFilters(parseFilterFlags({ relationship: "2nd" }))).toBe(false);
     const bay = SLICE_PLANS[0]?.[0];
     if (!bay) throw new Error("slice plan missing");
     expect(mergeFilters(f, bay.filters)).toEqual({
