@@ -20,6 +20,7 @@
  *   urn:li:fsd_profile:<flagshipId>                       (flagship, ACoXXXX)
  *   urn:li:member:<numeric>                               (canonical member id)
  */
+import type { FilterValue, LeadSearchFilters } from "../../../utils/salesnav-filters.js";
 import type { LinkedInApiClient } from "../client.js";
 import { bestImageUrl } from "./profile-detail.js";
 
@@ -261,27 +262,42 @@ type LeadSearchRaw = LeadSearchInner & {
   included?: Array<DecoratedHit & RawSalesCompany>;
 };
 
+/** One facet clause: `(type:REGION,values:List((id:…,selectionType:INCLUDED),…))`. */
+function facetClause(type: string, values: FilterValue[]): string {
+  const list = values
+    .map((v) => `(id:${v.id},selectionType:${v.include ? "INCLUDED" : "EXCLUDED"})`)
+    .join(",");
+  return `(type:${type},values:List(${list}))`;
+}
+
 /**
  * Build the rest.li `query=(filters:List(...))` string for the CONNECTION_OF
  * facet (2nd-degree, i.e. all of person X's 1st-degree connections).
  * `text:` labels are omitted — the server only needs id + selectionType, and
  * omitting them keeps names/ids out of the request beyond the target id.
+ *
+ * Optional `filters` append REGION / SENIORITY_LEVEL clauses. A single search
+ * stops at 1,000 results, so callers partition big networks with these facets
+ * (see `utils/salesnav-filters.ts`). Without filters the output is unchanged.
  */
-export function buildConnectionOfQuery(salesnavId: string): string {
-  return (
-    "(filters:List(" +
-    `(type:CONNECTION_OF,values:List((id:${salesnavId},selectionType:INCLUDED))),` +
-    "(type:RELATIONSHIP,values:List((id:S,selectionType:INCLUDED)))" +
-    "))"
-  );
+export function buildConnectionOfQuery(salesnavId: string, filters?: LeadSearchFilters): string {
+  const clauses = [
+    `(type:CONNECTION_OF,values:List((id:${salesnavId},selectionType:INCLUDED)))`,
+    "(type:RELATIONSHIP,values:List((id:S,selectionType:INCLUDED)))",
+  ];
+  if (filters?.regions?.length) clauses.push(facetClause("REGION", filters.regions));
+  if (filters?.seniorities?.length) {
+    clauses.push(facetClause("SENIORITY_LEVEL", filters.seniorities));
+  }
+  return `(filters:List(${clauses.join(",")}))`;
 }
 
 /** Issue one page of the CONNECTION_OF search. Pagination is offset+count. */
 export async function leadSearchConnectionOf(
   client: LinkedInApiClient,
-  opts: { salesnavId: string; start: number; count: number }
+  opts: { salesnavId: string; start: number; count: number; filters?: LeadSearchFilters }
 ): Promise<LeadSearchPage> {
-  const query = buildConnectionOfQuery(opts.salesnavId);
+  const query = buildConnectionOfQuery(opts.salesnavId, opts.filters);
   const url =
     `${SALES_API_BASE}/salesApiLeadSearch?q=searchQuery&query=${restli(query)}` +
     `&start=${opts.start}&count=${opts.count}&decorationId=${LEAD_SEARCH_DECORATION_ID}`;

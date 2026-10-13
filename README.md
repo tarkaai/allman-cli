@@ -493,7 +493,7 @@ Writes `{myProfileId}/connections/{flagshipId}.json` per connection plus a `{slu
 List the 1st-degree connections of another person (`<slug>` = a LinkedIn slug or profile URL). Results are stored under `connections-of/{targetId}/`.
 
 Two backends, chosen automatically:
-- **Sales Navigator** (default when the account has a seat): `salesApiLeadSearch` with a `CONNECTION_OF` filter. Returns SalesNav id + numeric member id. ~2,500-result cap.
+- **Sales Navigator** (default when the account has a seat): `salesApiLeadSearch` with a `CONNECTION_OF` filter. Returns SalesNav id + numeric member id. **1,000-result cap per search** — pass `--slice` for bigger networks.
 - **Flagship** (fallback, or `--flagship`): `voyagerSearchDashClusters` people search with `connectionOf` + `network=[S]`. Returns flagship id + numeric member id + slug. ~1,000-result cap. The (rotating) queryId is discovered from the live bundle and cached in `query-cache.json`.
 
 ```bash
@@ -502,7 +502,14 @@ allman connections-of jane-doe --flagship      # force flagship (no fallback)
 allman connections-of jane-doe --salesnav      # force SalesNav (errors without a seat)
 allman connections-of jane-doe --csv ./x.csv   # also export a CSV
 allman connections-of jane-doe --json          # stream NDJSON (no store write)
+allman connections-of jane-doe --slice         # network > 1,000: split by region, then seniority, and merge
+allman connections-of jane-doe --region bay,seattle          # only Bay Area + Seattle
+allman connections-of jane-doe --exclude-region us --seniority exec   # non-US VPs, CXOs, owners
 ```
+
+**Getting past the 1,000-result cap.** A single Sales Navigator search returns at most 1,000 results, whatever `total` it reports. `--slice` probes the total with a one-result request and, when it exceeds the cap, partitions the search by region (Bay Area, Seattle, rest of US, non-US) and then by seniority (VP/CXO/Owner vs. the rest), pulls each slice, and merges them by SalesNav id. Slices overlap a little on LinkedIn's side and the unfiltered total undercounts, so the merged count can exceed the reported total. A slice still over the cap after both splits is truncated with a warning.
+
+`--region`, `--exclude-region`, `--seniority`, and `--exclude-seniority` take comma-separated LinkedIn ids or aliases (`bay` = 90000084, `seattle` = 90000091, `us` = 103644278; `vp` = 300, `cxo` = 310, `owner` = 320, `exec` = all three). With `--slice`, explicit filters form the base of every slice, and a split is skipped when your filters already include a value for that facet (`--region bay --slice` goes straight to the seniority split; with both an included region and an included seniority there is nothing left to split, so the search is pulled as one slice and truncated at the cap). These facets exist only on Sales Navigator, so they error out on the flagship backend.
 
 > Only works for people whose network LinkedIn exposes to you (generally your own 1st-degree connections). If a search returns nothing, the command stops before paginating further.
 
@@ -513,6 +520,9 @@ allman connections-of jane-doe --json          # stream NDJSON (no store write)
 | `-n, --limit <n>` | backend cap | Max results to fetch |
 | `--flagship` | — | Force flagship (no fallback) |
 | `--salesnav` | — | Force Sales Navigator (no fallback; errors without a seat) |
+| `--region <ids>` / `--exclude-region <ids>` | — | SalesNav only: geo ids or aliases (`bay`, `seattle`, `us`) |
+| `--seniority <ids>` / `--exclude-seniority <ids>` | — | SalesNav only: seniority ids or aliases (`vp`, `cxo`, `owner`, `exec`) |
+| `--slice` | — | SalesNav only: partition the search to get past the 1,000-result cap |
 | `--csv <path>` | — | Also export a CSV to this path |
 | `--no-save` | — | Don't write to the store (use with `--csv`) |
 | `--json` | — | Stream NDJSON to stdout (no store write) |
