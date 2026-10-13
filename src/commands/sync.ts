@@ -23,9 +23,10 @@ import { listConversations } from "../linkedin/api/endpoints/conversations.js";
 import { fetchMessages, type MessageData } from "../linkedin/api/endpoints/messages.js";
 import { getProfileSlugById } from "../linkedin/api/endpoints/profiles.js";
 import { loadSession } from "../linkedin/api/session.js";
+import { buildConversationRecord } from "../store/conversation-record.js";
 import type { ConversationStore } from "../store/conversations.js";
 import { resolveStorePath, Store } from "../store/index.js";
-import type { ConversationRecord, StoredMessage } from "../store/types.js";
+import type { StoredMessage } from "../store/types.js";
 import * as output from "../utils/output.js";
 import { type DownloadRateLimiter, getDownloadRateLimiter } from "../utils/rate-limiter.js";
 import { parseSince } from "../utils/time.js";
@@ -237,66 +238,21 @@ export async function syncCommand(options: SyncOptions): Promise<void> {
       // Skip activity above the newer boundary (e.g. when --to is in the past).
       if (conv.lastActivityAt && conv.lastActivityAt > toMs) continue;
 
-      // Skip group conversations — we only support 1:1
-      if (conv.isGroup) continue;
-
       const convId = extractBareConvId(conv.backendUrn || conv.urn);
-      const otherParticipant = conv.participants.find((p) => p.entityUrn !== myProfileUrn);
-      if (!otherParticipant) continue;
-
-      const contactProfileUrn = otherParticipant.entityUrn;
-      const contactProfileId = contactProfileUrn.replace("urn:li:fsd_profile:", "");
-
-      // Resolve the contact's slug — check existing record first to avoid redundant API calls
-      let slug: string | null = null;
       const existingRecord = await conversations.read(convId);
-      if (existingRecord?.slug) {
-        slug = existingRecord.slug;
-      } else {
-        slug = await resolveSlugWithBackoff(apiClient, contactProfileId, backoff);
-      }
 
-      const fullName = otherParticipant.name ?? "Unknown";
-      const { firstName, lastName } = splitName(fullName);
-
-      const record: ConversationRecord = {
-        convId,
-        profileId: contactProfileId,
-        slug,
-        convUrn: conv.urn,
-        backendUrn: conv.backendUrn || null,
-        profileUrn: contactProfileUrn,
-        memberUrn: null,
-        firstName,
-        lastName,
-        name: fullName,
-        headline: otherParticipant.headline ?? null,
-        profileUrl: otherParticipant.profileUrl ?? null,
-        profilePictures:
-          otherParticipant.profilePictures.length > 0 ? otherParticipant.profilePictures : null,
-        distance: otherParticipant.distance,
-        pronoun: otherParticipant.pronoun,
-        memberBadgeType: otherParticipant.memberBadgeType,
-        isPremium: otherParticipant.isPremium,
-        isVerified: otherParticipant.isVerified,
-        unreadCount: conv.unreadCount,
-        lastActivityAt: conv.lastActivityAt ? new Date(conv.lastActivityAt).toISOString() : null,
-        lastReadAt: conv.lastReadAt ? new Date(conv.lastReadAt).toISOString() : null,
-        createdAt: conv.createdAt ? new Date(conv.createdAt).toISOString() : null,
-        read: conv.read,
-        notificationStatus: conv.notificationStatus,
-        categories: conv.categories,
-        conversationUrl: conv.conversationUrl,
-        disabledFeatures: conv.disabledFeatures,
-        syncState: existingRecord?.syncState ?? {
-          oldestMessageAt: null,
-          newestMessageAt: null,
-          lastSyncAt: null,
-          totalSynced: 0,
-          fullyBackfilled: false,
-        },
-        fetchedAt: new Date().toISOString(),
-      };
+      // Build the record (1:1 or group). Slug lookups go through the shared
+      // backoff; group participants are capped per conversation and cached on
+      // the existing record so a re-sync never re-bursts them.
+      const record = await buildConversationRecord({
+        conv,
+        myProfileUrn,
+        existing: existingRecord,
+        conversations,
+        resolveSlug: (id) => resolveSlugWithBackoff(apiClient, id, backoff),
+      });
+      if (!record) continue;
+      const { slug, name: fullName } = record;
 
       await conversations.upsert(convId, record);
       totalConversations++;
@@ -308,6 +264,7 @@ export async function syncCommand(options: SyncOptions): Promise<void> {
           convId,
           slug,
           name: fullName,
+          isGroup: record.isGroup === true,
           conversationsSeen: totalConversations,
         });
       }
@@ -406,12 +363,6 @@ function extractHttpStatus(err: unknown): number | null {
 
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
-}
-
-function splitName(name: string): { firstName: string; lastName: string } {
-  const spaceIdx = name.indexOf(" ");
-  if (spaceIdx === -1) return { firstName: name, lastName: "" };
-  return { firstName: name.slice(0, spaceIdx), lastName: name.slice(spaceIdx + 1) };
 }
 
 /**

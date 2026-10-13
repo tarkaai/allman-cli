@@ -57,9 +57,9 @@ if [ "$REQUIRE_AUTH" = "0" ] && [ -n "$auth" ]; then
   echo "sent auth without a token: '$auth'" >&2; exit 46
 fi
 case "$url" in
-  'https://api.github.com/repos/tarkaai/allman-cli/releases?per_page=1')
+  'https://api.github.com/repos/tarkaai/allman-cli/releases/latest')
     [ -z "$out" ] || exit 43
-    printf '%s\\n' '[{"tag_name":"test-release","assets":[{"name":"${asset}","id":1}]}]' ;;
+    printf '%s\\n' '{"tag_name":"test-release","assets":[{"name":"${asset}","id":1}]}' ;;
   'https://api.github.com/repos/tarkaai/allman-cli/releases/assets/1')
     [ "$accept" = "Accept: application/octet-stream" ] || exit 44
     printf '%s\\n' '#!/bin/sh' 'echo allman test binary' > "$out" ;;

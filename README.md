@@ -4,7 +4,7 @@ LinkedIn messenger from the CLI. File-backed, git-versioned, designed for AI age
 
 Messages are stored locally as JSONL files in a git repository. All reads come from disk. Network calls go to LinkedIn's private APIs using cookies captured via a headed Playwright browser session.
 
-> **Want a terminal inbox UI on top of this?** See the companion repo, [`tarkaai/allman-tui`](https://github.com/tarkaai/allman-tui). It bundles the `allman` binary, so installing the TUI gets you both.
+> **Want an inbox on top of this?** Two front-ends build on this CLI and bundle the `allman` binary, so installing either gets you both: [`tarkaai/allman-tui`](https://github.com/tarkaai/allman-tui), the terminal inbox, and [`tarkaai/allman-mac`](https://github.com/tarkaai/allman-mac), the native macOS menu bar app.
 
 ---
 
@@ -19,7 +19,7 @@ curl -fsSL https://raw.githubusercontent.com/tarkaai/allman-cli/main/install.sh 
 Pin a version or change the install prefix:
 
 ```bash
-curl -fsSL .../install.sh | VERSION=2026-04-20.1-alpha bash
+curl -fsSL .../install.sh | VERSION=v0.4.0 bash
 curl -fsSL .../install.sh | PREFIX=$HOME/.local bash
 ```
 
@@ -59,6 +59,7 @@ allman sync                        # pull conversation history (default: since l
 allman conversations               # list conversations
 allman messages sarah-chen         # show messages with sarah-chen
 allman send sarah-chen "Hey!"      # send a message
+allman send sarah-chen,jamie-rivera "Hey both!"   # start a group thread
 allman listen                      # stream real-time events to stdout as NDJSON
 ```
 
@@ -207,6 +208,11 @@ Each event is a JSON object on a single line. Example:
 
 ---
 
+`listen` also keeps the store current for two things the realtime stream carries that a sync would
+otherwise only catch later: reaction summaries (added or removed on linkedin.com) are written onto
+the stored message, and your own seen receipts (you read the thread on linkedin.com or your phone)
+flip the record to read.
+
 ### `allman conversations` (alias: `convs`)
 
 List conversations from the local store, sorted by most recent activity.
@@ -261,9 +267,10 @@ Send a message to a LinkedIn contact.
 allman send sarah-chen "Hey, how are you?"
 allman send "https://www.linkedin.com/in/sarah-chen" "Hello!"
 allman send "urn:li:messagingThread:2-abc123" "Following up"
+allman send 2-abc123 "Following up"                              # bare conversation id (1:1 or group)
 ```
 
-The `<to>` argument accepts a slug, profile URL, or conversation URN.
+The `<to>` argument accepts a slug, profile URL, profile URN, conversation URN, or a bare conversation id.
 
 **Behavior:**
 - **Pre-send sync**: fetches the 10 most recent messages before sending. If there are new inbound messages since the last sync that arrived after your last reply, the send is **aborted** and the new messages are shown. Re-run after reading them.
@@ -271,7 +278,32 @@ The `<to>` argument accepts a slug, profile URL, or conversation URN.
 - **Rate limiting**: minimum 3000ms between sends (configurable). State persisted to `rate-state.json` across process restarts.
 - Stores the sent message locally and commits the store.
 
+#### Group threads
+
+Several people start a **new group conversation**. List them comma-separated in `<to>` and/or repeat `--to`; each one is a slug, profile URL, or `urn:li:fsd_profile:…` URN (conversation ids are not people and are refused):
+
+```bash
+allman send sarah-chen,jamie-rivera "Hi both — can we find 30 minutes this week?"
+allman send sarah-chen --to jamie-rivera --to urn:li:fsd_profile:ACoAAEXAMPLE000001 "Hi all"
+allman send sarah-chen,jamie-rivera "Hi both" --dry-run        # show the resolved people + plan, send nothing
+```
+
+- Every recipient is resolved before anything is sent (local 1:1 record first, then the profile lookup); you and duplicates are dropped. If only one person is left, it is an ordinary 1:1 send.
+- One request creates the thread and delivers the message — the same call the LinkedIn web client makes.
+- **Each run creates another group**, even with the same people. To keep talking in a group you already have, address it by its conversation id: `allman send <convId> "…"` (see `allman conversations`).
+- The new thread is stored like any group synced by `sync`/`listen` (`isGroup`, `participants[]`, no slug alias) and `--json` reports its `convId`. If LinkedIn does not confirm the thread right away, a provisional record is written and the next `allman sync` fills it in.
+- `--reply-to` needs an existing thread, so it cannot be combined with several recipients.
+
 ---
+
+Reply to a specific message (LinkedIn renders the quoted original above your text):
+
+```bash
+allman send jamie-rivera "Thursday works" --reply-to urn:li:messagingMessage:2-…
+```
+
+The message must already be synced locally; any URN form from `allman messages --json` works.
+Verified live: the quoted original renders on linkedin.com exactly as a reply sent from the web client.
 
 ### `allman search <query>`
 
@@ -303,6 +335,60 @@ allman search --json "sarah"
 | `-n, --limit <n>` | 10 | Max results |
 
 ---
+
+### `allman media <conversation>`
+
+Download a conversation's attachments — images, files, voice notes, video — into the store.
+
+```bash
+allman media jamie-rivera                      # everything in the newest 200 messages
+allman media jamie-rivera --message <urn> --json
+```
+
+Files land in `{account}/{convId}/media/{messageId}-{index}.{ext}` and are **gitignored** (binary
+blobs don't belong in the store's history). Already-present files are skipped, so front-ends can
+call this every time a thread opens. The private `dms/prv/…` CDN URLs only work with the session
+cookies, which is why the download goes through the CLI rather than a front-end fetching them.
+Records synced before the parser captured media URLs are handled by reading the raw payload.
+
+### `allman whoami`
+
+The signed-in member's own profile — name, headline, slug and photo — cached in `AUTH.json`.
+`allman login` only captures what the browser shows, which is often incomplete, so front-ends
+call this to label the account. Fetched from LinkedIn once when the name is missing, or on demand.
+
+```bash
+allman whoami
+allman whoami --refresh --json
+```
+
+### `allman people <query>`
+
+Find people you can message, by name — the same lookup as linkedin.com's "New message" box
+(your connections and coworkers). Read-only.
+
+```bash
+allman people "jane roe"                 # name, degree, headline
+allman people "jane roe" --limit 5 --json
+```
+
+Each result carries the `slug` you need for `allman send <slug>` / `allman connect <slug>`,
+the profile id, headline, picture, and `convId` when a local thread already exists. Slugs come
+from the local store (a conversation or exported connection) when the person is known, otherwise
+one profile lookup per result.
+
+### `allman read <target>`
+
+Mark a conversation as read on LinkedIn (and in the local record).
+
+```bash
+allman read jamie-rivera
+allman read https://www.linkedin.com/in/jamie-rivera/ --json
+```
+
+Front-ends call this when a thread is opened so the unread state on linkedin.com matches what you
+have actually seen. Uses the web client's partial update on the conversation (`{"patch":{"$set":{"read":true}}}`);
+the `markAllMessagesAsSeen` action returns HTTP 400.
 
 ### `allman inbox`
 
@@ -506,8 +592,8 @@ allman companies                   # resolve every employer referenced by stored
 allman companies --current-only    # only people's current employers
 allman companies --limit 200       # cap how many to fetch this run
 allman companies --force           # re-fetch companies already stored
-allman companies urn:li:fsd_company:11850   # resolve one company
-allman companies marketbridge      # ...by slug or numeric id too
+allman companies urn:li:fsd_company:100001   # resolve one company
+allman companies example-corp      # ...by slug or numeric id too
 ```
 
 A URN or numeric id is fetched directly. A vanity slug costs one extra request first, to resolve it to an id.

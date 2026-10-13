@@ -129,14 +129,72 @@ export interface SyncState {
   fullyBackfilled: boolean;
 }
 
+/**
+ * One member of a conversation other than the signed-in user.
+ *
+ * Stored on group records (`ConversationRecord.participants`) in LinkedIn's
+ * order. The per-person fields mirror the top-level contact fields of a 1:1
+ * record so a reader can render either shape with the same code.
+ */
+export interface ConversationParticipant {
+  /** LinkedIn profile ID (e.g. "ACoAAA-2BsYB...") */
+  profileId: string;
+  /** urn:li:fsd_profile:{profileId} — matches `StoredMessage.fromUrn` */
+  profileUrn: string;
+  /** urn:li:msg_messagingParticipant:… — the participant, not the person */
+  backendUrn: string | null;
+  /** Real LinkedIn publicIdentifier slug, or null if unresolved */
+  slug: string | null;
+  firstName: string;
+  lastName: string;
+  /** Computed: "{firstName} {lastName}" */
+  name: string;
+  headline: string | null;
+  profileUrl: string | null;
+  profilePictures: ProfilePicture[] | null;
+  /** DISTANCE_1, DISTANCE_2, DISTANCE_3, OUT_OF_NETWORK */
+  distance: string | null;
+  pronoun: string | null;
+  /** VERIFIED_PROFILE, etc. */
+  memberBadgeType: string | null;
+  isPremium: boolean;
+  isVerified: boolean;
+}
+
+/**
+ * RECORD.json — one per conversation directory.
+ *
+ * 1:1 threads: the contact fields describe the other person and the store
+ * also creates `{profileId}` and `{slug}` alias symlinks to the directory.
+ *
+ * Group threads (`isGroup: true`): the contact fields are filled from the
+ * FIRST other participant so readers written for 1:1 records still see a
+ * person; `slug` is null; `name` is the group `title` when LinkedIn has one,
+ * otherwise the participants' full names joined with ", ". Every other member
+ * is listed in `participants`. No alias symlinks are created for a group —
+ * they would hijack the 1:1 thread with that person — so a group is only
+ * addressable by its bare `convId`.
+ */
 export interface ConversationRecord {
   // === Three canonical IDs (must match filesystem) ===
   /** Directory name — LinkedIn conversation ID */
   convId: string;
-  /** Contact's LinkedIn profile ID (e.g. "ACoAAA-2BsYB...") */
+  /** Contact's LinkedIn profile ID (e.g. "ACoAAA-2BsYB..."); first other participant for a group */
   profileId: string;
-  /** Real LinkedIn publicIdentifier slug, or null if unresolved */
+  /** Real LinkedIn publicIdentifier slug, or null if unresolved. Always null for a group. */
   slug: string | null;
+
+  // === Group threads (absent / false on 1:1 records) ===
+  /** True for a group thread. Omitted (or false) on 1:1 records. */
+  isGroup?: boolean;
+  /** LinkedIn's group title when set. Only present on group records. */
+  title?: string | null;
+  /**
+   * Every participant EXCEPT the signed-in user, in LinkedIn's order.
+   * Only present on group records. Match a message's sender with
+   * `participants[i].profileUrn === message.fromUrn`.
+   */
+  participants?: ConversationParticipant[];
 
   // === LinkedIn URNs (for API calls) ===
   /** urn:li:msg_conversation:... */
@@ -240,6 +298,15 @@ export interface MessageReaction {
 export interface StoredMessage {
   urn: string;
   timestamp: number;
+  /**
+   * Sender as a profile URN — `urn:li:fsd_profile:{profileId}` — for both
+   * synced (REST `*sender` → participant `hostIdentityUrn`) and streamed
+   * (SSE `fs_miniProfile` normalized) messages. In a group thread, match it
+   * against `ConversationRecord.participants[].profileUrn` (NOT `backendUrn`).
+   * Only when LinkedIn omits the participant from the response graph does
+   * this degrade to the raw `urn:li:msg_messagingParticipant:…` reference,
+   * which then matches `participants[].backendUrn`.
+   */
   fromUrn: string;
   fromName: string;
   isFromMe: boolean;

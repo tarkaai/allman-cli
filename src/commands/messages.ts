@@ -97,6 +97,9 @@ async function resolveTarget(
     const found = await conversations.findByUrn(target);
     return found?.convId ?? null;
   }
+  // A bare conversation id must keep its case (slug resolution lowercases).
+  // Group threads have no slug alias, so this is their only address.
+  if (target.startsWith("2-") && (await conversations.exists(target))) return target;
   let slug: string;
   try {
     slug = slugFromUrl(target);

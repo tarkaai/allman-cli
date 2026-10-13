@@ -105,10 +105,10 @@ describe("parseProfileCore", () => {
     // `urn:li:member:<n>` — the id Sales Navigator keys on, and therefore the
     // only join between the two backends.
     const d = parseProfileCore({
-      included: [profileEntry({ objectUrn: "urn:li:member:375843124" })],
+      included: [profileEntry({ objectUrn: "urn:li:member:100000001" })],
     });
-    expect(d?.objectUrn).toBe("urn:li:member:375843124");
-    expect(d?.memberId).toBe("375843124");
+    expect(d?.objectUrn).toBe("urn:li:member:100000001");
+    expect(d?.memberId).toBe("100000001");
   });
 
   it("leaves member ids null when objectUrn is absent", () => {
@@ -280,18 +280,18 @@ describe("parsePositions", () => {
         {
           $type: "com.linkedin.voyager.dash.identity.profile.Position",
           title: "Principal",
-          companyName: "MarketBridge",
-          companyUrn: "urn:li:fsd_company:11850",
-          locationName: "Washington, DC, USA",
+          companyName: "Example-Corp",
+          companyUrn: "urn:li:fsd_company:100001",
+          locationName: "Example City, EX, USA",
           description: "Led GTM strategy engagements.",
           dateRange: { start: { month: 3, year: 2009 }, end: { month: 6, year: 2011 } },
         },
       ],
     });
-    expect(pos?.companyUrn).toBe("urn:li:fsd_company:11850");
+    expect(pos?.companyUrn).toBe("urn:li:fsd_company:100001");
     expect(pos?.startDate).toBe("2009-03");
     expect(pos?.endDate).toBe("2011-06");
-    expect(pos?.location).toBe("Washington, DC, USA");
+    expect(pos?.location).toBe("Example City, EX, USA");
     expect(pos?.description).toBe("Led GTM strategy engagements.");
     expect(pos?.current).toBe(false);
   });
@@ -317,22 +317,22 @@ describe("parsePositions", () => {
       included: [
         {
           $type: `${P}Position`,
-          entityUrn: "urn:li:fsd_profilePosition:(ACoSYNTH,2401416182)",
+          entityUrn: "urn:li:fsd_profilePosition:(ACoSYNTH,1)",
           title: "Gesellschafter",
-          companyName: "Seibert Solutions GmbH",
-          companyUrn: "urn:li:fsd_company:92762681",
+          companyName: "Beispiel Lösungen GmbH",
+          companyUrn: "urn:li:fsd_company:100002",
           employmentTypeUrn: "urn:li:fsd_employmentType:3",
-          geoUrn: "urn:li:fsd_geo:102473731",
-          geoLocationName: "Stuttgart, Baden-Württemberg, Deutschland",
+          geoUrn: "urn:li:fsd_geo:300001",
+          geoLocationName: "Beispielstadt, Beispielland, Deutschland",
           dateRange: { start: { month: 12, year: 2023 } },
         },
       ],
     });
-    expect(pos?.positionUrn).toBe("urn:li:fsd_profilePosition:(ACoSYNTH,2401416182)");
+    expect(pos?.positionUrn).toBe("urn:li:fsd_profilePosition:(ACoSYNTH,1)");
     expect(pos?.employmentTypeUrn).toBe("urn:li:fsd_employmentType:3");
-    expect(pos?.geoUrn).toBe("urn:li:fsd_geo:102473731");
+    expect(pos?.geoUrn).toBe("urn:li:fsd_geo:300001");
     // locationName is absent, so the geo-derived label is used.
-    expect(pos?.location).toBe("Stuttgart, Baden-Württemberg, Deutschland");
+    expect(pos?.location).toBe("Beispielstadt, Beispielland, Deutschland");
   });
 
   it("returns [] when the response carries no positions", () => {
@@ -409,8 +409,8 @@ describe("parseEducations / parseSkills", () => {
             schoolName: "Test University",
             degreeName: "Bachelor of Science - BS",
             fieldOfStudy: "Computer Science",
-            schoolUrn: "urn:li:fsd_school:18158",
-            companyUrn: "urn:li:fsd_company:3558",
+            schoolUrn: "urn:li:fsd_school:200001",
+            companyUrn: "urn:li:fsd_company:100003",
           },
         ],
       })
@@ -419,8 +419,8 @@ describe("parseEducations / parseSkills", () => {
         school: "Test University",
         degree: "Bachelor of Science - BS",
         fieldOfStudy: "Computer Science",
-        schoolUrn: "urn:li:fsd_school:18158",
-        companyUrn: "urn:li:fsd_company:3558",
+        schoolUrn: "urn:li:fsd_school:200001",
+        companyUrn: "urn:li:fsd_company:100003",
         startDate: null,
         endDate: null,
         activities: null,
@@ -438,16 +438,16 @@ describe("parseEducations / parseSkills", () => {
       included: [
         {
           $type: `${P}Education`,
-          entityUrn: "urn:li:fsd_profileEducation:(ACoSYNTH,1887176)",
-          schoolName: "University of Oregon",
+          entityUrn: "urn:li:fsd_profileEducation:(ACoSYNTH,2)",
+          schoolName: "Example State University",
           degreeName: "BA",
           fieldOfStudy: "Business Administration",
-          schoolUrn: "urn:li:fsd_school:19207",
-          companyUrn: "urn:li:fsd_company:5827",
+          schoolUrn: "urn:li:fsd_school:200002",
+          companyUrn: "urn:li:fsd_company:100004",
           degreeUrn: "urn:li:fsd_degree:7",
           standardizedFieldOfStudyUrn: "urn:li:fsd_fieldOfStudy:100",
-          activities: "Gamma Phi Beta, Nu Chapter",
-          description: "Studied abroad in Lyon.",
+          activities: "Example Society, Example Chapter",
+          description: "Studied abroad.",
           grade: "3.8",
           dateRange: { start: { year: 1992 }, end: { year: 1996 } },
         },
@@ -455,13 +455,13 @@ describe("parseEducations / parseSkills", () => {
     });
     expect(edu?.startDate).toBe("1992");
     expect(edu?.endDate).toBe("1996");
-    expect(edu?.activities).toBe("Gamma Phi Beta, Nu Chapter");
-    expect(edu?.description).toBe("Studied abroad in Lyon.");
+    expect(edu?.activities).toBe("Example Society, Example Chapter");
+    expect(edu?.description).toBe("Studied abroad.");
     expect(edu?.grade).toBe("3.8");
     expect(edu?.degreeUrn).toBe("urn:li:fsd_degree:7");
     // Falls back to the standardized URN when the plain one is absent.
     expect(edu?.fieldOfStudyUrn).toBe("urn:li:fsd_fieldOfStudy:100");
-    expect(edu?.educationUrn).toBe("urn:li:fsd_profileEducation:(ACoSYNTH,1887176)");
+    expect(edu?.educationUrn).toBe("urn:li:fsd_profileEducation:(ACoSYNTH,2)");
   });
 
   it("parses skill names and drops unnamed entries", () => {

@@ -18,6 +18,7 @@ describe("ensureGitignore", () => {
     const text = await readFile(join(dir, ".gitignore"), "utf8");
     expect(text).toContain("COOKIES.json\n");
     expect(text).toContain("COOKIES.json.*.tmp\n");
+    expect(text).toContain("media/\n");
   });
 
   it("appends entries an older store's .gitignore lacks, keeping what is there", async () => {
