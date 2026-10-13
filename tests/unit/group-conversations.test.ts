@@ -394,7 +394,7 @@ describe("group conversation records", () => {
     // 1:1 records keep the old behaviour: the thread name is the sender.
     expect(
       participantName(
-        { ...record, isGroup: false, name: "Only Person", profileUrn: record.profileUrn ?? "" },
+        { ...record, isGroup: false, name: "Only Person", profileUrn: record?.profileUrn ?? "" },
         "x"
       )
     ).toBe("Only Person");
