@@ -34,10 +34,9 @@ import { startCommand } from "./commands/start.js";
 import { statusCommand } from "./commands/status.js";
 import { storeCommitCommand, storePathCommand, storeStatusCommand } from "./commands/store-cmd.js";
 import { syncCommand } from "./commands/sync.js";
+import { whoamiCommand } from "./commands/whoami.js";
 import { error as printError, setDebugMode, setJsonMode } from "./utils/output.js";
 import { parseFilterFlags } from "./utils/salesnav-filters.js";
-import { whoamiCommand } from "./commands/whoami.js";
-import { setDebugMode, setJsonMode } from "./utils/output.js";
 
 const program = new Command();
 
