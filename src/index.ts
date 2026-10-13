@@ -35,7 +35,8 @@ import { statusCommand } from "./commands/status.js";
 import { storeCommitCommand, storePathCommand, storeStatusCommand } from "./commands/store-cmd.js";
 import { syncCommand } from "./commands/sync.js";
 import { whoamiCommand } from "./commands/whoami.js";
-import { setDebugMode, setJsonMode } from "./utils/output.js";
+import { error as printError, setDebugMode, setJsonMode } from "./utils/output.js";
+import { parseFilterFlags } from "./utils/salesnav-filters.js";
 
 const program = new Command();
 
@@ -551,9 +552,40 @@ program
   .option("-n, --limit <n>", "max results to fetch")
   .option("--flagship", "force the flagship people-search backend (no fallback)")
   .option("--salesnav", "force the Sales Navigator backend (no fallback; errors without a seat)")
+  .option(
+    "--region <ids>",
+    "SalesNav only: keep people in these LinkedIn geo ids (comma-separated; aliases: bay, seattle, us)"
+  )
+  .option("--exclude-region <ids>", "SalesNav only: drop people in these geo ids (same aliases)")
+  .option(
+    "--seniority <ids>",
+    "SalesNav only: keep these seniority levels (comma-separated; aliases: vp, cxo, owner, exec = vp+cxo+owner)"
+  )
+  .option("--exclude-seniority <ids>", "SalesNav only: drop these seniority levels (same aliases)")
+  .option(
+    "--relationship <degrees>",
+    "SalesNav only: which of their connections to return by distance from you — 2nd (default), 1st (your mutuals), or all"
+  )
+  .option(
+    "--slice",
+    "SalesNav only: when the network exceeds the 1,000-result cap, split the search by region then seniority and merge the slices"
+  )
   .option("--json", "stream NDJSON to stdout (ephemeral — does not write the store)")
   .action(async (slug: string, opts, cmd) => {
     const globalOpts = cmd.parent?.opts() ?? {};
+    let filters: ReturnType<typeof parseFilterFlags>;
+    try {
+      filters = parseFilterFlags({
+        region: opts.region,
+        excludeRegion: opts.excludeRegion,
+        seniority: opts.seniority,
+        excludeSeniority: opts.excludeSeniority,
+        relationship: opts.relationship,
+      });
+    } catch (err) {
+      printError((err as Error).message, 1);
+      return;
+    }
     await connectionsOfCommand(slug, {
       account: opts.account ?? globalOpts.account,
       store: opts.store ?? globalOpts.store,
@@ -563,6 +595,8 @@ program
       limit: opts.limit ? parseInt(opts.limit, 10) : undefined,
       flagship: opts.flagship === true,
       salesnav: opts.salesnav === true,
+      filters,
+      slice: opts.slice === true,
     });
   });
 

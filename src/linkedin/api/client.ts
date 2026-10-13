@@ -149,7 +149,13 @@ export type LinkedInErrorCode =
 // Cookie persistence callback
 // ---------------------------------------------------------------------------
 
-export type CookiePersistFn = (updatedJar: CookieJar) => Promise<void>;
+/**
+ * Called after a response carried Set-Cookie headers. Receives the client's
+ * in-memory jar (already updated) AND the raw Set-Cookie headers, so the
+ * persistence layer can merge just those cookies into whatever is on disk
+ * instead of overwriting the file with this process's snapshot.
+ */
+export type CookiePersistFn = (updatedJar: CookieJar, setCookieHeaders: string[]) => Promise<void>;
 export type RateStatePersistFn = (lastMessageSentAt: number) => Promise<void>;
 
 // ---------------------------------------------------------------------------
@@ -283,7 +289,7 @@ export class LinkedInApiClient {
     if (setCookieHeaders.length > 0) {
       await mergeCookies(this.jar, setCookieHeaders);
       if (this.onCookieUpdate) {
-        await this.onCookieUpdate(this.jar);
+        await this.onCookieUpdate(this.jar, setCookieHeaders);
       }
     }
 

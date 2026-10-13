@@ -111,7 +111,10 @@ Every API call must:
 2. Filter out expired cookies
 3. Build `Cookie:` header string
 4. Extract `csrf-token` from `JSESSIONID` value (strip surrounding quotes)
-5. After response: parse `Set-Cookie` headers with `tough-cookie`, merge by name, save back
+5. After response: parse `Set-Cookie` headers with `tough-cookie`, merge them into the
+   in-memory jar, and persist by re-reading `COOKIES.json` and merging the new cookies
+   into it (`persistSetCookies` in `session.ts`). Never overwrite the file with one
+   process's snapshot — a long-running `listen` would clobber a fresh `login`.
 
 ### URN construction for send
 ```
@@ -203,7 +206,7 @@ allman whoami [--refresh] [--json]      # own profile → AUTH.json (name/headli
 allman people <query> [--limit N] [--json]
 allman media <contact-slug|url|urn|convId> [--message <urn>] [--limit N] [--json]
 allman connections [--salesnav|--flagship] [--limit N] [--csv <path>] [--no-save] [--include-headline] [--enrich [--deep]] [--json]
-allman connections-of <slug> [--flagship|--salesnav] [--limit N] [--csv <path>] [--no-save] [--json]
+allman connections-of <slug> [--flagship|--salesnav] [--region <ids>] [--exclude-region <ids>] [--seniority <ids>] [--exclude-seniority <ids>] [--relationship 1st|2nd|all] [--slice] [--limit N] [--csv <path>] [--no-save] [--json]
 allman enrich [target] [--deep] [--force] [--limit N] [--json]
 allman connect <slug|url|urn> [--note <text>] [--dry-run] [--json]
 allman store path|commit|status

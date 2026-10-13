@@ -6,8 +6,10 @@
  *      and stored in accounts/{slug}/RECORD.json as a CookieJar JSON object.
  *   2. Before every API request, we load the CookieJar, build the Cookie header,
  *      and extract the CSRF token (= JSESSIONID value, quotes stripped).
- *   3. After every API response, we parse any Set-Cookie headers and merge them
- *      into the CookieJar, then persist back to the store.
+ *   3. After every API response, we parse any Set-Cookie headers, merge them
+ *      into the CookieJar, and persist them by merging into the jar on disk
+ *      (see session.ts `persistSetCookies`) — never by overwriting the file
+ *      with one process's snapshot.
  *
  * All cookie handling is RFC 6265-compliant via tough-cookie.
  *
@@ -29,7 +31,7 @@ export const CSRF_COOKIE_NAME = "JSESSIONID";
 const JAR_OPTIONS = { rejectPublicSuffixes: false };
 
 /** Load a CookieJar from a stored account record. Returns an empty jar if none stored. */
-export function loadCookieJar(record: AccountRecord): CookieJar {
+export function loadCookieJar(record: Pick<AccountRecord, "cookieJar">): CookieJar {
   if (!record.cookieJar) {
     return new CookieJar(undefined, JAR_OPTIONS);
   }
