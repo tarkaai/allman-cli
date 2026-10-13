@@ -42,6 +42,7 @@ export async function loginCommand(options: LoginOptions): Promise<void> {
   // If --account is provided, try resolving it to an existing profile ID
   let existingCookieJar: object | null = null;
   let existingProfileId: string | null = null;
+  let existingSlug: string | null = null;
 
   if (options.account) {
     const resolved = await store.accounts.resolveId(options.account);
@@ -49,6 +50,7 @@ export async function loginCommand(options: LoginOptions): Promise<void> {
       existingProfileId = resolved;
       const existing = await store.accounts.read(resolved);
       existingCookieJar = existing?.cookieJar ?? null;
+      existingSlug = existing?.profileSlug ?? null;
       if (existingCookieJar) {
         output.info(`Re-authenticating existing account (${options.account})...`);
       }
@@ -103,7 +105,24 @@ export async function loginCommand(options: LoginOptions): Promise<void> {
     }
   }
 
-  // 3. Re-auth of a named existing account → assume it's the same person.
+  // 3. Re-auth of a named existing account → assume it's the same person,
+  //    unless the browser showed a different person's slug: then the session
+  //    must not be filed under that account at all.
+  if (
+    !profileId &&
+    existingProfileId &&
+    profileSlug &&
+    existingSlug &&
+    profileSlug !== existingSlug
+  ) {
+    output.error(
+      `The browser session belongs to "${profileSlug}", not to the existing account ` +
+        `"${options.account}" (${existingSlug}). Nothing was written — log in again without ` +
+        `--account, or with the account that matches.`,
+      1
+    );
+    return;
+  }
   if (!profileId && existingProfileId) {
     output.warn(
       `Could not confirm the profile ID from LinkedIn; assuming it is the existing account ` +

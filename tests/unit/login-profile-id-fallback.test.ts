@@ -3,7 +3,8 @@
  * flow didn't expose the profile id. Fallback order under test:
  *   1. slug → URN lookup (pre-existing)
  *   2. voyager/api/me identifies the session
- *   3. --account named an existing account → assume that id (with a warning)
+ *   3. --account named an existing account → assume that id (with a warning),
+ *      unless the browser showed a different slug: then error, nothing written
  *   4. otherwise error, nothing written
  * All ids are synthetic.
  */
@@ -115,6 +116,47 @@ describe("login profile-id fallback", () => {
     const written = stderr.mock.calls.map((c) => String(c[0])).join("");
     expect(written).toMatch(/assuming it is the existing account "old-slug"/);
     stderr.mockRestore();
+  });
+
+  it("--account names an existing account but the browser slug differs → errors, old account untouched", async () => {
+    const store = new Store({ path: h.storePath, gitDebounceMs: 0 });
+    await store.init();
+    const oldJar = {
+      cookies: [{ key: "li_at", value: "old", domain: ".linkedin.com", path: "/" }],
+    };
+    await store.accounts.write(OLD_ID, {
+      urn: `urn:li:fsd_profile:${OLD_ID}`,
+      profileSlug: "old-slug",
+      name: "Old",
+      headline: null,
+      profileUrl: null,
+      imageUrl: null,
+      userType: null,
+      networkSize: null,
+      status: "authenticated",
+      cookieJar: oldJar,
+      cookiesUpdatedAt: "2026-01-01T00:00:00.000Z",
+      lastSyncAt: null,
+    });
+    await store.accounts.createAlias("old-slug", OLD_ID);
+    // The browser reached /in/someone-else/ but the URN sniff and /me both missed.
+    h.runLogin.mockResolvedValue(
+      browserResult({ profileUrl: "https://www.linkedin.com/in/someone-else/" })
+    );
+    const exit = vi.spyOn(process, "exit").mockImplementation(((code?: number) => {
+      throw new Error(`exit:${code}`);
+    }) as never);
+    const stderr = vi.spyOn(process.stderr, "write").mockImplementation(() => true);
+
+    await expect(
+      loginCommand({ store: h.storePath, account: "old-slug", salesnav: false })
+    ).rejects.toThrow(/exit:1/);
+
+    const cookies = JSON.parse(await readFile(join(h.storePath, OLD_ID, "COOKIES.json"), "utf8"));
+    expect(cookies.cookieJar).toEqual(oldJar); // the fresh session did not overwrite the old account
+    const written = stderr.mock.calls.map((c) => String(c[0])).join("");
+    expect(written).toMatch(/belongs to "someone-else", not to the existing account "old-slug"/);
+    exit.mockRestore();
   });
 
   it("nothing resolves and no --account → errors out, writes nothing", async () => {
