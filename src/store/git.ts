@@ -6,9 +6,18 @@
  * still providing near-realtime versioning during `allman listen`.
  */
 
+import { stat, unlink } from "node:fs/promises";
 import { join } from "node:path";
 import simpleGit, { type SimpleGit } from "simple-git";
 import * as output from "../utils/output.js";
+
+/**
+ * An `index.lock` older than this has no live owner: git holds the lock for
+ * the length of one `add`/`commit`, which is seconds even on a large store.
+ * A crash or force-quit mid-commit leaves the file behind, and every later
+ * commit then fails until someone deletes it by hand.
+ */
+export const STALE_LOCK_MS = 5 * 60 * 1000;
 
 export class StoreGit {
   private git: SimpleGit | null = null;
@@ -86,6 +95,7 @@ export class StoreGit {
         const msg = String(err);
         const locked = /index\.lock|\.lock['"]?: File exists|another git process/i.test(msg);
         if (!locked || attempt >= maxAttempts) throw err;
+        await this.clearStaleLock();
         const delay = 150 * attempt;
         output.debug(
           `Git: index locked, retrying in ${delay}ms (attempt ${attempt}/${maxAttempts})`
@@ -95,6 +105,46 @@ export class StoreGit {
     }
     output.debug(`Git: committed "${this.pendingMessage}" (${status.files.length} files)`);
     this.pendingMessage = "chore: update store";
+  }
+
+  /**
+   * `flush` for a command whose remote write has already happened (a message
+   * sent, a reaction added, a thread marked read). The data is on disk either
+   * way; a failed commit must not turn a delivered message into a non-zero
+   * exit that a caller (the Mac app, a script) would retry — that is how one
+   * send became four. Warns and returns false instead of throwing.
+   */
+  async flushOrWarn(context: string): Promise<boolean> {
+    try {
+      await this.flush();
+      return true;
+    } catch (err: unknown) {
+      const msg = String((err as Error).message ?? err).split("\n")[0];
+      output.warn(
+        `${context}, but the store commit failed: ${msg}. Run \`allman store commit\` to retry.`
+      );
+      return false;
+    }
+  }
+
+  /**
+   * Remove `.git/index.lock` when it is older than `STALE_LOCK_MS` — left by a
+   * git that died mid-commit, not held by anyone now. A fresh lock belongs to
+   * a concurrent allman process and is left alone for the retry loop.
+   */
+  async clearStaleLock(now = Date.now()): Promise<boolean> {
+    const lockPath = join(this.storePath, ".git", "index.lock");
+    try {
+      const st = await stat(lockPath);
+      if (now - st.mtimeMs < STALE_LOCK_MS) return false;
+      await unlink(lockPath);
+      output.warn(
+        `Removed stale ${lockPath} (untouched for ${Math.round((now - st.mtimeMs) / 60000)} min)`
+      );
+      return true;
+    } catch {
+      return false;
+    }
   }
 
   /** Return the path to the git-managed store directory. */

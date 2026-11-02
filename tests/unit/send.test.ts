@@ -17,15 +17,15 @@ import type { AccountRecord, ConversationRecord } from "@/store/types.js";
 // Mocks
 // ---------------------------------------------------------------------------
 
-vi.mock("simple-git", () => ({
-  default: vi.fn(() => ({
-    init: vi.fn().mockResolvedValue(undefined),
-    add: vi.fn().mockResolvedValue(undefined),
-    commit: vi.fn().mockResolvedValue(undefined),
-    status: vi.fn().mockResolvedValue({ files: [] }),
-    checkIsRepo: vi.fn().mockResolvedValue(true),
-  })),
+const gitMock = vi.hoisted(() => ({
+  init: vi.fn().mockResolvedValue(undefined),
+  add: vi.fn().mockResolvedValue(undefined),
+  commit: vi.fn().mockResolvedValue(undefined),
+  status: vi.fn().mockResolvedValue({ files: [] }),
+  checkIsRepo: vi.fn().mockResolvedValue(true),
 }));
+
+vi.mock("simple-git", () => ({ default: vi.fn(() => gitMock) }));
 
 vi.mock("@/linkedin/api/client.js", () => ({
   buildApiClient: vi.fn(() => ({
@@ -155,6 +155,8 @@ describe("send command — pre-send sync abort", () => {
   });
 
   afterEach(async () => {
+    gitMock.status.mockResolvedValue({ files: [] });
+    gitMock.commit.mockResolvedValue(undefined);
     await rm(tempDir, { recursive: true, force: true });
   });
 
@@ -307,6 +309,47 @@ describe("send command — pre-send sync abort", () => {
 
     exitSpy.mockRestore();
   });
+
+  it("still reports success when the store commit fails after LinkedIn accepted the message", async () => {
+    // The message is delivered and on disk; a failed `git commit` must not turn
+    // that into a non-zero exit, or a caller that retries sends it again.
+    mockFetchMessages.mockResolvedValue({ messages: [], hasMore: false });
+    mockSendMessage.mockResolvedValue({
+      messageUrn: "urn:li:msg_message:SENT1",
+      conversationUrn: `urn:li:msg_conversation:(urn:li:fsd_profile:${MY_PROFILE_ID},${CONV_BARE_ID})`,
+      backendConversationUrn: `urn:li:messagingThread:${CONV_BARE_ID}`,
+      deliveredAt: Date.now(),
+    });
+    gitMock.status.mockResolvedValue({ files: [{ path: "x/RECORD.json" }] });
+    gitMock.commit.mockRejectedValue(new Error("fatal: unable to write new index file"));
+
+    const exitSpy = vi.spyOn(process, "exit").mockImplementation((() => {
+      throw new Error("process.exit called");
+    }) as never);
+    const stdoutLines: string[] = [];
+    const stdoutSpy = vi.spyOn(process.stdout, "write").mockImplementation((chunk) => {
+      stdoutLines.push(String(chunk));
+      return true;
+    });
+    const stderrLines: string[] = [];
+    const stderrSpy = vi.spyOn(process.stderr, "write").mockImplementation((chunk) => {
+      stderrLines.push(String(chunk));
+      return true;
+    });
+
+    await sendCommand("example-user-1", "Hey, thanks!", { store: tempDir, json: true });
+
+    expect(mockSendMessage).toHaveBeenCalledOnce();
+    expect(exitSpy).not.toHaveBeenCalled();
+    expect(stdoutLines.join("")).toContain("urn:li:msg_message:SENT1");
+    expect(stderrLines.join("")).toContain("Message sent, but the store commit failed");
+    const stored = await store.forAccount(MY_PROFILE_ID).readMessages(CONV_BARE_ID);
+    expect(stored.map((m) => m.urn)).toContain("urn:li:msg_message:SENT1");
+
+    stdoutSpy.mockRestore();
+    stderrSpy.mockRestore();
+    exitSpy.mockRestore();
+  });
 });
 
 describe("send command — slug persistence", () => {
@@ -323,6 +366,8 @@ describe("send command — slug persistence", () => {
   });
 
   afterEach(async () => {
+    gitMock.status.mockResolvedValue({ files: [] });
+    gitMock.commit.mockResolvedValue(undefined);
     await rm(tempDir, { recursive: true, force: true });
   });
 

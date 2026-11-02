@@ -102,7 +102,10 @@ vi.mock("@/store/index.js", () => ({
   resolveStorePath: () => "/tmp/allman-test-store",
   Store: class {
     path = "/tmp/allman-test-store";
-    git = { flush: vi.fn().mockResolvedValue(undefined) };
+    git = {
+      flush: vi.fn().mockResolvedValue(undefined),
+      flushOrWarn: vi.fn().mockResolvedValue(true),
+    };
     async init() {}
     connectionsFor() {
       return {

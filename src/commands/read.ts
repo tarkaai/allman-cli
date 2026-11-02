@@ -74,7 +74,7 @@ export async function readCommand(target: string, options: ReadOptions): Promise
     unreadCount: 0,
     lastReadAt: readAt,
   });
-  await store.git.flush();
+  await store.git.flushOrWarn("Marked as read");
 
   if (options.json) {
     output.printData({ convId: bareConvId, slug: record.slug, conversationUrn, readAt });

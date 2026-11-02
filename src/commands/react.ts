@@ -93,7 +93,7 @@ export async function reactCommand(
   // without needing a sync round-trip.
   const nextReactions = applyReactionChange(picked.reactions, emoji, !options.unreact);
   await conversations.updateMessage(bareConvId, picked.urn, { reactions: nextReactions });
-  await store.git.flush();
+  await store.git.flushOrWarn(options.unreact ? "Reaction removed" : "Reaction added");
 
   if (options.json) {
     output.printData({

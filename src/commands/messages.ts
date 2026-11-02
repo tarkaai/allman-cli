@@ -118,7 +118,8 @@ function printMessages(name: string, messages: StoredMessage[]): void {
       m.attachments.length > 0 ? ` [${m.attachments.map((a) => a.type).join(", ")}]` : "";
     const reactions =
       m.reactions.length > 0 ? ` ${m.reactions.map((r) => `${r.emoji}×${r.count}`).join(" ")}` : "";
-    return `${prefix} ${sender.padEnd(20)} ${time.padEnd(12)} ${m.body}${attachments}${reactions}`;
+    const body = m.renderFormat === "RECALLED" ? "(message deleted)" : m.body;
+    return `${prefix} ${sender.padEnd(20)} ${time.padEnd(12)} ${body}${attachments}${reactions}`;
   });
 
   process.stdout.write(`Conversation: ${name}\n\n`);

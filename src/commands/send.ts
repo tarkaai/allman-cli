@@ -597,7 +597,7 @@ async function sendToOne(
     await conversations.appendMessages(targetBareId, [storedMsg]);
   }
 
-  await store.git.flush();
+  await store.git.flushOrWarn("Message sent");
 
   if (options.json) {
     output.printData({
@@ -838,7 +838,7 @@ async function sendToGroup(
     );
   }
 
-  await store.git.flush();
+  await store.git.flushOrWarn("Message sent");
 
   if (options.json) {
     output.printData({

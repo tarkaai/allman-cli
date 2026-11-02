@@ -118,7 +118,10 @@ vi.mock("@/linkedin/api/session.js", () => ({
 vi.mock("@/store/index.js", () => ({
   resolveStorePath: () => "/tmp/allman-test-store",
   Store: class {
-    git = { flush: vi.fn().mockResolvedValue(undefined) };
+    git = {
+      flush: vi.fn().mockResolvedValue(undefined),
+      flushOrWarn: vi.fn().mockResolvedValue(true),
+    };
     accounts = {
       readConfig: async () => h.state.config,
       readRateState: async () => h.state.rateState,

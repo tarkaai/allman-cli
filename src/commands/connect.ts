@@ -173,7 +173,7 @@ export async function connectCommand(target: string, opts: ConnectOptions): Prom
     sentAt: new Date().toISOString(),
   });
   cstore.git.scheduleCommit(`connect: invite ${slug ?? inviteeId}`);
-  await store.git.flush();
+  await store.git.flushOrWarn("Connection request sent");
 
   if (opts.json) {
     output.printData({ invitationUrn, inviteeUrn: profileUrn, note: note || null });
