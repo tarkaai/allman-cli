@@ -52,6 +52,23 @@ export interface AuthOptions {
 }
 
 /**
+ * Message for a failed wait-for-login. Only Playwright's `TimeoutError` is a
+ * timeout; closing the window rejects `waitForURL` immediately and must not
+ * claim five minutes passed. (`err.name` rather than `errors.TimeoutError`:
+ * a runtime import from "playwright" would be undefined in the test mocks.)
+ */
+function describeLoginWaitFailure(err: unknown, closed: boolean): string {
+  if (err instanceof Error && err.name === "TimeoutError") {
+    return `Login timed out after ${LOGIN_TIMEOUT_MS / 1000}s. Please try again.`;
+  }
+  if (closed) {
+    return "The browser window was closed before login completed. Please try again.";
+  }
+  const detail = (err instanceof Error ? err.message : String(err)).split("\n")[0];
+  return `Browser error while waiting for login: ${detail}`;
+}
+
+/**
  * Run the interactive login flow.
  * Opens a headed Chromium window and waits for the user to authenticate.
  */
@@ -135,8 +152,12 @@ export async function runLogin(options: AuthOptions = {}): Promise<AuthResult> {
   );
   try {
     await page.waitForURL(FEED_URL_PATTERN, { timeout: LOGIN_TIMEOUT_MS });
-  } catch {
-    await browser.close();
+  } catch (err) {
+    // Read this before closing: close() makes both checks true.
+    const closed = page.isClosed() || !browser.isConnected();
+    // Already dead (the user closed the window, or it crashed): don't let a
+    // failing close() replace the real reason.
+    await browser.close().catch(() => {});
     return {
       success: false,
       profileUrn: null,
@@ -145,7 +166,7 @@ export async function runLogin(options: AuthOptions = {}): Promise<AuthResult> {
       profileUrl: null,
       imageUrl: null,
       cookieJar: {},
-      error: `Login timed out after ${LOGIN_TIMEOUT_MS / 1000}s. Please try again.`,
+      error: describeLoginWaitFailure(err, closed),
     };
   }
 
