@@ -697,9 +697,11 @@ program
   .command("install-browsers")
   .description("Install Playwright's Chromium browser (required for login)")
   .action(async () => {
-    const { execSync } = await import("node:child_process");
-    process.stderr.write("Installing Chromium via Playwright...\n");
-    execSync("npx playwright install chromium", { stdio: "inherit" });
+    const { execFileSync } = await import("node:child_process");
+    const { playwrightInstallArgs } = await import("./utils/playwright-install.js");
+    const args = playwrightInstallArgs();
+    process.stderr.write(`Installing Chromium via ${args[0]}...\n`);
+    execFileSync("npx", args, { stdio: "inherit" });
     process.stderr.write("Done.\n");
   });
 

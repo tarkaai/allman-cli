@@ -46,8 +46,12 @@ Playwright's Chromium browser is required for login only:
 
 ```bash
 allman install-browsers
-# or: bunx playwright install chromium
+# or, from a source checkout only: bunx playwright install chromium
 ```
+
+`allman install-browsers` installs the Chromium revision matching the Playwright embedded in the
+binary. A bare `npx`/`bunx playwright install chromium` run outside a checkout resolves the *latest*
+Playwright, which fetches a different revision that `allman login` won't find.
 
 ---
 
