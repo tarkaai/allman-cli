@@ -250,6 +250,7 @@ export async function syncCommand(options: SyncOptions): Promise<void> {
         existing: existingRecord,
         conversations,
         resolveSlug: (id) => resolveSlugWithBackoff(apiClient, id, backoff),
+        mySlug: accountRecord.profileSlug ?? null,
       });
       if (!record) continue;
       const { slug, name: fullName } = record;

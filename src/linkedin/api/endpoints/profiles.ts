@@ -132,6 +132,29 @@ const PROFILE_REST_URL = "https://www.linkedin.com/voyager/api/identity/dash/pro
 const PROFILE_DECORATION = "com.linkedin.voyager.dash.deco.identity.profile.WebTopCardCore-16";
 
 /**
+ * Pick the requested profile's publicIdentifier out of a profiles response.
+ *
+ * `included` carries every profile the decoration touches — the viewer's own
+ * profile among them, often first — so the entry must be matched by its
+ * entityUrn. Taking the first publicIdentifier stamps the viewer's own slug
+ * onto other people's conversations.
+ */
+export function pickPublicIdentifier(
+  response: Record<string, unknown> | null | undefined,
+  profileId: string
+): string | null {
+  const included = response?.included as Array<Record<string, unknown>> | undefined;
+  if (!included) return null;
+  const wanted = `urn:li:fsd_profile:${profileId}`;
+  for (const item of included) {
+    if (item.entityUrn !== wanted) continue;
+    const pubId = item.publicIdentifier;
+    if (typeof pubId === "string" && pubId.length > 0) return pubId.toLowerCase();
+  }
+  return null;
+}
+
+/**
  * Look up a LinkedIn profile's public slug (publicIdentifier) from a profile ID.
  * Uses the REST identity/dash/profiles endpoint which returns publicIdentifier
  * in the included array.
@@ -146,19 +169,7 @@ export async function getProfileSlugById(
       method: "GET",
       url: `${PROFILE_REST_URL}?q=memberIdentity&memberIdentity=${profileId}&decorationId=${PROFILE_DECORATION}`,
     });
-
-    // publicIdentifier appears in the included array
-    const included = response?.included as Array<Record<string, unknown>> | undefined;
-    if (included) {
-      for (const item of included) {
-        const pubId = item.publicIdentifier;
-        if (typeof pubId === "string" && pubId.length > 0) {
-          return pubId.toLowerCase();
-        }
-      }
-    }
-
-    return null;
+    return pickPublicIdentifier(response, profileId);
   } catch {
     return null;
   }

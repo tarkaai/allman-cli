@@ -19,7 +19,7 @@ import { createReadStream as fsCreateReadStream } from "node:fs";
 import { mkdir, readdir, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { createInterface } from "node:readline";
-import { ensureAlias, ensureDir, forceAlias, resolveAlias } from "./alias.js";
+import { ensureAlias, ensureDir, forceAlias, removeAlias, resolveAlias } from "./alias.js";
 import type { StoreGit } from "./git.js";
 import type { ConversationRecord, StoredMessage, SyncState } from "./types.js";
 
@@ -147,6 +147,11 @@ export class ConversationStore {
       `${JSON.stringify(merged, null, 2)}\n`,
       "utf8"
     );
+
+    // A slug that changed (or was cleared) leaves its old alias pointing here.
+    if (existing?.slug && existing.slug !== merged.slug) {
+      await removeAlias(this.accountDir, existing.slug, convId).catch(() => {});
+    }
 
     if (!merged.isGroup) {
       // Create profileId symlink → convId

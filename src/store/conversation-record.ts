@@ -36,6 +36,12 @@ export interface BuildRecordOptions {
   resolveSlug: SlugResolver;
   /** Cap on group participant slug lookups via `resolveSlug`. */
   maxGroupSlugLookups?: number;
+  /**
+   * The account's own slug. A stored slug equal to it belongs to nobody else,
+   * so it is treated as unresolved and looked up again (repairs records
+   * written when the lookup returned the viewer's slug).
+   */
+  mySlug?: string | null;
 }
 
 export function splitName(name: string): { firstName: string; lastName: string } {
@@ -114,10 +120,14 @@ export async function resolveParticipantSlugs(
   participants: ConversationParticipantData[],
   existing: ConversationRecord | null,
   resolveSlug: SlugResolver,
-  maxLookups: number = MAX_GROUP_SLUG_LOOKUPS
+  maxLookups: number = MAX_GROUP_SLUG_LOOKUPS,
+  mySlug: string | null = null
 ): Promise<Map<string, string | null>> {
   const cached = new Map<string, string | null>();
-  for (const p of existing?.participants ?? []) cached.set(p.profileUrn, p.slug);
+  for (const p of existing?.participants ?? []) {
+    if (mySlug && p.slug === mySlug) continue;
+    cached.set(p.profileUrn, p.slug);
+  }
 
   const slugs = new Map<string, string | null>();
   let lookups = 0;
@@ -128,7 +138,7 @@ export async function resolveParticipantSlugs(
     }
     const profileId = profileIdFromUrn(p.entityUrn);
     const local = await localSlugForProfile(conversations, profileId);
-    if (local) {
+    if (local && local !== mySlug) {
       slugs.set(p.entityUrn, local);
       continue;
     }
@@ -164,11 +174,12 @@ export async function buildConversationRecord(
       others,
       existing,
       resolveSlug,
-      opts.maxGroupSlugLookups
+      opts.maxGroupSlugLookups,
+      opts.mySlug ?? null
     );
     participants = others.map((p) => toParticipant(p, slugs.get(p.entityUrn) ?? null));
     slug = null;
-  } else if (existing?.slug) {
+  } else if (existing?.slug && existing.slug !== opts.mySlug) {
     // Check the existing record first to avoid redundant API calls.
     slug = existing.slug;
   } else {

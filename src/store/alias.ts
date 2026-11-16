@@ -64,6 +64,16 @@ export async function forceAlias(parentDir: string, alias: string, target: strin
   await symlink(target, linkPath);
 }
 
+/** Remove a symlink, but only while it still points at `target`. */
+export async function removeAlias(parentDir: string, alias: string, target: string): Promise<void> {
+  const linkPath = join(parentDir, alias);
+  try {
+    if ((await readlink(linkPath)) === target) await unlink(linkPath);
+  } catch {
+    // not a symlink, or already gone
+  }
+}
+
 /**
  * Resolve an alias (symlink) or direct ID to the actual target.
  * Returns null if the alias doesn't exist and isn't a direct directory.

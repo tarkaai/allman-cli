@@ -52,8 +52,12 @@ export async function reactCommand(
     return;
   }
 
-  // Pick the message to react to.
-  const messages = await conversations.readMessages(bareConvId, { limit: 50 });
+  // Pick the message to react to. A named message can be anywhere in the
+  // thread, so only the "most recent" default gets to read just the tail.
+  const messages = await conversations.readMessages(
+    bareConvId,
+    options.message ? {} : { limit: 50 }
+  );
   if (messages.length === 0) {
     output.error("No messages in this conversation yet.", 1);
     return;
