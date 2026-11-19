@@ -8,7 +8,7 @@
 
 import { stat, unlink } from "node:fs/promises";
 import { join } from "node:path";
-import simpleGit, { type SimpleGit } from "simple-git";
+import simpleGit, { type CheckRepoActions, type SimpleGit } from "simple-git";
 import * as output from "../utils/output.js";
 
 /**
@@ -38,11 +38,20 @@ export class StoreGit {
     return this.git;
   }
 
-  /** Initialize git repo if not already initialized. */
+  /**
+   * Initialize the store's own git repo if it doesn't have one.
+   *
+   * Asks whether the store is a repo *root*, not merely somewhere inside a work
+   * tree. A store under another repo (`~/.allman` with `~` itself a repo, or a
+   * dotfiles repo) would otherwise count as "already initialized", skip
+   * `git init`, and `git add -A` would then stage the whole parent work tree.
+   */
   async init(): Promise<void> {
     // Reset the cached instance to ensure it points to the (now-existing) dir
     this.git = simpleGit(this.storePath);
-    const isRepo = await this.git.checkIsRepo().catch(() => false);
+    // Type-only import: tests mock "simple-git" with only a default export, so a
+    // runtime `CheckRepoActions.IS_REPO_ROOT` reference would be undefined there.
+    const isRepo = await this.git.checkIsRepo("root" as CheckRepoActions).catch(() => false);
     if (!isRepo) {
       await this.git.init();
       output.debug("Initialized git repo in store");
